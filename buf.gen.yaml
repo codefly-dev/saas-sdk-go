@@ -1,0 +1,19 @@
+version: v2
+clean: true
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/googleapis/googleapis
+    - file_option: go_package
+      module: buf.build/bufbuild/protovalidate
+  override:
+    - file_option: go_package_prefix
+      value: github.com/codefly-dev/saas-sdk-go/gen
+plugins:
+  - local: [go, run, google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11]
+    out: gen
+    opt: paths=source_relative
+  - local: [go, run, connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.20.0]
+    out: gen
+    opt: paths=source_relative
