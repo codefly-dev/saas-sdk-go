@@ -19,6 +19,26 @@ Two layers:
   `gw` is any value exposing `BaseURL() string` and `HTTPClient() *http.Client` —
   which `github.com/codefly-dev/solution-runtime-go.Gateway` already satisfies.
   The runtime stays accounts-agnostic and takes **no** dependency on this SDK.
+- **`datasource/`** — the same facade over `DatasourceService`, so a solution
+  connects a GitHub datasource collection in a few lines:
+
+  ```go
+  ds := datasource.New(gw)
+  src, err := ds.AddGitHubSource(ctx, datasource.GitHubSource{
+      OrgID:       org,
+      Repo:        "codefly-dev/module-saas-starter",
+      Paths:       []string{"docs"},
+      Collection:  "handbook",
+      AccessToken: token,
+  })
+  _, err = ds.Sync(ctx, org, src.GetId())
+  ```
+
+## Versioning
+
+This SDK's release version tracks the **saas-starter module version**
+(`module/module.package.codefly.yaml`), recorded in `SOURCE.txt` alongside the
+proto ref `gen/` was generated from.
 
 ## Regenerating `gen/`
 
