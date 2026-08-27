@@ -1,2 +1,5 @@
-gen/ generated from codefly-dev/module-saas-starter@a44ac5aa0b9d019ad8ad659b474c36d81bf9ed50
+gen/ generated from codefly-dev/module-saas-starter@527e4c1149973e76718ebd2fb85198173e7bb008
 (accounts public proto: module/services/accounts/proto)
+
+module version: 0.1.0 (module/module.package.codefly.yaml)
+This SDK's release is matched to the saas-starter module version above.
