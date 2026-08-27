@@ -13,7 +13,7 @@
 //		Collection:  "handbook",
 //		AccessToken: token,
 //	})
-//	_, err = ds.SyncSource(ctx, org, src.GetId())
+//	_, err = ds.Sync(ctx, org, src.GetId())
 //
 // The access token is sent once; the connection side encrypts it through the
 // SecretCipher and persists only a secret reference — no read ever returns it.
@@ -100,27 +100,12 @@ func (c *Client) ListSources(ctx context.Context, orgID string) ([]*v1.Datasourc
 	return resp.Msg.GetDatasources(), nil
 }
 
-// GetSource returns one connected datasource in the org.
-func (c *Client) GetSource(ctx context.Context, orgID, id string) (*v1.Datasource, error) {
-	resp, err := c.inner.GetSource(ctx, connect.NewRequest(&v1.GetSourceRequest{OrgId: orgID, Id: id}))
-	if err != nil {
-		return nil, err
-	}
-	return resp.Msg.GetDatasource(), nil
-}
-
-// SyncSource marks a source for ingestion and returns the durable jobs-inbox id
-// of the enqueued request.
-func (c *Client) SyncSource(ctx context.Context, orgID, id string) (string, error) {
+// Sync marks a source for ingestion and returns the durable jobs-inbox id of
+// the enqueued request.
+func (c *Client) Sync(ctx context.Context, orgID, id string) (string, error) {
 	resp, err := c.inner.SyncSource(ctx, connect.NewRequest(&v1.SyncSourceRequest{OrgId: orgID, Id: id}))
 	if err != nil {
 		return "", err
 	}
 	return resp.Msg.GetJobId(), nil
-}
-
-// DeleteSource removes a connected datasource and its stored credentials.
-func (c *Client) DeleteSource(ctx context.Context, orgID, id string) error {
-	_, err := c.inner.DeleteSource(ctx, connect.NewRequest(&v1.DeleteSourceRequest{OrgId: orgID, Id: id}))
-	return err
 }

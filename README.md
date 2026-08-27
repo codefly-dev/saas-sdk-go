@@ -31,7 +31,7 @@ Two layers:
       Collection:  "handbook",
       AccessToken: token,
   })
-  _, err = ds.SyncSource(ctx, org, src.GetId())
+  _, err = ds.Sync(ctx, org, src.GetId())
   ```
 
 ## Versioning

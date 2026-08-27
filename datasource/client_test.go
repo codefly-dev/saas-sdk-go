@@ -18,11 +18,9 @@ import (
 // the actual generated stubs end to end rather than a mock of them.
 type recordingHandler struct {
 	accountsv1connect.UnimplementedDatasourceServiceHandler
-	addReq    *v1.AddGitHubSourceRequest
-	listReq   *v1.ListSourcesRequest
-	getReq    *v1.GetSourceRequest
-	syncReq   *v1.SyncSourceRequest
-	deleteReq *v1.DeleteSourceRequest
+	addReq  *v1.AddGitHubSourceRequest
+	listReq *v1.ListSourcesRequest
+	syncReq *v1.SyncSourceRequest
 }
 
 func (h *recordingHandler) AddGitHubSource(_ context.Context, req *connect.Request[v1.AddGitHubSourceRequest]) (*connect.Response[v1.AddGitHubSourceResponse], error) {
@@ -39,19 +37,9 @@ func (h *recordingHandler) ListSources(_ context.Context, req *connect.Request[v
 	}), nil
 }
 
-func (h *recordingHandler) GetSource(_ context.Context, req *connect.Request[v1.GetSourceRequest]) (*connect.Response[v1.GetSourceResponse], error) {
-	h.getReq = req.Msg
-	return connect.NewResponse(&v1.GetSourceResponse{Datasource: &v1.Datasource{Id: req.Msg.GetId()}}), nil
-}
-
 func (h *recordingHandler) SyncSource(_ context.Context, req *connect.Request[v1.SyncSourceRequest]) (*connect.Response[v1.SyncSourceResponse], error) {
 	h.syncReq = req.Msg
 	return connect.NewResponse(&v1.SyncSourceResponse{JobId: "job-42"}), nil
-}
-
-func (h *recordingHandler) DeleteSource(_ context.Context, req *connect.Request[v1.DeleteSourceRequest]) (*connect.Response[v1.DeleteSourceResponse], error) {
-	h.deleteReq = req.Msg
-	return connect.NewResponse(&v1.DeleteSourceResponse{}), nil
 }
 
 // gw satisfies datasource.Gateway against an httptest server.
@@ -126,43 +114,17 @@ func TestListSourcesReturnsBareSlice(t *testing.T) {
 	}
 }
 
-func TestGetSourcePassesIDs(t *testing.T) {
+func TestSyncReturnsJobID(t *testing.T) {
 	c, h := newClient(t)
 
-	ds, err := c.GetSource(context.Background(), "org-1", "ds-9")
+	jobID, err := c.Sync(context.Background(), "org-1", "ds-1")
 	if err != nil {
-		t.Fatalf("GetSource: %v", err)
-	}
-	if h.getReq.GetOrgId() != "org-1" || h.getReq.GetId() != "ds-9" {
-		t.Errorf("req = %+v", h.getReq)
-	}
-	if ds.GetId() != "ds-9" {
-		t.Errorf("datasource id = %q", ds.GetId())
-	}
-}
-
-func TestSyncSourceReturnsJobID(t *testing.T) {
-	c, h := newClient(t)
-
-	jobID, err := c.SyncSource(context.Background(), "org-1", "ds-1")
-	if err != nil {
-		t.Fatalf("SyncSource: %v", err)
+		t.Fatalf("Sync: %v", err)
 	}
 	if h.syncReq.GetOrgId() != "org-1" || h.syncReq.GetId() != "ds-1" {
 		t.Errorf("req = %+v", h.syncReq)
 	}
 	if jobID != "job-42" {
 		t.Errorf("job_id = %q, want job-42", jobID)
-	}
-}
-
-func TestDeleteSourcePassesIDs(t *testing.T) {
-	c, h := newClient(t)
-
-	if err := c.DeleteSource(context.Background(), "org-1", "ds-1"); err != nil {
-		t.Fatalf("DeleteSource: %v", err)
-	}
-	if h.deleteReq.GetOrgId() != "org-1" || h.deleteReq.GetId() != "ds-1" {
-		t.Errorf("req = %+v", h.deleteReq)
 	}
 }
