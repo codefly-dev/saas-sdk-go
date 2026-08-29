@@ -33,6 +33,28 @@ Two layers:
   })
   _, err = ds.Sync(ctx, org, src.GetId())
   ```
+- **`settings/`** — the schema-agnostic typed-settings library every module and
+  product depends on instead of vendoring a copy. It has two parts:
+
+  - **runtime** (`settings`) — presence-aware `Field[M, T]` access over a
+    generated protobuf settings message, plus a `JSONCodec` that is the only
+    boundary between typed settings and their sparse ProtoJSON storage. Product
+    code works with typed fields and never traverses protobuf parents or JSON
+    keys:
+
+    ```go
+    theme, err := usersettings.Fields.Appearance.Theme.Get(document)   // default when absent
+    err = usersettings.Fields.Email.Product.Set(document, false)        // explicit false stays present
+    ```
+
+  - **renderers** (`settings/catalog`) — the reusable half of `module-compose`.
+    A module declares its settings contributions and gets Go / TypeScript /
+    proto catalogs from `catalog.RenderGo` / `RenderTypeScript` / `RenderProto`,
+    instead of re-implementing the render functions in-repo.
+
+  The runtime imports no generated schema, so it is byte-for-byte reusable
+  across products; product-specific fields belong in the product proto and its
+  typed field catalog, never here.
 
 ## Versioning
 

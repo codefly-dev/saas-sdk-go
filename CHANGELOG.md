@@ -9,6 +9,13 @@ version and to signal the breaking removal below.
 ### Added
 - `saas.accounts.v1.DatasourceService` bindings and a `datasource` facade
   (`datasource.New(gw).AddGitHubSource / .ListSources / .Sync`).
+- `settings` — the schema-agnostic typed-settings runtime promoted out of
+  `module-saas-starter` (`pkg/settings`): presence-aware `Field[M, T]` access
+  and a `JSONCodec` for sparse ProtoJSON storage. Modules depend on this
+  package instead of vendoring a copy.
+- `settings/catalog` — the reusable catalog renderers (`RenderGo`,
+  `RenderTypeScript`, `RenderProto`) that `module-compose` calls to emit
+  Go / TypeScript / proto settings catalogs from declared contributions.
 
 ### Removed (breaking)
 - `AuditExportService` client (`accountsv1connect.AuditExportServiceClient`,
