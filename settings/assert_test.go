@@ -89,14 +89,26 @@ func mustPanic(t *testing.T, fn func()) {
 
 func jsonEq(t *testing.T, got, want string) {
 	t.Helper()
-	var gotValue, wantValue any
-	if err := json.Unmarshal([]byte(got), &gotValue); err != nil {
-		t.Fatalf("got is not valid JSON: %v", err)
+	equal, err := jsonEqual(got, want)
+	if err != nil {
+		t.Fatalf("invalid JSON: %v", err)
 	}
-	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
-		t.Fatalf("want is not valid JSON: %v", err)
-	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
+	if !equal {
 		t.Fatalf("JSON mismatch:\n got: %s\nwant: %s", got, want)
 	}
+}
+
+// jsonEqual is the pure comparison behind jsonEq: it reports whether two JSON
+// documents are semantically equal (object key order does not matter, array
+// order does). Kept separate so the comparison itself is unit-tested rather
+// than only exercised through assertions that fail open when wrong.
+func jsonEqual(a, b string) (bool, error) {
+	var aValue, bValue any
+	if err := json.Unmarshal([]byte(a), &aValue); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal([]byte(b), &bValue); err != nil {
+		return false, err
+	}
+	return reflect.DeepEqual(aValue, bValue), nil
 }

@@ -40,7 +40,9 @@ Two layers:
     generated protobuf settings message, plus a `JSONCodec` that is the only
     boundary between typed settings and their sparse ProtoJSON storage. Product
     code works with typed fields and never traverses protobuf parents or JSON
-    keys:
+    keys. `usersettings` below is the product's own generated field catalog (not
+    shipped by this SDK); it is built once on top of these `settings.Field`
+    helpers:
 
     ```go
     theme, err := usersettings.Fields.Appearance.Theme.Get(document)   // default when absent

@@ -84,6 +84,66 @@ export const SETTINGS_FIELDS = Object.freeze([
 	}
 }
 
+func TestValidateAcceptsWellFormedContributions(t *testing.T) {
+	if err := catalog.Validate(sample); err != nil {
+		t.Fatalf("valid contributions rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsStructurallyInvalidContributions(t *testing.T) {
+	valid := catalog.Contribution{
+		Namespace:   "appearance",
+		ProtoImport: "contributed/appearance/v1/appearance.proto",
+		Message:     "saas.appearance.v1.Appearance",
+		FieldName:   "appearance",
+		FieldNumber: 1000,
+	}
+	// A control: the base contribution must pass, so each case below isolates a
+	// single invalid field.
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("base contribution should be valid: %v", err)
+	}
+
+	mutate := func(f func(*catalog.Contribution)) catalog.Contribution {
+		c := valid
+		f(&c)
+		return c
+	}
+	tests := map[string]catalog.Contribution{
+		"empty namespace":          mutate(func(c *catalog.Contribution) { c.Namespace = "" }),
+		"upper-case namespace":     mutate(func(c *catalog.Contribution) { c.Namespace = "Appearance" }),
+		"unqualified message":      mutate(func(c *catalog.Contribution) { c.Message = "Appearance" }),
+		"message with space":       mutate(func(c *catalog.Contribution) { c.Message = "saas.appearance.v1.App earance" }),
+		"absolute import":          mutate(func(c *catalog.Contribution) { c.ProtoImport = "/etc/passwd.proto" }),
+		"traversal import":         mutate(func(c *catalog.Contribution) { c.ProtoImport = "../secret/appearance.proto" }),
+		"backslash import":         mutate(func(c *catalog.Contribution) { c.ProtoImport = `contributed\appearance.proto` }),
+		"non-proto import":         mutate(func(c *catalog.Contribution) { c.ProtoImport = "contributed/appearance/v1/appearance.txt" }),
+		"unclean import":           mutate(func(c *catalog.Contribution) { c.ProtoImport = "contributed/./appearance.proto" }),
+		"upper-case field name":    mutate(func(c *catalog.Contribution) { c.FieldName = "Appearance" }),
+		"field name leading digit": mutate(func(c *catalog.Contribution) { c.FieldName = "1appearance" }),
+		"zero field number":        mutate(func(c *catalog.Contribution) { c.FieldNumber = 0 }),
+		"negative field number":    mutate(func(c *catalog.Contribution) { c.FieldNumber = -1 }),
+		"reserved field number":    mutate(func(c *catalog.Contribution) { c.FieldNumber = 19500 }),
+		"overflow field number":    mutate(func(c *catalog.Contribution) { c.FieldNumber = 536870912 }),
+	}
+	for name, contribution := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := contribution.Validate(); err == nil {
+				t.Fatalf("expected %s to be rejected", name)
+			}
+			if err := catalog.Validate([]catalog.Contribution{valid, contribution}); err == nil {
+				t.Fatalf("Validate should reject a slice containing an invalid %s", name)
+			}
+		})
+	}
+}
+
+func TestValidateEmptyInputIsValid(t *testing.T) {
+	if err := catalog.Validate(nil); err != nil {
+		t.Fatalf("empty input should be valid: %v", err)
+	}
+}
+
 func TestRenderersHandleNoContributions(t *testing.T) {
 	if got := catalog.RenderProto(nil); got == "" {
 		t.Fatal("RenderProto returned empty output")
