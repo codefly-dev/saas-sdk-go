@@ -28,7 +28,9 @@ func ScopesFromContext(ctx context.Context) ([]*basev0.WorkScopeV1, bool) {
 	if !ok {
 		return nil, false
 	}
-	return effectiveScopes(wc), true
+	// A copy of the slice: a caller reordering or replacing entries must not
+	// mutate the verified claims later reads on this context authorize from.
+	return append([]*basev0.WorkScopeV1(nil), effectiveScopes(wc)...), true
 }
 
 // HasScope reports whether the verified Work Context on ctx grants action on

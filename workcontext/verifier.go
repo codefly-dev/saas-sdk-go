@@ -25,6 +25,19 @@
 //
 // Nothing here fails open: no keys, an unreachable JWKS, or an unknown key id
 // all reject the request.
+//
+// Replay is not enforced here. Verification establishes authenticity and
+// freshness — the signature and the signed time window — but a captured token
+// is accepted on every call until it expires, regardless of its replay_policy.
+// Enforcing a single-use policy needs a nonce store shared across the callee's
+// replicas, which this stateless layer cannot own. A callee that must honour
+// single-use reads the policy and nonce off the verified context and rejects a
+// nonce it has already seen against its own store:
+//
+//	wc, _ := workcontext.FromContext(ctx)
+//	if wc.GetReplayPolicy() == "single-use" && !nonces.Consume(wc.GetNonce()) {
+//		return errReplayed
+//	}
 package workcontext
 
 import (
@@ -203,6 +216,8 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 //
 // Failures wrap ErrInvalid, or ErrAudience for a sound token minted for
 // another service; HTTPStatus / ConnectError / GRPCError map them onward.
+//
+// Verify does not enforce replay/single-use — see the package doc.
 func (v *Verifier) Verify(ctx context.Context, encoded string) (*basev0.WorkContextV1, error) {
 	token, err := codefly.ParseWorkContextToken(encoded)
 	if err != nil {

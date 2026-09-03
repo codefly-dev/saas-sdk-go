@@ -38,6 +38,30 @@ func TestVerifyAcceptsAContextMintedForThisService(t *testing.T) {
 	}
 }
 
+// Verify does not enforce replay, so the policy and nonce a callee needs to
+// enforce single-use itself must survive onto the verified claims. This guards
+// the enforcement path the package doc points callees at against a regression
+// that silently drops those fields.
+func TestVerifyExposesReplayPolicyAndNonceForCalleeEnforcement(t *testing.T) {
+	input := taskInput(testAudience)
+	input.ReplayPolicy = "single-use"
+	token, _, err := newSigner(t, signerOptions{}).StartTask(input)
+	if err != nil {
+		t.Fatalf("StartTask: %v", err)
+	}
+
+	wc, err := newVerifier(t, workcontext.Config{Keys: staticKeys()}).Verify(context.Background(), token.Encoded())
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if wc.GetReplayPolicy() != "single-use" {
+		t.Errorf("replay_policy = %q, want single-use", wc.GetReplayPolicy())
+	}
+	if wc.GetNonce() == "" {
+		t.Error("nonce is empty; a callee cannot enforce single-use without it")
+	}
+}
+
 func TestVerifyRejectsEverythingThatIsNotOurs(t *testing.T) {
 	v := newVerifier(t, workcontext.Config{Keys: staticKeys()})
 	cases := []struct {

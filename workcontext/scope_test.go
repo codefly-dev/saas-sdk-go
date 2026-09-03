@@ -74,6 +74,25 @@ func TestScopesFromContextFollowTheActorChain(t *testing.T) {
 	}
 }
 
+func TestScopesFromContextReturnsACopy(t *testing.T) {
+	ctx := verifiedContext(t)
+	first, _ := workcontext.ScopesFromContext(ctx)
+	if len(first) == 0 {
+		t.Fatal("no scopes to mutate")
+	}
+
+	// Reorder and overwrite the returned slice; the verified claims must be
+	// untouched for the next read.
+	first[0] = &basev0.WorkScopeV1{ResourceKind: "tampered"}
+	first = append(first, &basev0.WorkScopeV1{ResourceKind: "injected"})
+	_ = first
+
+	second, _ := workcontext.ScopesFromContext(ctx)
+	if second[0].GetResourceKind() == "tampered" || len(second) != 2 {
+		t.Errorf("mutating the returned slice corrupted the verified claims: %v", second)
+	}
+}
+
 func TestScopesFromContextIsFalseWithoutAVerifiedContext(t *testing.T) {
 	if scopes, ok := workcontext.ScopesFromContext(context.Background()); ok || scopes != nil {
 		t.Errorf("bare context reported scopes: %v, %v", scopes, ok)

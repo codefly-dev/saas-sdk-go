@@ -15,7 +15,11 @@ func (v *Verifier) HTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wc, err := v.authenticate(r.Context(), r.Header.Values(codefly.WorkContextHeaderName))
 		if err != nil {
-			http.Error(w, err.Error(), HTTPStatus(err))
+			status := HTTPStatus(err)
+			// An opaque body: the error string can carry the caller-supplied
+			// key id (read before the signature check), and an auth boundary
+			// has no reason to reflect its verification detail to the client.
+			http.Error(w, http.StatusText(status), status)
 			return
 		}
 		if wc != nil {
@@ -33,7 +37,8 @@ func RequireScopeHTTP(resourceKind, action string) func(http.Handler) http.Handl
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if err := RequireScope(r.Context(), resourceKind, action); err != nil {
-				http.Error(w, err.Error(), HTTPStatus(err))
+				status := HTTPStatus(err)
+				http.Error(w, http.StatusText(status), status)
 				return
 			}
 			next.ServeHTTP(w, r)

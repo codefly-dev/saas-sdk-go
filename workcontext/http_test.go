@@ -3,6 +3,7 @@ package workcontext_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	codefly "github.com/codefly-dev/sdk-go"
@@ -45,6 +46,27 @@ func TestHTTPMiddleware(t *testing.T) {
 			}
 			s.expect(t, tc.called, tc.called)
 		})
+	}
+}
+
+func TestHTTPMiddlewareDoesNotReflectVerificationDetail(t *testing.T) {
+	v := newVerifier(t, workcontext.Config{Keys: staticKeys()})
+	// A token whose (unsigned) key id is attacker-controlled: the rejection
+	// must not echo it back into the response body.
+	canary := "leaky-kid-canary"
+	rec := httptest.NewRecorder()
+	v.HTTPMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("handler ran for a rejected request")
+	})).ServeHTTP(rec, request(mint(t, newSigner(t, signerOptions{kid: canary}), testAudience)))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), canary) {
+		t.Errorf("response body reflected the key id: %q", rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != http.StatusText(http.StatusUnauthorized) {
+		t.Errorf("body = %q, want %q", got, http.StatusText(http.StatusUnauthorized))
 	}
 }
 

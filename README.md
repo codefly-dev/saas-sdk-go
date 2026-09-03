@@ -96,6 +96,12 @@ Two layers:
   reports false) — a present-but-invalid one is still rejected. `StaticKeys`
   pins a key set for tests or out-of-band distribution.
 
+  Verification establishes authenticity and freshness but **does not enforce
+  replay**: a captured token is accepted until it expires, whatever its
+  `replay_policy`. Enforcing single-use needs a nonce store this stateless layer
+  cannot own — a callee that requires it reads `FromContext(ctx).GetReplayPolicy()`
+  and `GetNonce()` and rejects a nonce it has already seen against its own store.
+
 ## Versioning
 
 This SDK's release version tracks the **saas-starter module version**

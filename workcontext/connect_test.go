@@ -170,6 +170,30 @@ func TestConnectInterceptorIgnoresClientSideCalls(t *testing.T) {
 	s.expect(t, true, false)
 }
 
+func TestConnectInterceptorIgnoresClientSideStreams(t *testing.T) {
+	// The server has no interceptor; the streaming client has ours and sends
+	// no carrier. If WrapStreamingClient verified, the call would fail
+	// Unauthenticated before leaving the process.
+	s := &seen{}
+	mux := http.NewServeMux()
+	mux.Handle(accountsv1connect.NewDelegationServiceHandler(&delegationHandler{seen: s}))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	v := newVerifier(t, workcontext.Config{Keys: staticKeys()})
+	client := accountsv1connect.NewDelegationServiceClient(srv.Client(), srv.URL, connect.WithInterceptors(v.ConnectInterceptor()))
+
+	stream, err := client.WaitForDelegation(context.Background(), connect.NewRequest(&v1.WaitForDelegationRequest{}))
+	if err != nil {
+		t.Fatalf("client-side stream intercepted: %v", err)
+	}
+	for stream.Receive() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Errorf("client-side stream intercepted: %v", err)
+	}
+	s.expect(t, true, false)
+}
+
 func TestConnectErrorMapsEverySentinel(t *testing.T) {
 	cases := map[connect.Code][]error{
 		connect.CodeUnauthenticated:  {workcontext.ErrMissing, workcontext.ErrInvalid, wrap(workcontext.ErrInvalid)},
