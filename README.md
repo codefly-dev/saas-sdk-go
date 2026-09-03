@@ -58,6 +58,50 @@ Two layers:
   across products; product-specific fields belong in the product proto and its
   typed field catalog, never here.
 
+- **`workcontext/`** — the callee side of the Work Context contract. A service
+  that receives a delegated `codefly.work-context/v1` capability (minted by
+  accounts, forwarded by whoever acts on the user's behalf) verifies it here
+  before trusting a claim: signature by `kid` against the accounts JWKS
+  (`GET /v1/auth/.well-known/jwks.json`), `iss` = `saas-starter`, `aud` = the
+  service's own name, the time window, and the type. sdk-go owns the wire
+  format and the rotation-aware JWKS cache; this package binds them to the
+  gateway seam, keeps the verified claims on the request context, and maps
+  failures onto HTTP, Connect, and gRPC codes. Nothing fails open — no keys,
+  an unreachable JWKS, or an unknown `kid` all reject the request.
+
+  ```go
+  verifier, err := workcontext.NewVerifier(workcontext.Config{
+      Audience: "lastlogin",                     // this service's name; the token's aud must match
+      Keys:     workcontext.JWKSFromGateway(gw), // the accounts JWKS behind the gateway
+  })
+
+  // net/http: 401 missing / invalid, 403 for another service's context
+  mux.Handle("/api/", verifier.HTTPMiddleware(api))
+  // Connect (unary and streaming handlers) and gRPC
+  mux.Handle(lastloginv1connect.NewLoginsServiceHandler(svc,
+      connect.WithInterceptors(verifier.ConnectInterceptor())))
+  grpc.NewServer(grpc.ChainUnaryInterceptor(verifier.GRPCUnaryInterceptor()))
+
+  // in a handler: the scope check reads the verified context off ctx — the
+  // effective scopes are the last actor's attenuated grant; empty resource_ids
+  // is the wildcard
+  if err := workcontext.RequireScope(ctx, "lastlogin:logins", "read", loginID); err != nil {
+      return nil, workcontext.ConnectError(err) // CodePermissionDenied
+  }
+  ```
+
+  `RequireScopeHTTP("lastlogin:logins", "read")` guards a whole route, and
+  `ScopesFromContext(ctx)` reads the effective scopes. Set `Config.Optional` to
+  let a request without a context through unauthenticated (`FromContext` then
+  reports false) — a present-but-invalid one is still rejected. `StaticKeys`
+  pins a key set for tests or out-of-band distribution.
+
+  Verification establishes authenticity and freshness but **does not enforce
+  replay**: a captured token is accepted until it expires, whatever its
+  `replay_policy`. Enforcing single-use needs a nonce store this stateless layer
+  cannot own — a callee that requires it reads `FromContext(ctx).GetReplayPolicy()`
+  and `GetNonce()` and rejects a nonce it has already seen against its own store.
+
 ## Versioning
 
 This SDK's release version tracks the **saas-starter module version**
