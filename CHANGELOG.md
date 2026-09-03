@@ -16,6 +16,17 @@ version and to signal the breaking removal below.
 - `settings/catalog` — the reusable catalog renderers (`RenderGo`,
   `RenderTypeScript`, `RenderProto`) that `module-compose` calls to emit
   Go / TypeScript / proto settings catalogs from declared contributions.
+- `workcontext` — callee-side Work Context verification. A `Verifier` over
+  sdk-go's rotation-aware JWKS verifier, bound to the accounts JWKS through the
+  gateway seam (`JWKSFromGateway`) with the callee's service name pinned as
+  `aud`; `HTTPMiddleware`, `ConnectInterceptor` (unary + streaming handlers),
+  and `GRPCUnaryInterceptor` / `GRPCStreamInterceptor` that store the verified
+  claims on the request context (`FromContext`); `ScopesFromContext`,
+  `HasScope`, `RequireScope`, and `RequireScopeHTTP` for handler-level scope
+  checks. Fails closed on no keys, an unreachable JWKS, or an unknown `kid`.
+  Adds `github.com/codefly-dev/sdk-go` (with `core` and `grpc`) to the module
+  graph. Boot-time warm-up via the verifier's `Refresh` and a distinct outage
+  (503) status are deferred until codefly-dev/sdk-go#5 and #6 land.
 
 ### Removed (breaking)
 - `AuditExportService` client (`accountsv1connect.AuditExportServiceClient`,
