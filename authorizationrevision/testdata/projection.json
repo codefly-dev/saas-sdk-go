@@ -1,0 +1,115 @@
+{
+  "claims": {
+    "tenant_id": "tenant-1",
+    "owner_principal_id": "owner-1",
+    "authorization_revision": "42",
+    "authority_scopes": [
+      {
+        "resource_kind": "example.items",
+        "actions": [
+          "read",
+          "write"
+        ],
+        "resource_ids": [
+          "item-2",
+          "item-1"
+        ]
+      },
+      {
+        "resource_kind": "example.status",
+        "actions": [
+          "read"
+        ]
+      }
+    ],
+    "actor_chain": [
+      {
+        "principal_id": "actor-1",
+        "granted_scopes": [
+          {
+            "resource_kind": "example.items",
+            "actions": [
+              "read",
+              "write"
+            ],
+            "resource_ids": [
+              "item-1"
+            ]
+          }
+        ]
+      },
+      {
+        "principal_id": "actor-2",
+        "granted_scopes": [
+          {
+            "resource_kind": "example.items",
+            "actions": [
+              "read"
+            ],
+            "resource_ids": [
+              "item-1"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "request": {
+    "org_id": "tenant-1",
+    "owner_principal_id": "owner-1",
+    "authorization_revision": "42",
+    "subjects": [
+      {
+        "principal_id": "owner-1",
+        "scopes": [
+          {
+            "resource_kind": "example.items",
+            "actions": [
+              "read",
+              "write"
+            ],
+            "resource_ids": [
+              "item-2",
+              "item-1"
+            ]
+          },
+          {
+            "resource_kind": "example.status",
+            "actions": [
+              "read"
+            ]
+          }
+        ]
+      },
+      {
+        "principal_id": "actor-1",
+        "scopes": [
+          {
+            "resource_kind": "example.items",
+            "actions": [
+              "read",
+              "write"
+            ],
+            "resource_ids": [
+              "item-1"
+            ]
+          }
+        ]
+      },
+      {
+        "principal_id": "actor-2",
+        "scopes": [
+          {
+            "resource_kind": "example.items",
+            "actions": [
+              "read"
+            ],
+            "resource_ids": [
+              "item-1"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
