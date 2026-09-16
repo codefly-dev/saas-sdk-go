@@ -10,11 +10,13 @@
 // Gateway (its HTTPClient injects the bearer; its BaseURL points at the gateway)
 // and unwraps connect.Request/Response so a handler writes plain protos:
 //
-//	resp, err := accounts.New(gw).Audit().QueryAuditLog(ctx, &v1.QueryAuditLogRequest{PageSize: 20})
+//	resp, err := accounts.New(gw).Audit().QueryAuditLog(ctx, &accounts.QueryAuditLogRequest{PageSize: 20})
 //
-// Packaging note (RD5): this package lives in codefly-dev alongside the
-// generated accounts SDK. The `gen/` import path below is a placeholder for the
-// published accounts SDK module — solutions depend on it, they do not vendor it.
+// Packaging note: the generated stubs under `gen/` are this module's private
+// implementation detail. A consumer calls every method here while importing
+// only this package — the message types are re-exported in types.go — so the
+// stub tree can be regenerated, or one day replaced by a registry-served
+// dependency, without touching a line of consumer code.
 package accounts
 
 import (
@@ -23,7 +25,6 @@ import (
 
 	"connectrpc.com/connect"
 
-	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
@@ -63,7 +64,7 @@ type AuditClient struct {
 
 // QueryAuditLog calls saas.accounts.v1.AuditService.QueryAuditLog through the
 // gateway and returns the bare response message.
-func (a *AuditClient) QueryAuditLog(ctx context.Context, req *v1.QueryAuditLogRequest) (*v1.QueryAuditLogResponse, error) {
+func (a *AuditClient) QueryAuditLog(ctx context.Context, req *QueryAuditLogRequest) (*QueryAuditLogResponse, error) {
 	resp, err := a.inner.QueryAuditLog(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
