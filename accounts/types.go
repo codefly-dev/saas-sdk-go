@@ -13,6 +13,11 @@ import v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 // package instead of a committed tree. A Go type alias makes these the *same*
 // types, so this costs nothing at runtime and breaks no existing caller that
 // already names the generated package.
+//
+// Re-exporting the types named in a signature is not sufficient on its own:
+// every type reachable *through* them has to be nameable here too, and an
+// enum needs its constants re-exported because an alias does not carry them.
+// internal/apiboundary enforces both.
 type (
 	// QueryAuditLogRequest is the request for AuditClient.QueryAuditLog.
 	QueryAuditLogRequest = v1.QueryAuditLogRequest

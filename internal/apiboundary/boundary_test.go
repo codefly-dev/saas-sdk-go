@@ -5,206 +5,379 @@
 // generated tree and releases it under its own tag. That tree is an
 // implementation detail — it is regenerated whenever the contract moves, and it
 // may one day be replaced by a dependency a registry serves instead of a
-// directory committed here. Neither is a breaking change for a consumer *as
-// long as no consumer ever names it*, which holds only while every exported
-// signature of a facade package refers to the facade's own re-exported types.
+// directory committed here. Such a move stays *source*-compatible for a
+// consumer only while no consumer ever names the tree, which holds only while
+// every type reachable through a facade package can be named through that
+// facade. (Source compatibility is not the whole story: two packages generated
+// from the same .proto in one binary collide in protobuf's global file
+// registry. Aliases keep consumer source unchanged; they do not by themselves
+// make the swap safe.)
 //
-// A Go type alias makes that free: `type Datasource = v1.Datasource` is the
-// same type, so the indirection costs nothing and breaks nobody. The rule is
-// easy to violate by accident — adding one method that returns a `*v1.Foo`
-// re-opens the leak — so it is a test rather than a convention.
+// A Go type alias makes the re-export free: `type Datasource = v1.Datasource`
+// is the same type, so the indirection costs nothing and breaks nobody.
+//
+// This gate asks a *type* question, not a textual one, because that is the
+// question the invariant is actually about. It loads every public package with
+// full type information and walks the transitive surface a consumer can reach —
+// exported funcs, vars, consts, struct fields, interface and named-type
+// methods. A generated type anywhere in that surface must be re-exported by an
+// alias in a public package, and a generated enum's constants must be
+// re-exported too: a type alias carries the type but *not* the package-level
+// constants declared with it, so aliasing `DatasourceStatus` alone still leaves
+// a consumer unable to write a comparison without importing the stub tree.
+//
+// Walking types rather than syntax is what makes the gate hard to fool. An
+// earlier syntactic version missed an unaliased `gen/` import (the package is
+// named `accountsv1`, not the `v1` its path ends in), anything declared in
+// types.go, and every exported var and const. testdata/fixture is a module
+// that reproduces each of those bypasses; TestGateCatchesKnownBypasses asserts
+// the gate reports them, because a gate that has quietly stopped looking is
+// indistinguishable from a clean tree.
+//
+// Re-exports are pooled across public packages rather than required per
+// package: if datasource re-exports Datasource, accounts may expose it too.
+// That is deliberate and matches the invariant — the consumer names the type
+// through a sibling facade and still never imports the stub tree.
 package apiboundary
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"bufio"
+	"fmt"
+	"go/types"
 	"os"
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/packages"
 )
 
-// facadePackages are the directories whose exported API a consumer calls.
-// A new facade package belongs here the day it is created.
-var facadePackages = []string{"accounts", "datasource", "settings", "workcontext"}
+// finding is one violation of the boundary rule.
+type finding struct {
+	Pkg  string // the public package whose surface exposes the type
+	Type string // "pkgname.TypeName" of the generated type
+	Kind string // kindUnexported or kindMissingConst
+	Msg  string
+}
 
-// generatedImport marks an import path as part of the generated tree.
-const generatedImport = "/gen/"
+const (
+	kindUnexported   = "not-re-exported"
+	kindMissingConst = "missing-constant"
+)
 
-func TestNoExportedSignatureNamesTheGeneratedTree(t *testing.T) {
-	root := moduleRoot(t)
-	for _, pkg := range facadePackages {
-		t.Run(pkg, func(t *testing.T) {
-			dir := filepath.Join(root, pkg)
-			if _, err := os.Stat(dir); err != nil {
-				t.Fatalf("facade package %s does not exist; update facadePackages", pkg)
-			}
-			fset := token.NewFileSet()
-			parsed, err := parser.ParseDir(fset, dir, func(info os.FileInfo) bool {
-				// types.go is where the re-exports live: aliasing a generated
-				// type is the mechanism, not a violation of it.
-				return !strings.HasSuffix(info.Name(), "_test.go") && info.Name() != "types.go"
-			}, 0)
-			if err != nil {
-				t.Fatalf("parse %s: %v", dir, err)
-			}
-			for _, astPkg := range parsed {
-				for name, file := range astPkg.Files {
-					for _, alias := range generatedImportAliases(file) {
-						for _, decl := range exportedSignatures(file) {
-							if pos := usesAlias(decl.node, alias); pos.IsValid() {
-								t.Errorf("%s: exported %s names the generated package through %q — "+
-									"re-export the type in types.go and use that name, so a consumer "+
-									"never imports %s",
-									fset.Position(pos), decl.name, alias, generatedImport)
-								_ = name
-							}
-						}
-					}
-				}
-			}
-		})
+// analyze runs the boundary rule over the module rooted at dir and returns
+// every violation. It is a plain function rather than inline test code so the
+// gate itself can be tested against fixture modules that deliberately break it.
+func analyze(dir string) ([]finding, error) {
+	root, modulePath, err := moduleInfo(dir)
+	if err != nil {
+		return nil, err
 	}
-}
+	generatedPrefix := modulePath + "/gen/"
 
-// generatedImportAliases returns the local names a file binds to the generated
-// tree, including a dot or underscore import, which would leak just as well.
-func generatedImportAliases(file *ast.File) []string {
-	var aliases []string
-	for _, spec := range file.Imports {
-		path, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || !strings.Contains(path, generatedImport) {
-			continue
-		}
-		if spec.Name != nil {
-			aliases = append(aliases, spec.Name.Name)
-			continue
-		}
-		aliases = append(aliases, path[strings.LastIndex(path, "/")+1:])
+	pkgs, err := loadPublicPackages(root, modulePath)
+	if err != nil {
+		return nil, err
 	}
-	return aliases
-}
+	if len(pkgs) == 0 {
+		return nil, fmt.Errorf("no public packages discovered under %s; the gate would pass vacuously", root)
+	}
 
-type signature struct {
-	name string
-	node ast.Node
-}
-
-// exportedSignatures returns the parts of a file a consumer can name: an
-// exported func's parameters and results (never its body, which may use the
-// generated package freely), and the reachable surface of an exported type.
-//
-// For a struct that means its *exported* fields only. An unexported field
-// holding a generated client — `inner accountsv1connect.AuditServiceClient` —
-// is precisely how a facade is supposed to be built: a consumer can neither
-// read it nor set it, so the path never reaches their source. Same for an
-// interface's unexported methods.
-func exportedSignatures(file *ast.File) []signature {
-	var out []signature
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if !d.Name.IsExported() || !receiverIsExported(d) {
+	// A generated type is legitimately part of the public API exactly when a
+	// public package re-exports it under its own name. Collect those first:
+	// the aliases are the mechanism, so they are never themselves violations.
+	reExported := map[*types.TypeName]string{}
+	reExportedConsts := map[*types.TypeName]map[string]bool{}
+	for _, pkg := range pkgs {
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
+			if !obj.Exported() {
 				continue
 			}
-			out = append(out, signature{name: "func " + d.Name.Name, node: d.Type})
-		case *ast.GenDecl:
-			if d.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range d.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || !ts.Name.IsExported() {
+			switch obj := obj.(type) {
+			case *types.TypeName:
+				if !obj.IsAlias() {
 					continue
 				}
-				out = append(out, exportedTypeSurface("type "+ts.Name.Name, ts.Type)...)
+				if named, ok := types.Unalias(obj.Type()).(*types.Named); ok {
+					if isUnder(named.Obj(), generatedPrefix) {
+						reExported[named.Obj()] = pkg.PkgPath + "." + name
+					}
+				}
+			case *types.Const:
+				named, ok := types.Unalias(obj.Type()).(*types.Named)
+				if !ok || !isUnder(named.Obj(), generatedPrefix) {
+					continue
+				}
+				if reExportedConsts[named.Obj()] == nil {
+					reExportedConsts[named.Obj()] = map[string]bool{}
+				}
+				reExportedConsts[named.Obj()][obj.Val().String()] = true
 			}
 		}
 	}
-	return out
-}
 
-// exportedTypeSurface reduces a type to what a consumer can reach through it.
-func exportedTypeSurface(name string, expr ast.Expr) []signature {
-	switch t := expr.(type) {
-	case *ast.StructType:
-		return exportedFields(name+" field", t.Fields)
-	case *ast.InterfaceType:
-		return exportedFields(name+" method", t.Methods)
-	default:
-		// A defined or aliased type exposes whatever it is defined as.
-		return []signature{{name: name, node: expr}}
-	}
-}
-
-func exportedFields(label string, fields *ast.FieldList) []signature {
-	var out []signature
-	if fields == nil {
-		return out
-	}
-	for _, field := range fields.List {
-		if len(field.Names) == 0 {
-			// Embedded: its name IS its type, so a consumer can reach it.
-			out = append(out, signature{name: label + " (embedded)", node: field.Type})
-			continue
+	var findings []finding
+	for _, pkg := range pkgs {
+		rel := strings.TrimPrefix(strings.TrimPrefix(pkg.PkgPath, modulePath), "/")
+		w := &walker{
+			modulePath:      modulePath,
+			generatedPrefix: generatedPrefix,
+			seen:            map[types.Type]bool{},
+			reached:         map[*types.TypeName]string{},
 		}
-		for _, fieldName := range field.Names {
-			if !fieldName.IsExported() {
+		scope := pkg.Types.Scope()
+		for _, name := range scope.Names() {
+			obj := scope.Lookup(name)
+			if !obj.Exported() {
 				continue
 			}
-			out = append(out, signature{name: label + " " + fieldName.Name, node: field.Type})
+			w.walk(obj.Type(), pkg.Name+"."+name)
+		}
+
+		for _, obj := range sortedTypeNames(w.reached) {
+			qualified := obj.Pkg().Name() + "." + obj.Name()
+			alias, ok := reExported[obj]
+			if !ok {
+				findings = append(findings, finding{
+					Pkg: rel, Type: qualified, Kind: kindUnexported,
+					Msg: fmt.Sprintf("%s is reachable from the public API via %s but is not re-exported; "+
+						"add `%s = v1.%s` to this package's types.go so a consumer never imports %s",
+						qualified, w.reached[obj], obj.Name(), obj.Name(), obj.Pkg().Path()),
+				})
+				continue
+			}
+			// A type alias carries the type, never the constants declared with
+			// it. For a proto enum that leaves a consumer able to hold the
+			// value and unable to compare it.
+			for _, missing := range missingConstants(obj, reExportedConsts[obj]) {
+				findings = append(findings, finding{
+					Pkg: rel, Type: qualified, Kind: kindMissingConst,
+					Msg: fmt.Sprintf("%s is re-exported as %s, but its constant %s is not; a consumer "+
+						"can hold the value and cannot name it. Add a `const ... = v1.%s` re-export",
+						obj.Name(), alias, missing, missing),
+				})
+			}
 		}
 	}
-	return out
+	return findings, nil
 }
 
-// receiverIsExported keeps an exported method on an unexported type out of the
-// check: a consumer cannot name its receiver, so it cannot call it.
-func receiverIsExported(d *ast.FuncDecl) bool {
-	if d.Recv == nil || len(d.Recv.List) == 0 {
-		return true
-	}
-	name := d.Recv.List[0].Type
-	if star, ok := name.(*ast.StarExpr); ok {
-		name = star.X
-	}
-	ident, ok := name.(*ast.Ident)
-	return ok && ident.IsExported()
-}
-
-// usesAlias reports the position at which node selects from alias, if it does.
-func usesAlias(node ast.Node, alias string) token.Pos {
-	var found token.Pos
-	ast.Inspect(node, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == alias && !found.IsValid() {
-			found = sel.Pos()
-			return false
-		}
-		return true
-	})
-	return found
-}
-
-func moduleRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
+func TestPublicAPINamesEveryTypeItExposes(t *testing.T) {
+	findings, err := analyze(".")
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, f := range findings {
+		t.Errorf("%s: %s", f.Pkg, f.Msg)
+	}
+}
+
+// walker records every generated type reachable through a consumer-visible
+// path, and the path that reached it.
+type walker struct {
+	modulePath      string
+	generatedPrefix string
+	seen            map[types.Type]bool
+	reached         map[*types.TypeName]string
+}
+
+func (w *walker) walk(t types.Type, path string) {
+	if t == nil {
+		return
+	}
+	t = types.Unalias(t)
+	if w.seen[t] {
+		return
+	}
+	w.seen[t] = true
+
+	switch t := t.(type) {
+	case *types.Named:
+		obj := t.Obj()
+		if obj.Pkg() == nil { // a universe type such as error
+			return
+		}
+		if isUnder(obj, w.generatedPrefix) {
+			if _, ok := w.reached[obj]; !ok {
+				w.reached[obj] = path
+			}
+		}
+		// Stop at a type owned by another module. It cannot expose this
+		// module's stub tree: reaching it would require importing this module,
+		// which is an import cycle the compiler already forbids.
+		pkgPath := obj.Pkg().Path()
+		if pkgPath != w.modulePath && !strings.HasPrefix(pkgPath, w.modulePath+"/") {
+			return
+		}
+		w.walk(t.Underlying(), path)
+		for i := 0; i < t.NumMethods(); i++ {
+			if m := t.Method(i); m.Exported() {
+				w.walk(m.Type(), path+"."+m.Name()+"()")
+			}
+		}
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			// An unexported field — `inner accountsv1connect.AuditServiceClient`
+			// — is how a facade is meant to be built: a consumer can neither
+			// read it nor set it, so the path never reaches their source.
+			if f := t.Field(i); f.Exported() {
+				w.walk(f.Type(), path+"."+f.Name())
+			}
+		}
+	case *types.Interface:
+		for i := 0; i < t.NumMethods(); i++ {
+			if m := t.Method(i); m.Exported() {
+				w.walk(m.Type(), path+"."+m.Name()+"()")
+			}
+		}
+	case *types.Signature:
+		w.walkTuple(t.Params(), path+" param")
+		w.walkTuple(t.Results(), path+" result")
+	case *types.Pointer:
+		w.walk(t.Elem(), path)
+	case *types.Slice:
+		w.walk(t.Elem(), path+"[]")
+	case *types.Array:
+		w.walk(t.Elem(), path+"[]")
+	case *types.Chan:
+		w.walk(t.Elem(), path)
+	case *types.Map:
+		w.walk(t.Key(), path+" key")
+		w.walk(t.Elem(), path+" value")
+	}
+}
+
+func (w *walker) walkTuple(tuple *types.Tuple, path string) {
+	if tuple == nil {
+		return
+	}
+	for i := 0; i < tuple.Len(); i++ {
+		w.walk(tuple.At(i).Type(), path)
+	}
+}
+
+// missingConstants returns the exported constants declared with obj's type in
+// obj's own package that no public package re-exports. It is empty for any type
+// that is not constant-valued, which is every proto message.
+func missingConstants(obj *types.TypeName, have map[string]bool) []string {
+	basic, ok := obj.Type().Underlying().(*types.Basic)
+	if !ok || basic.Info()&(types.IsInteger|types.IsString) == 0 {
+		return nil
+	}
+	var missing []string
+	scope := obj.Pkg().Scope()
+	for _, name := range scope.Names() {
+		c, ok := scope.Lookup(name).(*types.Const)
+		if !ok || !c.Exported() {
+			continue
+		}
+		named, ok := types.Unalias(c.Type()).(*types.Named)
+		if !ok || named.Obj() != obj {
+			continue
+		}
+		if !have[c.Val().String()] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// loadPublicPackages discovers — rather than enumerates — every package a
+// consumer can import: everything in the module that is neither the generated
+// tree nor internal. A list maintained by hand is the convention this gate
+// exists to replace, and it drifts the first time somebody adds a package.
+func loadPublicPackages(root, modulePath string) ([]*packages.Package, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports,
+		Dir:  root,
+	}
+	loaded, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, fmt.Errorf("load packages under %s: %w", root, err)
+	}
+	var public []*packages.Package
+	for _, pkg := range loaded {
+		if len(pkg.Errors) > 0 {
+			return nil, fmt.Errorf("load %s: %w", pkg.PkgPath, pkg.Errors[0])
+		}
+		if pkg.Types == nil || !strings.HasPrefix(pkg.PkgPath, modulePath) {
+			continue
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(pkg.PkgPath, modulePath), "/")
+		if rel == "gen" || strings.HasPrefix(rel, "gen/") {
+			continue
+		}
+		if rel == "internal" || strings.HasPrefix(rel, "internal/") || strings.Contains(rel, "/internal/") {
+			continue
+		}
+		public = append(public, pkg)
+	}
+	sort.Slice(public, func(i, j int) bool { return public[i].PkgPath < public[j].PkgPath })
+	return public, nil
+}
+
+func isUnder(obj *types.TypeName, prefix string) bool {
+	return obj.Pkg() != nil && strings.HasPrefix(obj.Pkg().Path(), prefix)
+}
+
+func sortedTypeNames(m map[*types.TypeName]string) []*types.TypeName {
+	out := make([]*types.TypeName, 0, len(m))
+	for obj := range m {
+		out = append(out, obj)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if a, b := out[i].Pkg().Path(), out[j].Pkg().Path(); a != b {
+			return a < b
+		}
+		return out[i].Name() < out[j].Name()
+	})
+	return out
+}
+
+// moduleInfo returns the module root at or above start and its declared path.
+// The path is read from go.mod rather than hardcoded so that renaming the
+// module cannot silently turn the generated-tree check into a prefix that
+// matches nothing.
+func moduleInfo(start string) (root, modulePath string, err error) {
+	dir, err := filepath.Abs(start)
+	if err != nil {
+		return "", "", err
+	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
+		gomod := filepath.Join(dir, "go.mod")
+		if _, statErr := os.Stat(gomod); statErr == nil {
+			path, err := modulePathFrom(gomod)
+			if err != nil {
+				return "", "", err
+			}
+			return dir, path, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatal("no go.mod above the test directory")
+			return "", "", fmt.Errorf("no go.mod at or above %s", start)
 		}
 		dir = parent
 	}
+}
+
+func modulePathFrom(gomod string) (string, error) {
+	f, err := os.Open(gomod)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), "module "); ok {
+			return strings.TrimSpace(rest), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("no module directive in %s", gomod)
 }

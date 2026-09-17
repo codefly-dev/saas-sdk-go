@@ -14,9 +14,16 @@
 //
 // Packaging note: the generated stubs under `gen/` are this module's private
 // implementation detail. A consumer calls every method here while importing
-// only this package — the message types are re-exported in types.go — so the
-// stub tree can be regenerated, or one day replaced by a registry-served
-// dependency, without touching a line of consumer code.
+// only this package — the message types, and everything they expose, are
+// re-exported in types.go — so the stub tree can be regenerated against a newer
+// contract without touching a line of consumer code.
+//
+// Replacing the committed tree with a registry-served package is a bigger step
+// than a regeneration: the aliases keep consumer *source* unchanged, but two
+// packages generated from the same .proto in one binary collide in protobuf's
+// global file registry, so that swap has to retire the committed tree rather
+// than sit beside it. internal/apiboundary is the gate that keeps the source
+// half of this true.
 package accounts
 
 import (
