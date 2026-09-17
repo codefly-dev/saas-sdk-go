@@ -3,7 +3,7 @@
 The **Go SDK for the saas accounts API** — a versioned, published client that
 solutions depend on instead of regenerating and vendoring their own `gen/` tree.
 
-Two layers:
+Packages:
 
 - **`gen/`** — the generated Connect + protobuf bindings for the accounts public
   proto (`saas.accounts.v1` and friends), generated from
@@ -101,6 +101,40 @@ Two layers:
   `replay_policy`. Enforcing single-use needs a nonce store this stateless layer
   cannot own — a callee that requires it reads `FromContext(ctx).GetReplayPolicy()`
   and `GetNonce()` and rejects a nonce it has already seen against its own store.
+
+## Current authorization revision
+
+`authorizationrevision` sends the canonical Accounts revision query for **already
+verified** Work Context claims. It copies the owner and every actor's original
+scopes, including resource IDs and the authorization revision. Signature and
+lifetime verification, action/resource policy and public error mapping remain
+with the caller.
+
+```go
+rpc := authorizationrevision.NewGRPCClient(accountsConnection)
+err := authorizationrevision.Check(ctx, rpc, currentInternalCredential, verifiedClaims)
+// errors.Is(err, authorizationrevision.ErrDenied) means current denial.
+// ErrUnavailable means a credential, transport or response-contract failure.
+```
+
+The connection belongs to composition: use the resolved internal gRPC endpoint,
+verified TLS, `grpc.WithDisableRetry()`, and no interceptors or per-RPC credential
+providers that add caller authority. The SDK replaces outgoing metadata with only
+`x-codefly-internal-token`, disables retry buffering for the call and accepts only
+the canonical empty response. It does not resolve URLs, redirect, or retry a
+revision query. Connection hooks remain the connection owner's responsibility.
+
+The credential callback runs on each check and must honor its context. One
+three-second deadline includes credential loading and the RPC, bounded further by
+the caller's earlier deadline. No authorization decision is cached. gRPC
+`PermissionDenied` and `FailedPrecondition` produce `ErrDenied`; all other failures
+produce `ErrUnavailable` without forwarding server messages or credentials.
+Neither error grants authority. Consumers explicitly preserve their public error
+classification when replacing an existing implementation.
+
+`authorizationrevision/testdata/projection.json` is shared byte-for-byte with the
+Python SDK's `tests/fixtures/authorization_revision_projection.json`; it fixes the
+owner/actor projection independently of transport or consumer policy.
 
 ## Versioning
 
