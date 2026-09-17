@@ -75,7 +75,7 @@ type GitHubSource struct {
 
 // AddGitHubSource registers a GitHub repository as a datasource and returns the
 // non-secret projection the server stored.
-func (c *Client) AddGitHubSource(ctx context.Context, src GitHubSource) (*v1.Datasource, error) {
+func (c *Client) AddGitHubSource(ctx context.Context, src GitHubSource) (*Datasource, error) {
 	resp, err := c.inner.AddGitHubSource(ctx, connect.NewRequest(&v1.AddGitHubSourceRequest{
 		OrgId:            src.OrgID,
 		Repo:             src.Repo,
@@ -92,7 +92,7 @@ func (c *Client) AddGitHubSource(ctx context.Context, src GitHubSource) (*v1.Dat
 }
 
 // ListSources returns the org's connected datasources.
-func (c *Client) ListSources(ctx context.Context, orgID string) ([]*v1.Datasource, error) {
+func (c *Client) ListSources(ctx context.Context, orgID string) ([]*Datasource, error) {
 	resp, err := c.inner.ListSources(ctx, connect.NewRequest(&v1.ListSourcesRequest{OrgId: orgID}))
 	if err != nil {
 		return nil, err
