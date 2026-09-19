@@ -19,6 +19,16 @@ type (
 	// GitHubDatasourceConfig is the stored GitHub configuration of a
 	// Datasource, as returned on Datasource.Github.
 	GitHubDatasourceConfig = v1.GitHubDatasourceConfig
+	// ApiDatasourceConfig is the non-secret configuration of an API source.
+	ApiDatasourceConfig = v1.ApiDatasourceConfig
+	// ApiOAuth2Config is the non-secret OAuth configuration of an API source.
+	ApiOAuth2Config = v1.ApiOAuth2Config
+	// ApiCredentialKind identifies how an API source authenticates.
+	ApiCredentialKind = v1.ApiCredentialKind
+	// CrawlerDatasourceConfig is the configuration of a public web crawler.
+	CrawlerDatasourceConfig = v1.CrawlerDatasourceConfig
+	// UploadDatasourceConfig is the non-secret configuration of an upload source.
+	UploadDatasourceConfig = v1.UploadDatasourceConfig
 )
 
 // A type alias re-exports the type but not the constants declared with it, so
@@ -32,6 +42,8 @@ const (
 	DatasourceStatusActive = v1.DatasourceStatus_DATASOURCE_STATUS_ACTIVE
 	// DatasourceStatusPaused means ingestion is suspended for the source.
 	DatasourceStatusPaused = v1.DatasourceStatus_DATASOURCE_STATUS_PAUSED
+	// DatasourceStatusDegraded means ingestion requires operator attention.
+	DatasourceStatusDegraded = v1.DatasourceStatus_DATASOURCE_STATUS_DEGRADED
 )
 
 const (
@@ -39,4 +51,19 @@ const (
 	DatasourceProviderUnspecified = v1.DatasourceProvider_DATASOURCE_PROVIDER_UNSPECIFIED
 	// DatasourceProviderGitHub is a GitHub repository source.
 	DatasourceProviderGitHub = v1.DatasourceProvider_DATASOURCE_PROVIDER_GITHUB
+	// DatasourceProviderAPI is an HTTP API source.
+	DatasourceProviderAPI = v1.DatasourceProvider_DATASOURCE_PROVIDER_API
+	// DatasourceProviderCrawler is a public web crawler source.
+	DatasourceProviderCrawler = v1.DatasourceProvider_DATASOURCE_PROVIDER_CRAWLER
+	// DatasourceProviderUpload is an object upload source.
+	DatasourceProviderUpload = v1.DatasourceProvider_DATASOURCE_PROVIDER_UPLOAD
+)
+
+const (
+	ApiCredentialKindUnspecified = v1.ApiCredentialKind_API_CREDENTIAL_KIND_UNSPECIFIED
+	ApiCredentialKindBearer      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_BEARER
+	ApiCredentialKindBasic       = v1.ApiCredentialKind_API_CREDENTIAL_KIND_BASIC
+	ApiCredentialKindHeader      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_HEADER
+	ApiCredentialKindQuery       = v1.ApiCredentialKind_API_CREDENTIAL_KIND_QUERY
+	ApiCredentialKindOAuth2      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_OAUTH2
 )

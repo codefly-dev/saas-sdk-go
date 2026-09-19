@@ -21,6 +21,7 @@ package datasource
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"connectrpc.com/connect"
@@ -28,6 +29,8 @@ import (
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
+
+var ErrInvalidBoundary = errors.New("datasource: exactly one collection label or boundary node ID is required")
 
 // Gateway is the minimal surface this SDK needs from the solution runtime.
 // *github.com/codefly-dev/solution-runtime-go.Gateway satisfies it as-is
@@ -64,7 +67,15 @@ type GitHubSource struct {
 	// Branch is the git ref to pull; empty resolves to the default branch.
 	Branch string
 	// Collection is the documents-store collection the pulled Entries land in.
+	// It is resolved to a new collection boundary by the host. Set exactly one
+	// of Collection or BoundaryNodeID.
 	Collection string
+	// BoundaryNodeID selects an existing scope boundary for ingestion. Set
+	// exactly one of BoundaryNodeID or Collection.
+	BoundaryNodeID string
+	// FileExtensions is an optional suffix allowlist (for example, [".md"]).
+	// The host intersects it with Paths.
+	FileExtensions []string
 	// AccessToken is the plaintext GitHub token used to read the repository. It
 	// is encrypted at receipt and stored only as a secret reference.
 	AccessToken string
@@ -76,15 +87,24 @@ type GitHubSource struct {
 // AddGitHubSource registers a GitHub repository as a datasource and returns the
 // non-secret projection the server stored.
 func (c *Client) AddGitHubSource(ctx context.Context, src GitHubSource) (*Datasource, error) {
-	resp, err := c.inner.AddGitHubSource(ctx, connect.NewRequest(&v1.AddGitHubSourceRequest{
-		OrgId:            src.OrgID,
-		Repo:             src.Repo,
-		Paths:            src.Paths,
-		Branch:           src.Branch,
-		TargetCollection: src.Collection,
-		AccessToken:      src.AccessToken,
-		WebhookSecret:    src.WebhookSecret,
-	}))
+	if (src.Collection == "") == (src.BoundaryNodeID == "") {
+		return nil, ErrInvalidBoundary
+	}
+	req := &v1.AddGitHubSourceRequest{
+		OrgId:          src.OrgID,
+		Repo:           src.Repo,
+		Paths:          src.Paths,
+		Branch:         src.Branch,
+		AccessToken:    src.AccessToken,
+		WebhookSecret:  src.WebhookSecret,
+		FileExtensions: src.FileExtensions,
+	}
+	if src.BoundaryNodeID != "" {
+		req.Boundary = &v1.AddGitHubSourceRequest_BoundaryNodeId{BoundaryNodeId: src.BoundaryNodeID}
+	} else {
+		req.Boundary = &v1.AddGitHubSourceRequest_CollectionLabel{CollectionLabel: src.Collection}
+	}
+	resp, err := c.inner.AddGitHubSource(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
 	}

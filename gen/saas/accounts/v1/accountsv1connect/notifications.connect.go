@@ -49,6 +49,9 @@ const (
 	// NotificationServiceDeleteNotificationProcedure is the fully-qualified name of the
 	// NotificationService's DeleteNotification RPC.
 	NotificationServiceDeleteNotificationProcedure = "/saas.accounts.v1.NotificationService/DeleteNotification"
+	// NotificationServiceResolveNotificationActionProcedure is the fully-qualified name of the
+	// NotificationService's ResolveNotificationAction RPC.
+	NotificationServiceResolveNotificationActionProcedure = "/saas.accounts.v1.NotificationService/ResolveNotificationAction"
 )
 
 // NotificationServiceClient is a client for the saas.accounts.v1.NotificationService service.
@@ -58,6 +61,9 @@ type NotificationServiceClient interface {
 	MarkRead(context.Context, *connect.Request[v1.MarkNotificationReadRequest]) (*connect.Response[emptypb.Empty], error)
 	MarkAllRead(context.Context, *connect.Request[v1.MarkAllNotificationsReadRequest]) (*connect.Response[emptypb.Empty], error)
 	DeleteNotification(context.Context, *connect.Request[v1.DeleteNotificationRequest]) (*connect.Response[emptypb.Empty], error)
+	// Deliberately Connect-only: the stored action_url is never a public-edge
+	// resource, and the inbox that follows it speaks Connect.
+	ResolveNotificationAction(context.Context, *connect.Request[v1.ResolveNotificationActionRequest]) (*connect.Response[v1.ResolveNotificationActionResponse], error)
 }
 
 // NewNotificationServiceClient constructs a client for the saas.accounts.v1.NotificationService
@@ -101,16 +107,23 @@ func NewNotificationServiceClient(httpClient connect.HTTPClient, baseURL string,
 			connect.WithSchema(notificationServiceMethods.ByName("DeleteNotification")),
 			connect.WithClientOptions(opts...),
 		),
+		resolveNotificationAction: connect.NewClient[v1.ResolveNotificationActionRequest, v1.ResolveNotificationActionResponse](
+			httpClient,
+			baseURL+NotificationServiceResolveNotificationActionProcedure,
+			connect.WithSchema(notificationServiceMethods.ByName("ResolveNotificationAction")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // notificationServiceClient implements NotificationServiceClient.
 type notificationServiceClient struct {
-	listNotifications  *connect.Client[v1.ListNotificationsRequest, v1.ListNotificationsResponse]
-	getUnreadCount     *connect.Client[v1.GetUnreadCountRequest, v1.GetUnreadCountResponse]
-	markRead           *connect.Client[v1.MarkNotificationReadRequest, emptypb.Empty]
-	markAllRead        *connect.Client[v1.MarkAllNotificationsReadRequest, emptypb.Empty]
-	deleteNotification *connect.Client[v1.DeleteNotificationRequest, emptypb.Empty]
+	listNotifications         *connect.Client[v1.ListNotificationsRequest, v1.ListNotificationsResponse]
+	getUnreadCount            *connect.Client[v1.GetUnreadCountRequest, v1.GetUnreadCountResponse]
+	markRead                  *connect.Client[v1.MarkNotificationReadRequest, emptypb.Empty]
+	markAllRead               *connect.Client[v1.MarkAllNotificationsReadRequest, emptypb.Empty]
+	deleteNotification        *connect.Client[v1.DeleteNotificationRequest, emptypb.Empty]
+	resolveNotificationAction *connect.Client[v1.ResolveNotificationActionRequest, v1.ResolveNotificationActionResponse]
 }
 
 // ListNotifications calls saas.accounts.v1.NotificationService.ListNotifications.
@@ -138,6 +151,11 @@ func (c *notificationServiceClient) DeleteNotification(ctx context.Context, req 
 	return c.deleteNotification.CallUnary(ctx, req)
 }
 
+// ResolveNotificationAction calls saas.accounts.v1.NotificationService.ResolveNotificationAction.
+func (c *notificationServiceClient) ResolveNotificationAction(ctx context.Context, req *connect.Request[v1.ResolveNotificationActionRequest]) (*connect.Response[v1.ResolveNotificationActionResponse], error) {
+	return c.resolveNotificationAction.CallUnary(ctx, req)
+}
+
 // NotificationServiceHandler is an implementation of the saas.accounts.v1.NotificationService
 // service.
 type NotificationServiceHandler interface {
@@ -146,6 +164,9 @@ type NotificationServiceHandler interface {
 	MarkRead(context.Context, *connect.Request[v1.MarkNotificationReadRequest]) (*connect.Response[emptypb.Empty], error)
 	MarkAllRead(context.Context, *connect.Request[v1.MarkAllNotificationsReadRequest]) (*connect.Response[emptypb.Empty], error)
 	DeleteNotification(context.Context, *connect.Request[v1.DeleteNotificationRequest]) (*connect.Response[emptypb.Empty], error)
+	// Deliberately Connect-only: the stored action_url is never a public-edge
+	// resource, and the inbox that follows it speaks Connect.
+	ResolveNotificationAction(context.Context, *connect.Request[v1.ResolveNotificationActionRequest]) (*connect.Response[v1.ResolveNotificationActionResponse], error)
 }
 
 // NewNotificationServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -185,6 +206,12 @@ func NewNotificationServiceHandler(svc NotificationServiceHandler, opts ...conne
 		connect.WithSchema(notificationServiceMethods.ByName("DeleteNotification")),
 		connect.WithHandlerOptions(opts...),
 	)
+	notificationServiceResolveNotificationActionHandler := connect.NewUnaryHandler(
+		NotificationServiceResolveNotificationActionProcedure,
+		svc.ResolveNotificationAction,
+		connect.WithSchema(notificationServiceMethods.ByName("ResolveNotificationAction")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/saas.accounts.v1.NotificationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case NotificationServiceListNotificationsProcedure:
@@ -197,6 +224,8 @@ func NewNotificationServiceHandler(svc NotificationServiceHandler, opts ...conne
 			notificationServiceMarkAllReadHandler.ServeHTTP(w, r)
 		case NotificationServiceDeleteNotificationProcedure:
 			notificationServiceDeleteNotificationHandler.ServeHTTP(w, r)
+		case NotificationServiceResolveNotificationActionProcedure:
+			notificationServiceResolveNotificationActionHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -224,4 +253,8 @@ func (UnimplementedNotificationServiceHandler) MarkAllRead(context.Context, *con
 
 func (UnimplementedNotificationServiceHandler) DeleteNotification(context.Context, *connect.Request[v1.DeleteNotificationRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.NotificationService.DeleteNotification is not implemented"))
+}
+
+func (UnimplementedNotificationServiceHandler) ResolveNotificationAction(context.Context, *connect.Request[v1.ResolveNotificationActionRequest]) (*connect.Response[v1.ResolveNotificationActionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.NotificationService.ResolveNotificationAction is not implemented"))
 }

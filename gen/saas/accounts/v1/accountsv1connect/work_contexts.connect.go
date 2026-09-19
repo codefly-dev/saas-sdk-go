@@ -40,9 +40,15 @@ const (
 	// WorkContextServiceAuthorizeEvidenceReadProcedure is the fully-qualified name of the
 	// WorkContextService's AuthorizeEvidenceRead RPC.
 	WorkContextServiceAuthorizeEvidenceReadProcedure = "/saas.accounts.v1.WorkContextService/AuthorizeEvidenceRead"
+	// WorkContextServiceConsumeSingleUseProcedure is the fully-qualified name of the
+	// WorkContextService's ConsumeSingleUse RPC.
+	WorkContextServiceConsumeSingleUseProcedure = "/saas.accounts.v1.WorkContextService/ConsumeSingleUse"
 	// WorkContextServiceStartTaskProcedure is the fully-qualified name of the WorkContextService's
 	// StartTask RPC.
 	WorkContextServiceStartTaskProcedure = "/saas.accounts.v1.WorkContextService/StartTask"
+	// WorkContextServiceStartInstallationTaskProcedure is the fully-qualified name of the
+	// WorkContextService's StartInstallationTask RPC.
+	WorkContextServiceStartInstallationTaskProcedure = "/saas.accounts.v1.WorkContextService/StartInstallationTask"
 	// WorkContextServiceStartRootSessionProcedure is the fully-qualified name of the
 	// WorkContextService's StartRootSession RPC.
 	WorkContextServiceStartRootSessionProcedure = "/saas.accounts.v1.WorkContextService/StartRootSession"
@@ -52,6 +58,9 @@ const (
 	// WorkContextServiceStartChildSessionProcedure is the fully-qualified name of the
 	// WorkContextService's StartChildSession RPC.
 	WorkContextServiceStartChildSessionProcedure = "/saas.accounts.v1.WorkContextService/StartChildSession"
+	// WorkContextServiceRenewWorkContextProcedure is the fully-qualified name of the
+	// WorkContextService's RenewWorkContext RPC.
+	WorkContextServiceRenewWorkContextProcedure = "/saas.accounts.v1.WorkContextService/RenewWorkContext"
 )
 
 // WorkContextServiceClient is a client for the saas.accounts.v1.WorkContextService service.
@@ -63,12 +72,38 @@ type WorkContextServiceClient interface {
 	// AuthorizeEvidenceRead is deliberately Evidence-specific. It prevents a
 	// consumer from acquiring a generic Accounts permission oracle.
 	AuthorizeEvidenceRead(context.Context, *connect.Request[v1.AuthorizeEvidenceReadRequest]) (*connect.Response[emptypb.Empty], error)
+	// ConsumeSingleUse is the durable replay store behind the SINGLE_USE replay
+	// policy. It records a context_id as consumed on first call and rejects every
+	// later call for the same id, so a single-use capability is redeemable exactly
+	// once across all consumers regardless of instance or retry.
+	//
+	// The redemption is deliberately not retry-safe: because the key is the token's
+	// own stable id, a second call after a lost response is indistinguishable from
+	// a replay and returns ALREADY_EXISTS. A caller must treat that as the
+	// capability being spent and fail the operation closed, not retry it.
+	ConsumeSingleUse(context.Context, *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error)
 	StartTask(context.Context, *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
+	// StartInstallationTask is the headless mint. Unlike StartTask it opens with a
+	// service credential rather than a bearer: it resolves the installation's owner
+	// of record as the context owner and the installation's agent principal as the
+	// sole actor, with authority drawn from the agent's standing scope grants
+	// (intersected with its registered ceiling), resolved live. It records the same
+	// durable actor-chain hop as every other mint and fails closed on a revoked or
+	// disabled agent, a missing standing grant, or an installation with no
+	// currently-admin owner or co-owner.
+	StartInstallationTask(context.Context, *connect.Request[v1.StartInstallationTaskRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	StartRootSession(context.Context, *connect.Request[v1.StartRootSessionWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	// ExchangeAudience derives a least-privilege, audience-bound capability
 	// without changing the Task, Session, owner, or delegation identity.
 	ExchangeAudience(context.Context, *connect.Request[v1.ExchangeWorkContextAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	StartChildSession(context.Context, *connect.Request[v1.StartChildSessionWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
+	// RenewWorkContext is the actor-authorized exchange path. Unlike the
+	// owner-bound RPCs, the caller is the current actor of the parent context,
+	// letting a delegated task extend its own authority past the TTL cap while
+	// the originating user is offline. Renewal re-resolves current authority and
+	// fails closed on a stale revision or a revoked chain hop, and can only
+	// attenuate the actor's scopes.
+	RenewWorkContext(context.Context, *connect.Request[v1.RenewWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 }
 
 // NewWorkContextServiceClient constructs a client for the saas.accounts.v1.WorkContextService
@@ -94,10 +129,22 @@ func NewWorkContextServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(workContextServiceMethods.ByName("AuthorizeEvidenceRead")),
 			connect.WithClientOptions(opts...),
 		),
+		consumeSingleUse: connect.NewClient[v1.ConsumeSingleUseWorkContextRequest, emptypb.Empty](
+			httpClient,
+			baseURL+WorkContextServiceConsumeSingleUseProcedure,
+			connect.WithSchema(workContextServiceMethods.ByName("ConsumeSingleUse")),
+			connect.WithClientOptions(opts...),
+		),
 		startTask: connect.NewClient[v1.StartTaskWorkContextRequest, v1.IssuedWorkContext](
 			httpClient,
 			baseURL+WorkContextServiceStartTaskProcedure,
 			connect.WithSchema(workContextServiceMethods.ByName("StartTask")),
+			connect.WithClientOptions(opts...),
+		),
+		startInstallationTask: connect.NewClient[v1.StartInstallationTaskRequest, v1.IssuedWorkContext](
+			httpClient,
+			baseURL+WorkContextServiceStartInstallationTaskProcedure,
+			connect.WithSchema(workContextServiceMethods.ByName("StartInstallationTask")),
 			connect.WithClientOptions(opts...),
 		),
 		startRootSession: connect.NewClient[v1.StartRootSessionWorkContextRequest, v1.IssuedWorkContext](
@@ -118,6 +165,12 @@ func NewWorkContextServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(workContextServiceMethods.ByName("StartChildSession")),
 			connect.WithClientOptions(opts...),
 		),
+		renewWorkContext: connect.NewClient[v1.RenewWorkContextRequest, v1.IssuedWorkContext](
+			httpClient,
+			baseURL+WorkContextServiceRenewWorkContextProcedure,
+			connect.WithSchema(workContextServiceMethods.ByName("RenewWorkContext")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -125,10 +178,13 @@ func NewWorkContextServiceClient(httpClient connect.HTTPClient, baseURL string, 
 type workContextServiceClient struct {
 	checkAuthorizationRevision *connect.Client[v1.CheckAuthorizationRevisionRequest, emptypb.Empty]
 	authorizeEvidenceRead      *connect.Client[v1.AuthorizeEvidenceReadRequest, emptypb.Empty]
+	consumeSingleUse           *connect.Client[v1.ConsumeSingleUseWorkContextRequest, emptypb.Empty]
 	startTask                  *connect.Client[v1.StartTaskWorkContextRequest, v1.IssuedWorkContext]
+	startInstallationTask      *connect.Client[v1.StartInstallationTaskRequest, v1.IssuedWorkContext]
 	startRootSession           *connect.Client[v1.StartRootSessionWorkContextRequest, v1.IssuedWorkContext]
 	exchangeAudience           *connect.Client[v1.ExchangeWorkContextAudienceRequest, v1.IssuedWorkContext]
 	startChildSession          *connect.Client[v1.StartChildSessionWorkContextRequest, v1.IssuedWorkContext]
+	renewWorkContext           *connect.Client[v1.RenewWorkContextRequest, v1.IssuedWorkContext]
 }
 
 // CheckAuthorizationRevision calls saas.accounts.v1.WorkContextService.CheckAuthorizationRevision.
@@ -141,9 +197,19 @@ func (c *workContextServiceClient) AuthorizeEvidenceRead(ctx context.Context, re
 	return c.authorizeEvidenceRead.CallUnary(ctx, req)
 }
 
+// ConsumeSingleUse calls saas.accounts.v1.WorkContextService.ConsumeSingleUse.
+func (c *workContextServiceClient) ConsumeSingleUse(ctx context.Context, req *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.consumeSingleUse.CallUnary(ctx, req)
+}
+
 // StartTask calls saas.accounts.v1.WorkContextService.StartTask.
 func (c *workContextServiceClient) StartTask(ctx context.Context, req *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 	return c.startTask.CallUnary(ctx, req)
+}
+
+// StartInstallationTask calls saas.accounts.v1.WorkContextService.StartInstallationTask.
+func (c *workContextServiceClient) StartInstallationTask(ctx context.Context, req *connect.Request[v1.StartInstallationTaskRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
+	return c.startInstallationTask.CallUnary(ctx, req)
 }
 
 // StartRootSession calls saas.accounts.v1.WorkContextService.StartRootSession.
@@ -161,6 +227,11 @@ func (c *workContextServiceClient) StartChildSession(ctx context.Context, req *c
 	return c.startChildSession.CallUnary(ctx, req)
 }
 
+// RenewWorkContext calls saas.accounts.v1.WorkContextService.RenewWorkContext.
+func (c *workContextServiceClient) RenewWorkContext(ctx context.Context, req *connect.Request[v1.RenewWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
+	return c.renewWorkContext.CallUnary(ctx, req)
+}
+
 // WorkContextServiceHandler is an implementation of the saas.accounts.v1.WorkContextService
 // service.
 type WorkContextServiceHandler interface {
@@ -171,12 +242,38 @@ type WorkContextServiceHandler interface {
 	// AuthorizeEvidenceRead is deliberately Evidence-specific. It prevents a
 	// consumer from acquiring a generic Accounts permission oracle.
 	AuthorizeEvidenceRead(context.Context, *connect.Request[v1.AuthorizeEvidenceReadRequest]) (*connect.Response[emptypb.Empty], error)
+	// ConsumeSingleUse is the durable replay store behind the SINGLE_USE replay
+	// policy. It records a context_id as consumed on first call and rejects every
+	// later call for the same id, so a single-use capability is redeemable exactly
+	// once across all consumers regardless of instance or retry.
+	//
+	// The redemption is deliberately not retry-safe: because the key is the token's
+	// own stable id, a second call after a lost response is indistinguishable from
+	// a replay and returns ALREADY_EXISTS. A caller must treat that as the
+	// capability being spent and fail the operation closed, not retry it.
+	ConsumeSingleUse(context.Context, *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error)
 	StartTask(context.Context, *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
+	// StartInstallationTask is the headless mint. Unlike StartTask it opens with a
+	// service credential rather than a bearer: it resolves the installation's owner
+	// of record as the context owner and the installation's agent principal as the
+	// sole actor, with authority drawn from the agent's standing scope grants
+	// (intersected with its registered ceiling), resolved live. It records the same
+	// durable actor-chain hop as every other mint and fails closed on a revoked or
+	// disabled agent, a missing standing grant, or an installation with no
+	// currently-admin owner or co-owner.
+	StartInstallationTask(context.Context, *connect.Request[v1.StartInstallationTaskRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	StartRootSession(context.Context, *connect.Request[v1.StartRootSessionWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	// ExchangeAudience derives a least-privilege, audience-bound capability
 	// without changing the Task, Session, owner, or delegation identity.
 	ExchangeAudience(context.Context, *connect.Request[v1.ExchangeWorkContextAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	StartChildSession(context.Context, *connect.Request[v1.StartChildSessionWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
+	// RenewWorkContext is the actor-authorized exchange path. Unlike the
+	// owner-bound RPCs, the caller is the current actor of the parent context,
+	// letting a delegated task extend its own authority past the TTL cap while
+	// the originating user is offline. Renewal re-resolves current authority and
+	// fails closed on a stale revision or a revoked chain hop, and can only
+	// attenuate the actor's scopes.
+	RenewWorkContext(context.Context, *connect.Request[v1.RenewWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 }
 
 // NewWorkContextServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -198,10 +295,22 @@ func NewWorkContextServiceHandler(svc WorkContextServiceHandler, opts ...connect
 		connect.WithSchema(workContextServiceMethods.ByName("AuthorizeEvidenceRead")),
 		connect.WithHandlerOptions(opts...),
 	)
+	workContextServiceConsumeSingleUseHandler := connect.NewUnaryHandler(
+		WorkContextServiceConsumeSingleUseProcedure,
+		svc.ConsumeSingleUse,
+		connect.WithSchema(workContextServiceMethods.ByName("ConsumeSingleUse")),
+		connect.WithHandlerOptions(opts...),
+	)
 	workContextServiceStartTaskHandler := connect.NewUnaryHandler(
 		WorkContextServiceStartTaskProcedure,
 		svc.StartTask,
 		connect.WithSchema(workContextServiceMethods.ByName("StartTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	workContextServiceStartInstallationTaskHandler := connect.NewUnaryHandler(
+		WorkContextServiceStartInstallationTaskProcedure,
+		svc.StartInstallationTask,
+		connect.WithSchema(workContextServiceMethods.ByName("StartInstallationTask")),
 		connect.WithHandlerOptions(opts...),
 	)
 	workContextServiceStartRootSessionHandler := connect.NewUnaryHandler(
@@ -222,20 +331,32 @@ func NewWorkContextServiceHandler(svc WorkContextServiceHandler, opts ...connect
 		connect.WithSchema(workContextServiceMethods.ByName("StartChildSession")),
 		connect.WithHandlerOptions(opts...),
 	)
+	workContextServiceRenewWorkContextHandler := connect.NewUnaryHandler(
+		WorkContextServiceRenewWorkContextProcedure,
+		svc.RenewWorkContext,
+		connect.WithSchema(workContextServiceMethods.ByName("RenewWorkContext")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/saas.accounts.v1.WorkContextService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case WorkContextServiceCheckAuthorizationRevisionProcedure:
 			workContextServiceCheckAuthorizationRevisionHandler.ServeHTTP(w, r)
 		case WorkContextServiceAuthorizeEvidenceReadProcedure:
 			workContextServiceAuthorizeEvidenceReadHandler.ServeHTTP(w, r)
+		case WorkContextServiceConsumeSingleUseProcedure:
+			workContextServiceConsumeSingleUseHandler.ServeHTTP(w, r)
 		case WorkContextServiceStartTaskProcedure:
 			workContextServiceStartTaskHandler.ServeHTTP(w, r)
+		case WorkContextServiceStartInstallationTaskProcedure:
+			workContextServiceStartInstallationTaskHandler.ServeHTTP(w, r)
 		case WorkContextServiceStartRootSessionProcedure:
 			workContextServiceStartRootSessionHandler.ServeHTTP(w, r)
 		case WorkContextServiceExchangeAudienceProcedure:
 			workContextServiceExchangeAudienceHandler.ServeHTTP(w, r)
 		case WorkContextServiceStartChildSessionProcedure:
 			workContextServiceStartChildSessionHandler.ServeHTTP(w, r)
+		case WorkContextServiceRenewWorkContextProcedure:
+			workContextServiceRenewWorkContextHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -253,8 +374,16 @@ func (UnimplementedWorkContextServiceHandler) AuthorizeEvidenceRead(context.Cont
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.AuthorizeEvidenceRead is not implemented"))
 }
 
+func (UnimplementedWorkContextServiceHandler) ConsumeSingleUse(context.Context, *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.ConsumeSingleUse is not implemented"))
+}
+
 func (UnimplementedWorkContextServiceHandler) StartTask(context.Context, *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.StartTask is not implemented"))
+}
+
+func (UnimplementedWorkContextServiceHandler) StartInstallationTask(context.Context, *connect.Request[v1.StartInstallationTaskRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.StartInstallationTask is not implemented"))
 }
 
 func (UnimplementedWorkContextServiceHandler) StartRootSession(context.Context, *connect.Request[v1.StartRootSessionWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
@@ -267,4 +396,8 @@ func (UnimplementedWorkContextServiceHandler) ExchangeAudience(context.Context, 
 
 func (UnimplementedWorkContextServiceHandler) StartChildSession(context.Context, *connect.Request[v1.StartChildSessionWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.StartChildSession is not implemented"))
+}
+
+func (UnimplementedWorkContextServiceHandler) RenewWorkContext(context.Context, *connect.Request[v1.RenewWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.RenewWorkContext is not implemented"))
 }
