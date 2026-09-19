@@ -7,8 +7,20 @@ exact ref). The version is bumped to `0.1.0` to match the saas-starter module
 version and to signal the breaking removal below.
 
 ### Added
+- `moduleauthority` — a gateway-bound facade for module Work Context minting
+  and installed operation-authority exchange. It refreshes the short-lived
+  module capability before expiry, retries one rejected module capability,
+  returns opaque `sdk-go` Work Context tokens, and never retains parent or
+  exchanged operation capabilities.
+- Current accounts contracts through `module-saas-starter` commit
+  `b741ab52386a35f4e847a4e75952bcb3089a80cf`, including module capabilities,
+  installations, accessible scopes, dashboards, resource follows, solution
+  registration, composed organization settings, and SaaS events.
 - `saas.accounts.v1.DatasourceService` bindings and a `datasource` facade
   (`datasource.New(gw).AddGitHubSource / .ListSources / .Sync`).
+- Datasource boundary selection and a `FileExtensions` suffix allowlist on
+  `GitHubSource`, so callers can restrict ingestion (for example to `.md`) via
+  the owned host contract rather than filtering in a solution.
 - `settings` — the schema-agnostic typed-settings runtime promoted out of
   `module-saas-starter` (`pkg/settings`): presence-aware `Field[M, T]` access
   and a `JSONCodec` for sparse ProtoJSON storage. Modules depend on this
@@ -29,6 +41,9 @@ version and to signal the breaking removal below.
   (503) status are deferred until codefly-dev/sdk-go#5 and #6 land.
 
 ### Removed (breaking)
+- The obsolete datasource `target_collection` field. `GitHubSource.Collection`
+  remains source-compatible and now requests a host-owned collection boundary;
+  callers may instead select an existing boundary with `BoundaryNodeID`.
 - `AuditExportService` client (`accountsv1connect.AuditExportServiceClient`,
   `NewAuditExportServiceClient`) and the `AuditExportJob` type
   (`saas/exports/v1`). The audit-export proto was deleted upstream — its server

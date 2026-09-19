@@ -63,9 +63,15 @@ const (
 	// PermissionServiceCheckAccessProcedure is the fully-qualified name of the PermissionService's
 	// CheckAccess RPC.
 	PermissionServiceCheckAccessProcedure = "/saas.accounts.v1.PermissionService/CheckAccess"
+	// PermissionServiceListAccessibleScopesProcedure is the fully-qualified name of the
+	// PermissionService's ListAccessibleScopes RPC.
+	PermissionServiceListAccessibleScopesProcedure = "/saas.accounts.v1.PermissionService/ListAccessibleScopes"
 	// PermissionServiceRegisterScopeNodeProcedure is the fully-qualified name of the
 	// PermissionService's RegisterScopeNode RPC.
 	PermissionServiceRegisterScopeNodeProcedure = "/saas.accounts.v1.PermissionService/RegisterScopeNode"
+	// PermissionServiceListCollectionAccessProcedure is the fully-qualified name of the
+	// PermissionService's ListCollectionAccess RPC.
+	PermissionServiceListCollectionAccessProcedure = "/saas.accounts.v1.PermissionService/ListCollectionAccess"
 	// PermissionServiceGrantScopeProcedure is the fully-qualified name of the PermissionService's
 	// GrantScope RPC.
 	PermissionServiceGrantScopeProcedure = "/saas.accounts.v1.PermissionService/GrantScope"
@@ -93,6 +99,12 @@ const (
 	// PrincipalServiceRevokePrincipalProcedure is the fully-qualified name of the PrincipalService's
 	// RevokePrincipal RPC.
 	PrincipalServiceRevokePrincipalProcedure = "/saas.accounts.v1.PrincipalService/RevokePrincipal"
+	// PrincipalServiceDisableAgentPrincipalProcedure is the fully-qualified name of the
+	// PrincipalService's DisableAgentPrincipal RPC.
+	PrincipalServiceDisableAgentPrincipalProcedure = "/saas.accounts.v1.PrincipalService/DisableAgentPrincipal"
+	// PrincipalServiceEnableAgentPrincipalProcedure is the fully-qualified name of the
+	// PrincipalService's EnableAgentPrincipal RPC.
+	PrincipalServiceEnableAgentPrincipalProcedure = "/saas.accounts.v1.PrincipalService/EnableAgentPrincipal"
 	// PrincipalServiceListPrincipalsProcedure is the fully-qualified name of the PrincipalService's
 	// ListPrincipals RPC.
 	PrincipalServiceListPrincipalsProcedure = "/saas.accounts.v1.PrincipalService/ListPrincipals"
@@ -116,9 +128,16 @@ type PermissionServiceClient interface {
 	// CheckAccess is the hierarchical + per-record authz decision (issue #178).
 	// Internal decision oracle, same trust boundary as CheckPermission.
 	CheckAccess(context.Context, *connect.Request[v1.CheckAccessRequest]) (*connect.Response[v1.CheckAccessResponse], error)
+	// ListAccessibleScopes enumerates the scope nodes a subject may act on with
+	// (resource_type, action) — the list-objects companion to CheckAccess, same
+	// internal trust boundary. Org-bound; resolved live on the DB path. Its
+	// response type is declared in accessible_scopes.proto and is published; see
+	// the note there before adding a field to it.
+	ListAccessibleScopes(context.Context, *connect.Request[v1.ListAccessibleScopesRequest]) (*connect.Response[v1.ListAccessibleScopesResponse], error)
 	// RegisterScopeNode adds a node to the org's scope tree, or places a product
 	// record at a node when resource_type/resource_id are set.
 	RegisterScopeNode(context.Context, *connect.Request[v1.RegisterScopeNodeRequest]) (*connect.Response[v1.RegisterScopeNodeResponse], error)
+	ListCollectionAccess(context.Context, *connect.Request[v1.ListCollectionAccessRequest]) (*connect.Response[v1.ListCollectionAccessResponse], error)
 	// GrantScope grants a role to a principal/team at a registered scope node;
 	// the grant inherits to the node's whole subtree.
 	GrantScope(context.Context, *connect.Request[v1.GrantScopeRequest]) (*connect.Response[v1.GrantScopeResponse], error)
@@ -201,10 +220,22 @@ func NewPermissionServiceClient(httpClient connect.HTTPClient, baseURL string, o
 			connect.WithSchema(permissionServiceMethods.ByName("CheckAccess")),
 			connect.WithClientOptions(opts...),
 		),
+		listAccessibleScopes: connect.NewClient[v1.ListAccessibleScopesRequest, v1.ListAccessibleScopesResponse](
+			httpClient,
+			baseURL+PermissionServiceListAccessibleScopesProcedure,
+			connect.WithSchema(permissionServiceMethods.ByName("ListAccessibleScopes")),
+			connect.WithClientOptions(opts...),
+		),
 		registerScopeNode: connect.NewClient[v1.RegisterScopeNodeRequest, v1.RegisterScopeNodeResponse](
 			httpClient,
 			baseURL+PermissionServiceRegisterScopeNodeProcedure,
 			connect.WithSchema(permissionServiceMethods.ByName("RegisterScopeNode")),
+			connect.WithClientOptions(opts...),
+		),
+		listCollectionAccess: connect.NewClient[v1.ListCollectionAccessRequest, v1.ListCollectionAccessResponse](
+			httpClient,
+			baseURL+PermissionServiceListCollectionAccessProcedure,
+			connect.WithSchema(permissionServiceMethods.ByName("ListCollectionAccess")),
 			connect.WithClientOptions(opts...),
 		),
 		grantScope: connect.NewClient[v1.GrantScopeRequest, v1.GrantScopeResponse](
@@ -242,21 +273,23 @@ func NewPermissionServiceClient(httpClient connect.HTTPClient, baseURL string, o
 
 // permissionServiceClient implements PermissionServiceClient.
 type permissionServiceClient struct {
-	createRole          *connect.Client[v1.CreateRoleRequest, v1.CreateRoleResponse]
-	listRoles           *connect.Client[v1.ListRolesRequest, v1.ListRolesResponse]
-	deleteRole          *connect.Client[v1.DeleteRoleRequest, emptypb.Empty]
-	assignRole          *connect.Client[v1.AssignRoleRequest, v1.AssignRoleResponse]
-	revokeRole          *connect.Client[v1.RevokeRoleRequest, emptypb.Empty]
-	listRoleAssignments *connect.Client[v1.ListRoleAssignmentsRequest, v1.ListRoleAssignmentsResponse]
-	checkPermission     *connect.Client[v1.CheckPermissionRequest, v1.CheckPermissionResponse]
-	decide              *connect.Client[v1.DecideRequest, v1.DecideResponse]
-	checkAccess         *connect.Client[v1.CheckAccessRequest, v1.CheckAccessResponse]
-	registerScopeNode   *connect.Client[v1.RegisterScopeNodeRequest, v1.RegisterScopeNodeResponse]
-	grantScope          *connect.Client[v1.GrantScopeRequest, v1.GrantScopeResponse]
-	revokeScope         *connect.Client[v1.RevokeScopeRequest, emptypb.Empty]
-	shareRecord         *connect.Client[v1.ShareRecordRequest, v1.ShareRecordResponse]
-	revokeShare         *connect.Client[v1.RevokeShareRequest, emptypb.Empty]
-	listShares          *connect.Client[v1.ListSharesRequest, v1.ListSharesResponse]
+	createRole           *connect.Client[v1.CreateRoleRequest, v1.CreateRoleResponse]
+	listRoles            *connect.Client[v1.ListRolesRequest, v1.ListRolesResponse]
+	deleteRole           *connect.Client[v1.DeleteRoleRequest, emptypb.Empty]
+	assignRole           *connect.Client[v1.AssignRoleRequest, v1.AssignRoleResponse]
+	revokeRole           *connect.Client[v1.RevokeRoleRequest, emptypb.Empty]
+	listRoleAssignments  *connect.Client[v1.ListRoleAssignmentsRequest, v1.ListRoleAssignmentsResponse]
+	checkPermission      *connect.Client[v1.CheckPermissionRequest, v1.CheckPermissionResponse]
+	decide               *connect.Client[v1.DecideRequest, v1.DecideResponse]
+	checkAccess          *connect.Client[v1.CheckAccessRequest, v1.CheckAccessResponse]
+	listAccessibleScopes *connect.Client[v1.ListAccessibleScopesRequest, v1.ListAccessibleScopesResponse]
+	registerScopeNode    *connect.Client[v1.RegisterScopeNodeRequest, v1.RegisterScopeNodeResponse]
+	listCollectionAccess *connect.Client[v1.ListCollectionAccessRequest, v1.ListCollectionAccessResponse]
+	grantScope           *connect.Client[v1.GrantScopeRequest, v1.GrantScopeResponse]
+	revokeScope          *connect.Client[v1.RevokeScopeRequest, emptypb.Empty]
+	shareRecord          *connect.Client[v1.ShareRecordRequest, v1.ShareRecordResponse]
+	revokeShare          *connect.Client[v1.RevokeShareRequest, emptypb.Empty]
+	listShares           *connect.Client[v1.ListSharesRequest, v1.ListSharesResponse]
 }
 
 // CreateRole calls saas.accounts.v1.PermissionService.CreateRole.
@@ -304,9 +337,19 @@ func (c *permissionServiceClient) CheckAccess(ctx context.Context, req *connect.
 	return c.checkAccess.CallUnary(ctx, req)
 }
 
+// ListAccessibleScopes calls saas.accounts.v1.PermissionService.ListAccessibleScopes.
+func (c *permissionServiceClient) ListAccessibleScopes(ctx context.Context, req *connect.Request[v1.ListAccessibleScopesRequest]) (*connect.Response[v1.ListAccessibleScopesResponse], error) {
+	return c.listAccessibleScopes.CallUnary(ctx, req)
+}
+
 // RegisterScopeNode calls saas.accounts.v1.PermissionService.RegisterScopeNode.
 func (c *permissionServiceClient) RegisterScopeNode(ctx context.Context, req *connect.Request[v1.RegisterScopeNodeRequest]) (*connect.Response[v1.RegisterScopeNodeResponse], error) {
 	return c.registerScopeNode.CallUnary(ctx, req)
+}
+
+// ListCollectionAccess calls saas.accounts.v1.PermissionService.ListCollectionAccess.
+func (c *permissionServiceClient) ListCollectionAccess(ctx context.Context, req *connect.Request[v1.ListCollectionAccessRequest]) (*connect.Response[v1.ListCollectionAccessResponse], error) {
+	return c.listCollectionAccess.CallUnary(ctx, req)
 }
 
 // GrantScope calls saas.accounts.v1.PermissionService.GrantScope.
@@ -352,9 +395,16 @@ type PermissionServiceHandler interface {
 	// CheckAccess is the hierarchical + per-record authz decision (issue #178).
 	// Internal decision oracle, same trust boundary as CheckPermission.
 	CheckAccess(context.Context, *connect.Request[v1.CheckAccessRequest]) (*connect.Response[v1.CheckAccessResponse], error)
+	// ListAccessibleScopes enumerates the scope nodes a subject may act on with
+	// (resource_type, action) — the list-objects companion to CheckAccess, same
+	// internal trust boundary. Org-bound; resolved live on the DB path. Its
+	// response type is declared in accessible_scopes.proto and is published; see
+	// the note there before adding a field to it.
+	ListAccessibleScopes(context.Context, *connect.Request[v1.ListAccessibleScopesRequest]) (*connect.Response[v1.ListAccessibleScopesResponse], error)
 	// RegisterScopeNode adds a node to the org's scope tree, or places a product
 	// record at a node when resource_type/resource_id are set.
 	RegisterScopeNode(context.Context, *connect.Request[v1.RegisterScopeNodeRequest]) (*connect.Response[v1.RegisterScopeNodeResponse], error)
+	ListCollectionAccess(context.Context, *connect.Request[v1.ListCollectionAccessRequest]) (*connect.Response[v1.ListCollectionAccessResponse], error)
 	// GrantScope grants a role to a principal/team at a registered scope node;
 	// the grant inherits to the node's whole subtree.
 	GrantScope(context.Context, *connect.Request[v1.GrantScopeRequest]) (*connect.Response[v1.GrantScopeResponse], error)
@@ -433,10 +483,22 @@ func NewPermissionServiceHandler(svc PermissionServiceHandler, opts ...connect.H
 		connect.WithSchema(permissionServiceMethods.ByName("CheckAccess")),
 		connect.WithHandlerOptions(opts...),
 	)
+	permissionServiceListAccessibleScopesHandler := connect.NewUnaryHandler(
+		PermissionServiceListAccessibleScopesProcedure,
+		svc.ListAccessibleScopes,
+		connect.WithSchema(permissionServiceMethods.ByName("ListAccessibleScopes")),
+		connect.WithHandlerOptions(opts...),
+	)
 	permissionServiceRegisterScopeNodeHandler := connect.NewUnaryHandler(
 		PermissionServiceRegisterScopeNodeProcedure,
 		svc.RegisterScopeNode,
 		connect.WithSchema(permissionServiceMethods.ByName("RegisterScopeNode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	permissionServiceListCollectionAccessHandler := connect.NewUnaryHandler(
+		PermissionServiceListCollectionAccessProcedure,
+		svc.ListCollectionAccess,
+		connect.WithSchema(permissionServiceMethods.ByName("ListCollectionAccess")),
 		connect.WithHandlerOptions(opts...),
 	)
 	permissionServiceGrantScopeHandler := connect.NewUnaryHandler(
@@ -489,8 +551,12 @@ func NewPermissionServiceHandler(svc PermissionServiceHandler, opts ...connect.H
 			permissionServiceDecideHandler.ServeHTTP(w, r)
 		case PermissionServiceCheckAccessProcedure:
 			permissionServiceCheckAccessHandler.ServeHTTP(w, r)
+		case PermissionServiceListAccessibleScopesProcedure:
+			permissionServiceListAccessibleScopesHandler.ServeHTTP(w, r)
 		case PermissionServiceRegisterScopeNodeProcedure:
 			permissionServiceRegisterScopeNodeHandler.ServeHTTP(w, r)
+		case PermissionServiceListCollectionAccessProcedure:
+			permissionServiceListCollectionAccessHandler.ServeHTTP(w, r)
 		case PermissionServiceGrantScopeProcedure:
 			permissionServiceGrantScopeHandler.ServeHTTP(w, r)
 		case PermissionServiceRevokeScopeProcedure:
@@ -546,8 +612,16 @@ func (UnimplementedPermissionServiceHandler) CheckAccess(context.Context, *conne
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PermissionService.CheckAccess is not implemented"))
 }
 
+func (UnimplementedPermissionServiceHandler) ListAccessibleScopes(context.Context, *connect.Request[v1.ListAccessibleScopesRequest]) (*connect.Response[v1.ListAccessibleScopesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PermissionService.ListAccessibleScopes is not implemented"))
+}
+
 func (UnimplementedPermissionServiceHandler) RegisterScopeNode(context.Context, *connect.Request[v1.RegisterScopeNodeRequest]) (*connect.Response[v1.RegisterScopeNodeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PermissionService.RegisterScopeNode is not implemented"))
+}
+
+func (UnimplementedPermissionServiceHandler) ListCollectionAccess(context.Context, *connect.Request[v1.ListCollectionAccessRequest]) (*connect.Response[v1.ListCollectionAccessResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PermissionService.ListCollectionAccess is not implemented"))
 }
 
 func (UnimplementedPermissionServiceHandler) GrantScope(context.Context, *connect.Request[v1.GrantScopeRequest]) (*connect.Response[v1.GrantScopeResponse], error) {
@@ -576,6 +650,8 @@ type PrincipalServiceClient interface {
 	GetAgentPrincipal(context.Context, *connect.Request[v1.GetAgentPrincipalRequest]) (*connect.Response[v1.Principal], error)
 	CreateAgentPrincipal(context.Context, *connect.Request[v1.CreateAgentPrincipalRequest]) (*connect.Response[v1.Principal], error)
 	RevokePrincipal(context.Context, *connect.Request[v1.RevokePrincipalRequest]) (*connect.Response[emptypb.Empty], error)
+	DisableAgentPrincipal(context.Context, *connect.Request[v1.DisableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error)
+	EnableAgentPrincipal(context.Context, *connect.Request[v1.EnableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error)
 	ListPrincipals(context.Context, *connect.Request[v1.ListPrincipalsRequest]) (*connect.Response[v1.ListPrincipalsResponse], error)
 }
 
@@ -614,6 +690,18 @@ func NewPrincipalServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(principalServiceMethods.ByName("RevokePrincipal")),
 			connect.WithClientOptions(opts...),
 		),
+		disableAgentPrincipal: connect.NewClient[v1.DisableAgentPrincipalRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PrincipalServiceDisableAgentPrincipalProcedure,
+			connect.WithSchema(principalServiceMethods.ByName("DisableAgentPrincipal")),
+			connect.WithClientOptions(opts...),
+		),
+		enableAgentPrincipal: connect.NewClient[v1.EnableAgentPrincipalRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PrincipalServiceEnableAgentPrincipalProcedure,
+			connect.WithSchema(principalServiceMethods.ByName("EnableAgentPrincipal")),
+			connect.WithClientOptions(opts...),
+		),
 		listPrincipals: connect.NewClient[v1.ListPrincipalsRequest, v1.ListPrincipalsResponse](
 			httpClient,
 			baseURL+PrincipalServiceListPrincipalsProcedure,
@@ -625,11 +713,13 @@ func NewPrincipalServiceClient(httpClient connect.HTTPClient, baseURL string, op
 
 // principalServiceClient implements PrincipalServiceClient.
 type principalServiceClient struct {
-	getPrincipal         *connect.Client[v1.GetPrincipalRequest, v1.Principal]
-	getAgentPrincipal    *connect.Client[v1.GetAgentPrincipalRequest, v1.Principal]
-	createAgentPrincipal *connect.Client[v1.CreateAgentPrincipalRequest, v1.Principal]
-	revokePrincipal      *connect.Client[v1.RevokePrincipalRequest, emptypb.Empty]
-	listPrincipals       *connect.Client[v1.ListPrincipalsRequest, v1.ListPrincipalsResponse]
+	getPrincipal          *connect.Client[v1.GetPrincipalRequest, v1.Principal]
+	getAgentPrincipal     *connect.Client[v1.GetAgentPrincipalRequest, v1.Principal]
+	createAgentPrincipal  *connect.Client[v1.CreateAgentPrincipalRequest, v1.Principal]
+	revokePrincipal       *connect.Client[v1.RevokePrincipalRequest, emptypb.Empty]
+	disableAgentPrincipal *connect.Client[v1.DisableAgentPrincipalRequest, emptypb.Empty]
+	enableAgentPrincipal  *connect.Client[v1.EnableAgentPrincipalRequest, emptypb.Empty]
+	listPrincipals        *connect.Client[v1.ListPrincipalsRequest, v1.ListPrincipalsResponse]
 }
 
 // GetPrincipal calls saas.accounts.v1.PrincipalService.GetPrincipal.
@@ -652,6 +742,16 @@ func (c *principalServiceClient) RevokePrincipal(ctx context.Context, req *conne
 	return c.revokePrincipal.CallUnary(ctx, req)
 }
 
+// DisableAgentPrincipal calls saas.accounts.v1.PrincipalService.DisableAgentPrincipal.
+func (c *principalServiceClient) DisableAgentPrincipal(ctx context.Context, req *connect.Request[v1.DisableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.disableAgentPrincipal.CallUnary(ctx, req)
+}
+
+// EnableAgentPrincipal calls saas.accounts.v1.PrincipalService.EnableAgentPrincipal.
+func (c *principalServiceClient) EnableAgentPrincipal(ctx context.Context, req *connect.Request[v1.EnableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.enableAgentPrincipal.CallUnary(ctx, req)
+}
+
 // ListPrincipals calls saas.accounts.v1.PrincipalService.ListPrincipals.
 func (c *principalServiceClient) ListPrincipals(ctx context.Context, req *connect.Request[v1.ListPrincipalsRequest]) (*connect.Response[v1.ListPrincipalsResponse], error) {
 	return c.listPrincipals.CallUnary(ctx, req)
@@ -663,6 +763,8 @@ type PrincipalServiceHandler interface {
 	GetAgentPrincipal(context.Context, *connect.Request[v1.GetAgentPrincipalRequest]) (*connect.Response[v1.Principal], error)
 	CreateAgentPrincipal(context.Context, *connect.Request[v1.CreateAgentPrincipalRequest]) (*connect.Response[v1.Principal], error)
 	RevokePrincipal(context.Context, *connect.Request[v1.RevokePrincipalRequest]) (*connect.Response[emptypb.Empty], error)
+	DisableAgentPrincipal(context.Context, *connect.Request[v1.DisableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error)
+	EnableAgentPrincipal(context.Context, *connect.Request[v1.EnableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error)
 	ListPrincipals(context.Context, *connect.Request[v1.ListPrincipalsRequest]) (*connect.Response[v1.ListPrincipalsResponse], error)
 }
 
@@ -697,6 +799,18 @@ func NewPrincipalServiceHandler(svc PrincipalServiceHandler, opts ...connect.Han
 		connect.WithSchema(principalServiceMethods.ByName("RevokePrincipal")),
 		connect.WithHandlerOptions(opts...),
 	)
+	principalServiceDisableAgentPrincipalHandler := connect.NewUnaryHandler(
+		PrincipalServiceDisableAgentPrincipalProcedure,
+		svc.DisableAgentPrincipal,
+		connect.WithSchema(principalServiceMethods.ByName("DisableAgentPrincipal")),
+		connect.WithHandlerOptions(opts...),
+	)
+	principalServiceEnableAgentPrincipalHandler := connect.NewUnaryHandler(
+		PrincipalServiceEnableAgentPrincipalProcedure,
+		svc.EnableAgentPrincipal,
+		connect.WithSchema(principalServiceMethods.ByName("EnableAgentPrincipal")),
+		connect.WithHandlerOptions(opts...),
+	)
 	principalServiceListPrincipalsHandler := connect.NewUnaryHandler(
 		PrincipalServiceListPrincipalsProcedure,
 		svc.ListPrincipals,
@@ -713,6 +827,10 @@ func NewPrincipalServiceHandler(svc PrincipalServiceHandler, opts ...connect.Han
 			principalServiceCreateAgentPrincipalHandler.ServeHTTP(w, r)
 		case PrincipalServiceRevokePrincipalProcedure:
 			principalServiceRevokePrincipalHandler.ServeHTTP(w, r)
+		case PrincipalServiceDisableAgentPrincipalProcedure:
+			principalServiceDisableAgentPrincipalHandler.ServeHTTP(w, r)
+		case PrincipalServiceEnableAgentPrincipalProcedure:
+			principalServiceEnableAgentPrincipalHandler.ServeHTTP(w, r)
 		case PrincipalServiceListPrincipalsProcedure:
 			principalServiceListPrincipalsHandler.ServeHTTP(w, r)
 		default:
@@ -738,6 +856,14 @@ func (UnimplementedPrincipalServiceHandler) CreateAgentPrincipal(context.Context
 
 func (UnimplementedPrincipalServiceHandler) RevokePrincipal(context.Context, *connect.Request[v1.RevokePrincipalRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PrincipalService.RevokePrincipal is not implemented"))
+}
+
+func (UnimplementedPrincipalServiceHandler) DisableAgentPrincipal(context.Context, *connect.Request[v1.DisableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PrincipalService.DisableAgentPrincipal is not implemented"))
+}
+
+func (UnimplementedPrincipalServiceHandler) EnableAgentPrincipal(context.Context, *connect.Request[v1.EnableAgentPrincipalRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PrincipalService.EnableAgentPrincipal is not implemented"))
 }
 
 func (UnimplementedPrincipalServiceHandler) ListPrincipals(context.Context, *connect.Request[v1.ListPrincipalsRequest]) (*connect.Response[v1.ListPrincipalsResponse], error) {

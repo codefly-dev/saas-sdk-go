@@ -3,7 +3,7 @@
 The **Go SDK for the saas accounts API** — a versioned, published client that
 solutions depend on instead of regenerating and vendoring their own `gen/` tree.
 
-Two layers:
+The SDK surfaces are:
 
 - **`gen/`** — the generated Connect + protobuf bindings for the accounts public
   proto (`saas.accounts.v1` and friends), generated from
@@ -29,10 +29,33 @@ Two layers:
       Repo:        "codefly-dev/module-saas-starter",
       Paths:       []string{"docs"},
       Collection:  "handbook",
+      FileExtensions: []string{".md"},
       AccessToken: token,
   })
   _, err = ds.Sync(ctx, org, src.GetId())
   ```
+- **`moduleauthority/`** — the module-principal side of installed operation
+  authority. A long-running module supplies its Codefly-projected registration
+  credential once; the client mints and refreshes the module's short-lived Work
+  Context, attaches it to the generic SaaS exchange, and returns the exchanged
+  child as an opaque `sdk-go` token. The signed-in person's retained parent and
+  the exchanged child remain request-local.
+
+  ```go
+  authority := moduleauthority.New(gw, moduleauthority.Credentials{
+      Prefix: projectedPrefix,
+      Secret: projectedSecret,
+  })
+  child, err := authority.ExchangeOperation(ctx, moduleauthority.ExchangeRequest{
+      BindingID: installedBindingID,
+      Parent:    retainedParent,
+      Lookup:    false,
+  })
+  ```
+
+  The gateway resolves the accounts service and supplies the transport; this
+  package accepts no service URL or port. SaaS owns the installed binding's
+  audience, scopes, lifetime, verification, and audit record.
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
 
