@@ -80,6 +80,9 @@ const (
 	// ModuleCapabilitiesServiceEmitAuditEventProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's EmitAuditEvent RPC.
 	ModuleCapabilitiesServiceEmitAuditEventProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent"
+	// ModuleCapabilitiesServiceListSubjectVisibilityProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's ListSubjectVisibility RPC.
+	ModuleCapabilitiesServiceListSubjectVisibilityProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/ListSubjectVisibility"
 	// ModuleCapabilitiesServiceFetchDatasourceBlobProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's FetchDatasourceBlob RPC.
 	ModuleCapabilitiesServiceFetchDatasourceBlobProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/FetchDatasourceBlob"
@@ -92,6 +95,9 @@ const (
 	// ModuleCapabilitiesServiceMintModuleWorkContextProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's MintModuleWorkContext RPC.
 	ModuleCapabilitiesServiceMintModuleWorkContextProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/MintModuleWorkContext"
+	// ModuleCapabilitiesServiceMintModuleOperationContextProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's MintModuleOperationContext RPC.
+	ModuleCapabilitiesServiceMintModuleOperationContextProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/MintModuleOperationContext"
 	// ModuleCapabilitiesServicePublishEventProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's PublishEvent RPC.
 	ModuleCapabilitiesServicePublishEventProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/PublishEvent"
@@ -151,6 +157,9 @@ type ModuleCapabilitiesServiceClient interface {
 	CancelApproval(context.Context, *connect.Request[v1.ModuleCancelApprovalRequest]) (*connect.Response[emptypb.Empty], error)
 	// EmitAuditEvent records a registered audit event on the tenant's spine.
 	EmitAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[emptypb.Empty], error)
+	// ListSubjectVisibility projects the tenant's team tree onto one viewer: the
+	// whole set of other subjects whose rows that viewer may read.
+	ListSubjectVisibility(context.Context, *connect.Request[v1.ModuleListSubjectVisibilityRequest]) (*connect.Response[v1.ModuleListSubjectVisibilityResponse], error)
 	// FetchDatasourceBlob streams one datasource file blob, re-fetched from the
 	// upstream provider, to the module that resolves a change set's blob sha.
 	// Authorized by the caller principal's datasource-queue grant and the source
@@ -171,6 +180,13 @@ type ModuleCapabilitiesServiceClient interface {
 	// from its registration prefix. Authorized by the module's own registration
 	// secret, like the credential exchange above.
 	MintModuleWorkContext(context.Context, *connect.Request[v1.ModuleMintWorkContextRequest]) (*connect.Response[v1.ModuleMintWorkContextResponse], error)
+	// MintModuleOperationContext issues, with no person present, a Work Context
+	// addressed to one of the calling module's installed operation audiences.
+	// Authorized by the module's identity secret like MintModuleWorkContext; owner
+	// and sole actor are the module service principal, the tenant is the one its
+	// principal declares, and the scopes are exactly the binding's declared
+	// headless scopes. A binding declaring none is refused.
+	MintModuleOperationContext(context.Context, *connect.Request[v1.ModuleMintOperationContextRequest]) (*connect.Response[v1.ModuleMintOperationContextResponse], error)
 	// PublishEvent appends one domain event to the outbox for the caller's tenant.
 	PublishEvent(context.Context, *connect.Request[v1.ModulePublishEventRequest]) (*connect.Response[v1.ModulePublishEventResponse], error)
 	// Subscribe creates or re-affirms a durable subscription for the caller.
@@ -284,6 +300,12 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("EmitAuditEvent")),
 			connect.WithClientOptions(opts...),
 		),
+		listSubjectVisibility: connect.NewClient[v1.ModuleListSubjectVisibilityRequest, v1.ModuleListSubjectVisibilityResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceListSubjectVisibilityProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("ListSubjectVisibility")),
+			connect.WithClientOptions(opts...),
+		),
 		fetchDatasourceBlob: connect.NewClient[v1.FetchDatasourceBlobRequest, v1.FetchDatasourceBlobChunk](
 			httpClient,
 			baseURL+ModuleCapabilitiesServiceFetchDatasourceBlobProcedure,
@@ -306,6 +328,12 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 			httpClient,
 			baseURL+ModuleCapabilitiesServiceMintModuleWorkContextProcedure,
 			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("MintModuleWorkContext")),
+			connect.WithClientOptions(opts...),
+		),
+		mintModuleOperationContext: connect.NewClient[v1.ModuleMintOperationContextRequest, v1.ModuleMintOperationContextResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceMintModuleOperationContextProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("MintModuleOperationContext")),
 			connect.WithClientOptions(opts...),
 		),
 		publishEvent: connect.NewClient[v1.ModulePublishEventRequest, v1.ModulePublishEventResponse](
@@ -358,10 +386,12 @@ type moduleCapabilitiesServiceClient struct {
 	getApproval                        *connect.Client[v1.ModuleGetApprovalRequest, v1.ModuleApproval]
 	cancelApproval                     *connect.Client[v1.ModuleCancelApprovalRequest, emptypb.Empty]
 	emitAuditEvent                     *connect.Client[v1.ModuleEmitAuditEventRequest, emptypb.Empty]
+	listSubjectVisibility              *connect.Client[v1.ModuleListSubjectVisibilityRequest, v1.ModuleListSubjectVisibilityResponse]
 	fetchDatasourceBlob                *connect.Client[v1.FetchDatasourceBlobRequest, v1.FetchDatasourceBlobChunk]
 	mintModuleRegistration             *connect.Client[v1.ModuleMintRegistrationRequest, v1.ModuleMintRegistrationResponse]
 	mintSolutionRegistration           *connect.Client[v1.SolutionMintRegistrationRequest, v1.SolutionMintRegistrationResponse]
 	mintModuleWorkContext              *connect.Client[v1.ModuleMintWorkContextRequest, v1.ModuleMintWorkContextResponse]
+	mintModuleOperationContext         *connect.Client[v1.ModuleMintOperationContextRequest, v1.ModuleMintOperationContextResponse]
 	publishEvent                       *connect.Client[v1.ModulePublishEventRequest, v1.ModulePublishEventResponse]
 	subscribe                          *connect.Client[v1.ModuleSubscribeRequest, v1.ModuleSubscribeResponse]
 	unsubscribe                        *connect.Client[v1.ModuleUnsubscribeRequest, emptypb.Empty]
@@ -448,6 +478,11 @@ func (c *moduleCapabilitiesServiceClient) EmitAuditEvent(ctx context.Context, re
 	return c.emitAuditEvent.CallUnary(ctx, req)
 }
 
+// ListSubjectVisibility calls saas.accounts.v1.ModuleCapabilitiesService.ListSubjectVisibility.
+func (c *moduleCapabilitiesServiceClient) ListSubjectVisibility(ctx context.Context, req *connect.Request[v1.ModuleListSubjectVisibilityRequest]) (*connect.Response[v1.ModuleListSubjectVisibilityResponse], error) {
+	return c.listSubjectVisibility.CallUnary(ctx, req)
+}
+
 // FetchDatasourceBlob calls saas.accounts.v1.ModuleCapabilitiesService.FetchDatasourceBlob.
 func (c *moduleCapabilitiesServiceClient) FetchDatasourceBlob(ctx context.Context, req *connect.Request[v1.FetchDatasourceBlobRequest]) (*connect.ServerStreamForClient[v1.FetchDatasourceBlobChunk], error) {
 	return c.fetchDatasourceBlob.CallServerStream(ctx, req)
@@ -467,6 +502,12 @@ func (c *moduleCapabilitiesServiceClient) MintSolutionRegistration(ctx context.C
 // MintModuleWorkContext calls saas.accounts.v1.ModuleCapabilitiesService.MintModuleWorkContext.
 func (c *moduleCapabilitiesServiceClient) MintModuleWorkContext(ctx context.Context, req *connect.Request[v1.ModuleMintWorkContextRequest]) (*connect.Response[v1.ModuleMintWorkContextResponse], error) {
 	return c.mintModuleWorkContext.CallUnary(ctx, req)
+}
+
+// MintModuleOperationContext calls
+// saas.accounts.v1.ModuleCapabilitiesService.MintModuleOperationContext.
+func (c *moduleCapabilitiesServiceClient) MintModuleOperationContext(ctx context.Context, req *connect.Request[v1.ModuleMintOperationContextRequest]) (*connect.Response[v1.ModuleMintOperationContextResponse], error) {
+	return c.mintModuleOperationContext.CallUnary(ctx, req)
 }
 
 // PublishEvent calls saas.accounts.v1.ModuleCapabilitiesService.PublishEvent.
@@ -536,6 +577,9 @@ type ModuleCapabilitiesServiceHandler interface {
 	CancelApproval(context.Context, *connect.Request[v1.ModuleCancelApprovalRequest]) (*connect.Response[emptypb.Empty], error)
 	// EmitAuditEvent records a registered audit event on the tenant's spine.
 	EmitAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[emptypb.Empty], error)
+	// ListSubjectVisibility projects the tenant's team tree onto one viewer: the
+	// whole set of other subjects whose rows that viewer may read.
+	ListSubjectVisibility(context.Context, *connect.Request[v1.ModuleListSubjectVisibilityRequest]) (*connect.Response[v1.ModuleListSubjectVisibilityResponse], error)
 	// FetchDatasourceBlob streams one datasource file blob, re-fetched from the
 	// upstream provider, to the module that resolves a change set's blob sha.
 	// Authorized by the caller principal's datasource-queue grant and the source
@@ -556,6 +600,13 @@ type ModuleCapabilitiesServiceHandler interface {
 	// from its registration prefix. Authorized by the module's own registration
 	// secret, like the credential exchange above.
 	MintModuleWorkContext(context.Context, *connect.Request[v1.ModuleMintWorkContextRequest]) (*connect.Response[v1.ModuleMintWorkContextResponse], error)
+	// MintModuleOperationContext issues, with no person present, a Work Context
+	// addressed to one of the calling module's installed operation audiences.
+	// Authorized by the module's identity secret like MintModuleWorkContext; owner
+	// and sole actor are the module service principal, the tenant is the one its
+	// principal declares, and the scopes are exactly the binding's declared
+	// headless scopes. A binding declaring none is refused.
+	MintModuleOperationContext(context.Context, *connect.Request[v1.ModuleMintOperationContextRequest]) (*connect.Response[v1.ModuleMintOperationContextResponse], error)
 	// PublishEvent appends one domain event to the outbox for the caller's tenant.
 	PublishEvent(context.Context, *connect.Request[v1.ModulePublishEventRequest]) (*connect.Response[v1.ModulePublishEventResponse], error)
 	// Subscribe creates or re-affirms a durable subscription for the caller.
@@ -665,6 +716,12 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("EmitAuditEvent")),
 		connect.WithHandlerOptions(opts...),
 	)
+	moduleCapabilitiesServiceListSubjectVisibilityHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceListSubjectVisibilityProcedure,
+		svc.ListSubjectVisibility,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("ListSubjectVisibility")),
+		connect.WithHandlerOptions(opts...),
+	)
 	moduleCapabilitiesServiceFetchDatasourceBlobHandler := connect.NewServerStreamHandler(
 		ModuleCapabilitiesServiceFetchDatasourceBlobProcedure,
 		svc.FetchDatasourceBlob,
@@ -687,6 +744,12 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 		ModuleCapabilitiesServiceMintModuleWorkContextProcedure,
 		svc.MintModuleWorkContext,
 		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("MintModuleWorkContext")),
+		connect.WithHandlerOptions(opts...),
+	)
+	moduleCapabilitiesServiceMintModuleOperationContextHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceMintModuleOperationContextProcedure,
+		svc.MintModuleOperationContext,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("MintModuleOperationContext")),
 		connect.WithHandlerOptions(opts...),
 	)
 	moduleCapabilitiesServicePublishEventHandler := connect.NewUnaryHandler(
@@ -751,6 +814,8 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 			moduleCapabilitiesServiceCancelApprovalHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceEmitAuditEventProcedure:
 			moduleCapabilitiesServiceEmitAuditEventHandler.ServeHTTP(w, r)
+		case ModuleCapabilitiesServiceListSubjectVisibilityProcedure:
+			moduleCapabilitiesServiceListSubjectVisibilityHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceFetchDatasourceBlobProcedure:
 			moduleCapabilitiesServiceFetchDatasourceBlobHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceMintModuleRegistrationProcedure:
@@ -759,6 +824,8 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 			moduleCapabilitiesServiceMintSolutionRegistrationHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceMintModuleWorkContextProcedure:
 			moduleCapabilitiesServiceMintModuleWorkContextHandler.ServeHTTP(w, r)
+		case ModuleCapabilitiesServiceMintModuleOperationContextProcedure:
+			moduleCapabilitiesServiceMintModuleOperationContextHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServicePublishEventProcedure:
 			moduleCapabilitiesServicePublishEventHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceSubscribeProcedure:
@@ -838,6 +905,10 @@ func (UnimplementedModuleCapabilitiesServiceHandler) EmitAuditEvent(context.Cont
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.EmitAuditEvent is not implemented"))
 }
 
+func (UnimplementedModuleCapabilitiesServiceHandler) ListSubjectVisibility(context.Context, *connect.Request[v1.ModuleListSubjectVisibilityRequest]) (*connect.Response[v1.ModuleListSubjectVisibilityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.ListSubjectVisibility is not implemented"))
+}
+
 func (UnimplementedModuleCapabilitiesServiceHandler) FetchDatasourceBlob(context.Context, *connect.Request[v1.FetchDatasourceBlobRequest], *connect.ServerStream[v1.FetchDatasourceBlobChunk]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.FetchDatasourceBlob is not implemented"))
 }
@@ -852,6 +923,10 @@ func (UnimplementedModuleCapabilitiesServiceHandler) MintSolutionRegistration(co
 
 func (UnimplementedModuleCapabilitiesServiceHandler) MintModuleWorkContext(context.Context, *connect.Request[v1.ModuleMintWorkContextRequest]) (*connect.Response[v1.ModuleMintWorkContextResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.MintModuleWorkContext is not implemented"))
+}
+
+func (UnimplementedModuleCapabilitiesServiceHandler) MintModuleOperationContext(context.Context, *connect.Request[v1.ModuleMintOperationContextRequest]) (*connect.Response[v1.ModuleMintOperationContextResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.MintModuleOperationContext is not implemented"))
 }
 
 func (UnimplementedModuleCapabilitiesServiceHandler) PublishEvent(context.Context, *connect.Request[v1.ModulePublishEventRequest]) (*connect.Response[v1.ModulePublishEventResponse], error) {

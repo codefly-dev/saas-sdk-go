@@ -7,6 +7,8 @@ import v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 type (
 	ModuleMintWorkContextRequest                    = v1.ModuleMintWorkContextRequest
 	ModuleMintWorkContextResponse                   = v1.ModuleMintWorkContextResponse
+	ModuleMintOperationContextRequest               = v1.ModuleMintOperationContextRequest
+	ModuleMintOperationContextResponse              = v1.ModuleMintOperationContextResponse
 	ModuleExchangeDelegatedOperationAudienceRequest = v1.ModuleExchangeDelegatedOperationAudienceRequest
 	IssuedWorkContext                               = v1.IssuedWorkContext
 )
