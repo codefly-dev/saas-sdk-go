@@ -12,7 +12,7 @@ version and to signal the breaking removal below.
   `headless_scopes` (`ModuleCapabilitiesService/MintModuleOperationContext`).
   Never cached; rejects a response that is expired or names another binding.
 - `gen/` regenerated from `module-saas-starter` commit
-  `27ce1f3cf37870d8a5bbf00ddad572b51fb21aec` (the PR adding that RPC), which also brings in
+  `5ec93916b8576fbd97ebf842176fa2a437670114` (the merge of #905, the PR adding that RPC), which also brings in
   the accounts contract changes landed since `b741ab52`: registered clients
   (`ClientRegistryService`), and the authentication, authorization, audit, teams
   and common message changes.
