@@ -108,6 +108,67 @@ func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest
 	return c.exchange(ctx, module, exchange)
 }
 
+// OperationContext is a Work Context minted with no person present for one
+// installed operation binding, with what SaaS reports it asserts.
+type OperationContext struct {
+	Token       codefly.WorkContextToken
+	ExpiresAt   time.Time
+	PrincipalID string
+	Tenant      string
+	Audience    string
+	BindingID   string
+}
+
+// MintModuleOperationContext obtains, with no person present, a Work Context
+// addressed to one of the module's installed operation audiences — the
+// capability background work presents to another module's service. It
+// authenticates with the module's own credentials, exactly like
+// ModuleWorkContext; SaaS derives audience, scopes (the binding's
+// headless_scopes and nothing else), tenant and a short lifetime from the
+// installation. A binding that declares no headless scopes is refused with
+// connect.CodePermissionDenied.
+//
+// The result is never cached: it lives about a minute, so a caller mints one
+// per call or short batch and discards it.
+func (c *Client) MintModuleOperationContext(ctx context.Context, bindingID string) (OperationContext, error) {
+	if bindingID == "" {
+		return OperationContext{}, ErrInvalidExchange
+	}
+	if c.credentials.Prefix == "" || c.credentials.Secret == "" {
+		return OperationContext{}, ErrInvalidCredentials
+	}
+	resp, err := c.inner.MintModuleOperationContext(ctx, connect.NewRequest(&v1.ModuleMintOperationContextRequest{
+		Prefix:  c.credentials.Prefix,
+		Secret:  c.credentials.Secret,
+		Binding: bindingID,
+	}))
+	if err != nil {
+		return OperationContext{}, fmt.Errorf("module authority: mint operation context: %w", err)
+	}
+	if resp.Msg.GetExpiresAt() == nil {
+		return OperationContext{}, fmt.Errorf("%w: missing expiry", ErrInvalidCapability)
+	}
+	expiresAt := resp.Msg.GetExpiresAt().AsTime()
+	if !expiresAt.After(c.now()) {
+		return OperationContext{}, fmt.Errorf("%w: capability is already expired", ErrInvalidCapability)
+	}
+	if resp.Msg.GetBinding() != bindingID {
+		return OperationContext{}, fmt.Errorf("%w: issued for another binding", ErrInvalidCapability)
+	}
+	token, err := codefly.ParseWorkContextToken(resp.Msg.GetToken())
+	if err != nil {
+		return OperationContext{}, fmt.Errorf("%w: malformed operation token", ErrInvalidCapability)
+	}
+	return OperationContext{
+		Token:       token,
+		ExpiresAt:   expiresAt,
+		PrincipalID: resp.Msg.GetPrincipalId(),
+		Tenant:      resp.Msg.GetTenant(),
+		Audience:    resp.Msg.GetAudience(),
+		BindingID:   resp.Msg.GetBinding(),
+	}, nil
+}
+
 func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkContextToken, error) {
 	if c.module.Encoded() != "" && c.now().Add(c.refreshSkew).Before(c.expiresAt) {
 		return c.module, nil

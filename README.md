@@ -56,6 +56,16 @@ The SDK surfaces are:
   The gateway resolves the accounts service and supplies the transport; this
   package accepts no service URL or port. SaaS owns the installed binding's
   audience, scopes, lifetime, verification, and audit record.
+
+  Background work with no person present mints its own operation context
+  instead. It carries exactly the binding's `headless_scopes`; a binding that
+  declares none is refused with `connect.CodePermissionDenied`. It lives about a
+  minute and is never cached, so mint one per call or short batch:
+
+  ```go
+  op, err := authority.MintModuleOperationContext(ctx, installedBindingID)
+  // op.Token goes in x-codefly-work-context on the call to op.Audience.
+  ```
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
 
