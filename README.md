@@ -16,6 +16,11 @@ The SDK surfaces are:
   resp, err := accounts.New(gw).Audit().QueryAuditLog(ctx, &v1.QueryAuditLogRequest{PageSize: 20})
   ```
 
+  The same facade covers the reads a solution needs to act for the signed-in
+  person: `Organizations().ListOrganizations`, `AccessibleScopes().ListAll`
+  (every page of the caller's scopes for one resource type and action — a
+  partial grant set is never returned) and `WorkContexts().StartTask`.
+
   `gw` is any value exposing `BaseURL() string` and `HTTPClient() *http.Client` —
   which `github.com/codefly-dev/solution-runtime-go.Gateway` already satisfies.
   The runtime stays accounts-agnostic and takes **no** dependency on this SDK.
