@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # The build-and-test walk from AGENTS.md, over every Go module in the repo.
+  # There is no go.work, so each go.mod is its own module and runs on its own.
+  # Modules under testdata/ are fixtures that internal/apiboundary loads (some
+  # are deliberately invalid), not modules to build.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build, vet, test, race
+        run: |
+          set -euo pipefail
+          mods=$(find . -name go.mod -not -path '*/testdata/*' -not -path './.git/*' -exec dirname {} \; | sort)
+          for m in $mods; do
+            echo "::group::module $m"
+            (cd "$m" && go build ./... && go vet ./... && go test ./... && go test -race ./...)
+            echo "::endgroup::"
+          done
+      - name: gofmt (hand-written code)
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l . | grep -v '^gen/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would rewrite these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  # gen/ must be exactly what buf.gen.yaml produces from the proto ref recorded
+  # in SOURCE.txt. The recipe is the one in the refresh-generated-api skill:
+  # this repo's buf.gen.yaml (plugin versions pinned there), run from
+  # module/services/accounts/proto of the source repo at the recorded commit.
+  # clean: true in the template wipes gen/ first, so a stale, extra or edited
+  # file all show up as a diff.
+  gen-drift:
+    runs-on: ubuntu-latest
+    env:
+      # buf compiles the proto image the plugins consume. Pinned so a buf
+      # release cannot move the tree; bump deliberately, as its own change.
+      BUF_VERSION: 1.73.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: sdk
+      - name: read the recorded source ref
+        id: source
+        run: |
+          set -euo pipefail
+          line=$(grep -m1 -oE 'codefly-dev/module-saas-starter@[0-9a-f]{40}' sdk/SOURCE.txt || true)
+          if [ -z "$line" ]; then
+            echo "::error file=SOURCE.txt::no 'codefly-dev/module-saas-starter@<40-hex sha>' ref found"
+            exit 1
+          fi
+          proto=$(grep -m1 -oE 'accounts public proto: [^)]+' sdk/SOURCE.txt | sed 's/^accounts public proto: //')
+          if [ -z "$proto" ]; then
+            echo "::error file=SOURCE.txt::no '(accounts public proto: <path>)' line found"
+            exit 1
+          fi
+          echo "sha=${line#*@}" >> "$GITHUB_OUTPUT"
+          echo "proto=$proto" >> "$GITHUB_OUTPUT"
+          echo "source: codefly-dev/module-saas-starter@${line#*@} ($proto)"
+      # The source repo is public, so the default token is enough.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: codefly-dev/module-saas-starter
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+          sparse-checkout: ${{ steps.source.outputs.proto }}
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: sdk/go.mod
+          cache-dependency-path: sdk/go.sum
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: ${{ env.BUF_VERSION }}
+          setup_only: true
+      - name: regenerate gen/
+        run: |
+          set -euo pipefail
+          sdk="$GITHUB_WORKSPACE/sdk"
+          cd "source/${{ steps.source.outputs.proto }}"
+          buf generate --template "$sdk/buf.gen.yaml" -o "$sdk"
+      - name: require no drift
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "gen/ reproduces byte-for-byte from $(grep -m1 -oE 'module-saas-starter@[0-9a-f]{40}' SOURCE.txt)"
+            exit 0
+          fi
+          echo "::error::gen/ does not match a regeneration from the ref in SOURCE.txt. Never hand-edit gen/: regenerate it (refresh-generated-api skill), or correct SOURCE.txt if it records the wrong ref."
+          git status --short
+          git add -A -N
+          git --no-pager diff --stat
+          git --no-pager diff | head -n 400
+          exit 1

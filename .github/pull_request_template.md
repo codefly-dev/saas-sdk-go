@@ -15,5 +15,6 @@ hack, link the issue against the owner. -->
 
 ## Not verified
 
-<!-- What you could not exercise. This repo has no CI, so nothing else will say
-it. "Nothing" is a fine answer when it is true. -->
+<!-- What you could not exercise. CI covers only the build walk and the gen/
+drift check, so nothing else will say it. "Nothing" is a fine answer when it is
+true. -->

@@ -52,15 +52,14 @@ Fleet standard — [handbook#68](https://github.com/obin-ai/handbook/issues/68).
   before checking its claim: a `gen/` panic at `init()` reporting a malformed
   descriptor has meant a text-rewritten module path, not a bad protobuf
   release.
-- **Say what you did not verify.** Unverified is not the same as working. This
-  repo has no CI (below), so nothing catches the difference for you — if you
-  could not exercise something, the PR says so.
+- **Say what you did not verify.** Unverified is not the same as working. CI
+  (below) runs the build walk and the `gen/` drift check, nothing more — if
+  you could not exercise something else, the PR says so.
 
 ## Build and test
 
-**This repo has no CI.** There are no workflows and no PR has ever reported a
-check, so this walk is the entire gate and it runs only if you run it. Every
-command here was run against this tree, from a clean checkout:
+`.github/workflows/ci.yml` runs this walk on every pull request and push to
+`main`, for every `go.mod` outside `testdata/`. Run it locally first:
 
 ```bash
 go build ./...
@@ -75,9 +74,10 @@ type-checks the entire public surface against the boundary rule below, and
 `internal/agentcontext` checks these context files. There is no lint config —
 `golangci-lint` being installed on your machine does not make it a gate here.
 
-Nothing runs this walk on a PR. A workflow that does is worth filing; until one
-exists, a reviewer cannot distinguish a run walk from a skipped one, which is
-why the PR template asks what you did not verify.
+The same workflow's `gen-drift` job regenerates `gen/` from the ref in
+`SOURCE.txt` with this repo's `buf.gen.yaml` (buf itself pinned in the
+workflow) and fails on any difference — the reproduction check from the
+`refresh-generated-api` skill, run for you.
 
 ## Where things live
 
