@@ -7,6 +7,13 @@ exact ref). The version is bumped to `0.1.0` to match the saas-starter module
 version and to signal the breaking removal below.
 
 ### Added
+- `accounts.Client.Organizations().ListOrganizations`,
+  `accounts.Client.AccessibleScopes()` (`ListMyAccessibleScopes`, and `ListAll`,
+  which drains every page for one resource type and action, refuses a repeated
+  cursor and caps the drain at `MaxAccessibleScopePages`, and never returns a
+  partial set), and `accounts.Client.WorkContexts().StartTask`, with alias
+  re-exports for every message they take or return. The stubs were already in
+  `gen/`; nothing was regenerated.
 - `moduleauthority.Client.MintModuleOperationContext` — mints, with no person
   present, a Work Context for one installed operation binding's
   `headless_scopes` (`ModuleCapabilitiesService/MintModuleOperationContext`).

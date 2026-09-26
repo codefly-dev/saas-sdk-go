@@ -25,4 +25,36 @@ type (
 	QueryAuditLogResponse = v1.QueryAuditLogResponse
 	// AuditEvent is one entry of a QueryAuditLogResponse.
 	AuditEvent = v1.AuditEvent
+
+	// Organization is one organization the caller belongs to.
+	Organization = v1.Organization
+	// ListOrganizationsRequest is the (empty) request behind
+	// OrganizationsClient.ListOrganizations.
+	ListOrganizationsRequest = v1.ListOrganizationsRequest
+
+	// ListMyAccessibleScopesRequest is the request for
+	// AccessibleScopesClient.ListMyAccessibleScopes.
+	ListMyAccessibleScopesRequest = v1.ListMyAccessibleScopesRequest
+	// ListAccessibleScopesResponse is one page of accessible scopes.
+	ListAccessibleScopesResponse = v1.ListAccessibleScopesResponse
+	// AccessibleScope is one scope node the caller may act on.
+	AccessibleScope = v1.AccessibleScope
+
+	// StartTaskWorkContextRequest is the request for WorkContextsClient.StartTask.
+	StartTaskWorkContextRequest = v1.StartTaskWorkContextRequest
+	// WorkContextScope is one slice of authority a Work Context carries.
+	WorkContextScope = v1.WorkContextScope
+	// WorkContextReplayPolicy selects whether an issued context may be replayed.
+	WorkContextReplayPolicy = v1.WorkContextReplayPolicy
+	// IssuedWorkContext is the signed context accounts issued, with the
+	// principals it resolved.
+	IssuedWorkContext = v1.IssuedWorkContext
+)
+
+// WorkContextReplayPolicy values, re-exported because an alias does not carry
+// the constants declared with the type.
+const (
+	WorkContextReplayPolicyUnspecified = v1.WorkContextReplayPolicy_WORK_CONTEXT_REPLAY_POLICY_UNSPECIFIED
+	WorkContextReplayPolicyIdempotent  = v1.WorkContextReplayPolicy_WORK_CONTEXT_REPLAY_POLICY_IDEMPOTENT
+	WorkContextReplayPolicySingleUse   = v1.WorkContextReplayPolicy_WORK_CONTEXT_REPLAY_POLICY_SINGLE_USE
 )
