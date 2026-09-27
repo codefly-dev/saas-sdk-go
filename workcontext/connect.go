@@ -7,7 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 // ConnectInterceptor verifies the Work Context on every handler-side RPC —
@@ -80,6 +80,8 @@ func connectCode(err error) connect.Code {
 		return connect.CodeUnauthenticated
 	case http.StatusForbidden:
 		return connect.CodePermissionDenied
+	case http.StatusServiceUnavailable:
+		return connect.CodeUnavailable
 	default:
 		return connect.CodeInternal
 	}

@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
+	"github.com/codefly-dev/sdk-go/workcontext/grpctransport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -121,11 +122,11 @@ func TestGRPCInterceptorReadsTheCarrierSDKGoWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseWorkContextToken: %v", err)
 	}
-	execution, err := codefly.NewExecutionContext(token, "list-logins")
+	execution, err := grpctransport.NewExecutionContext(token, "list-logins")
 	if err != nil {
 		t.Fatalf("NewExecutionContext: %v", err)
 	}
-	outgoing, err := codefly.WithGRPCExecutionContext(context.Background(), execution)
+	outgoing, err := grpctransport.WithGRPCExecutionContext(context.Background(), execution)
 	if err != nil {
 		t.Fatalf("WithGRPCExecutionContext: %v", err)
 	}

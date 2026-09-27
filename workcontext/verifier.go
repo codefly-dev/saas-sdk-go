@@ -50,7 +50,7 @@ import (
 	"time"
 
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 const (
@@ -67,8 +67,9 @@ var (
 	// ErrMissing reports a request that carries no Work Context at all.
 	ErrMissing = errors.New("missing Codefly Work Context")
 
-	// ErrInvalid is sdk-go's sentinel: every parse, signature, time, issuer,
-	// type, and JWKS failure wraps it. A caller checks it with errors.Is.
+	// ErrInvalid is sdk-go's sentinel: every parse, signature, time, issuer
+	// and type failure, and a key set that is served but unusable, wraps it. A
+	// caller checks it with errors.Is.
 	ErrInvalid = codefly.ErrWorkContextInvalid
 
 	// ErrAudience reports a context that verifies but was minted for another
@@ -78,6 +79,13 @@ var (
 
 	// ErrDenied is sdk-go's sentinel for a scope the context does not grant.
 	ErrDenied = codefly.ErrWorkContextDenied
+
+	// ErrUnavailable is sdk-go's sentinel for a verification that could not
+	// run: the key set could not be fetched or read. It is not an ErrInvalid —
+	// the token was never judged, so a caller must not be told it is bad — and
+	// it never yields claims. It maps to 503 / Unavailable, which a caller
+	// retries.
+	ErrUnavailable = codefly.ErrWorkContextUnavailable
 )
 
 // Gateway is the minimal surface this package needs from the solution runtime

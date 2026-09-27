@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 // HTTPMiddleware verifies the Work Context on every request and hands the
@@ -58,6 +58,8 @@ func HTTPStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrMissing), errors.Is(err, ErrInvalid):
 		return http.StatusUnauthorized
+	case errors.Is(err, ErrUnavailable):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

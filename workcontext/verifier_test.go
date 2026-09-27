@@ -218,15 +218,26 @@ func TestJWKSVerifierNeverFailsOpen(t *testing.T) {
 			return workcontext.JWKS(workcontext.JWKSURL(accounts.URL), nil)
 		}},
 	}
+	// A key set that cannot be reached is unavailable (503), not a verdict on
+	// the token; one that is served but unusable is invalid (401). Neither
+	// ever yields claims.
+	unavailable := map[string]bool{"server error": true, "unreachable": true}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			v := newVerifier(t, workcontext.Config{Keys: tc.setup(t), RequestTimeout: time.Second})
 			wc, err := v.Verify(context.Background(), mintValid(t))
-			if wc != nil || !errors.Is(err, workcontext.ErrInvalid) {
-				t.Fatalf("Verify = %v, %v; want ErrInvalid and no claims", wc, err)
+			want, status := workcontext.ErrInvalid, http.StatusUnauthorized
+			if unavailable[tc.name] {
+				want, status = workcontext.ErrUnavailable, http.StatusServiceUnavailable
 			}
-			if got := workcontext.HTTPStatus(err); got != http.StatusUnauthorized {
-				t.Errorf("HTTPStatus = %d, want 401", got)
+			if wc != nil || !errors.Is(err, want) {
+				t.Fatalf("Verify = %v, %v; want %v and no claims", wc, err, want)
+			}
+			if errors.Is(err, workcontext.ErrInvalid) && unavailable[tc.name] {
+				t.Fatalf("an unreachable key set was reported as an invalid token: %v", err)
+			}
+			if got := workcontext.HTTPStatus(err); got != status {
+				t.Errorf("HTTPStatus = %d, want %d", got, status)
 			}
 		})
 	}

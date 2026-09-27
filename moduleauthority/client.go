@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"

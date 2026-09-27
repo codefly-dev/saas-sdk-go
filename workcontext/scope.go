@@ -4,7 +4,7 @@ import (
 	"context"
 
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 // effectiveScopes returns the scopes that authorize this call: the owner's
