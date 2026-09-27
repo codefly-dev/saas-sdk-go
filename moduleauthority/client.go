@@ -28,6 +28,7 @@ import (
 	codefly "github.com/codefly-dev/sdk-go/workcontext"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
+	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
 const defaultRefreshSkew = 30 * time.Second
@@ -48,6 +49,9 @@ var (
 	ErrPermissionDenied = errors.New("module authority: permission denied")
 	// ErrInvalidSeams: New was given an incomplete or unsafe seam. See Seams.
 	ErrInvalidSeams = errors.New("module authority: invalid seams")
+	// ErrNoAuthority: a call needs accounts' authority endpoint, and this client
+	// was built without one (a mint-only client).
+	ErrNoAuthority = errors.New("module authority: this client has no authority endpoint")
 )
 
 // Gateway is the host gateway seam: its REST base URL and the HTTP client to
@@ -65,7 +69,11 @@ type Seams struct {
 	// Gateway is the host auth-gateway's REST endpoint, where the module
 	// broker mints Work Contexts. Required.
 	Gateway Gateway
-	// Authority is accounts' `authority` gRPC endpoint. Required.
+	// Authority is accounts' `authority` gRPC endpoint, which serves the
+	// exchanges and every other Work-Context-authenticated call. A module that
+	// only mints (the broker's work) leaves it zero: New then builds a
+	// mint-only client, and every call that needs the endpoint fails with
+	// ErrNoAuthority instead of dialling an address nobody vouched for.
 	Authority Authority
 	// InternalToken is the host's internal perimeter credential, sent as
 	// X-Codefly-Internal-Token to both seams. Required.
@@ -120,8 +128,8 @@ type Client struct {
 }
 
 // New binds module authority to the host's two seams. It fails closed, with
-// ErrInvalidSeams, on a missing gateway, gateway base URL, authority address
-// or internal token, and on any plaintext seam to a non-loopback address the
+// ErrInvalidSeams, on a missing gateway, gateway base URL or internal token,
+// on an authority seam that is set but has no address, and on any plaintext seam to a non-loopback address the
 // consumer has not asserted protected; and with ErrInvalidCredentials on an
 // empty prefix or secret. It opens no connection.
 func New(seams Seams, credentials Credentials) (*Client, error) {
@@ -135,9 +143,11 @@ func New(seams Seams, credentials Credentials) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	authority, err := newAuthorityEndpoint(seams)
-	if err != nil {
-		return nil, err
+	var authority authorityEndpoint
+	if seams.Authority != (Authority{}) {
+		if authority, err = newAuthorityEndpoint(seams); err != nil {
+			return nil, err
+		}
 	}
 	return &Client{
 		broker:      gateway,
@@ -171,7 +181,7 @@ func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest
 	if exchange.BindingID == "" || exchange.Parent.Encoded() == "" {
 		return codefly.WorkContextToken{}, ErrInvalidExchange
 	}
-	issued, err := callAsModule(ctx, c, c.authority.capabilities.ExchangeDelegatedOperationAudience, &v1.ModuleExchangeDelegatedOperationAudienceRequest{
+	issued, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.ExchangeDelegatedOperationAudience, &v1.ModuleExchangeDelegatedOperationAudienceRequest{
 		BindingId:              exchange.BindingID,
 		ParentWorkContextToken: exchange.Parent.Encoded(),
 		Lookup:                 exchange.Lookup,
