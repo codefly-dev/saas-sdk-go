@@ -8,6 +8,40 @@ version and to signal the breaking removal below.
 
 ### Changed (breaking)
 
+- `moduleauthority` now reaches the host through the two seams it actually
+  serves a composed module, and its constructor takes them explicitly:
+  `New(Seams{Gateway, Authority, InternalToken, AllowInsecureHTTP},
+  Credentials) (*Client, error)`, plus `Client.Close()`. Before this, every
+  call was a Connect RPC to `<gateway>/saas.accounts.v1.ModuleCapabilitiesService/<Method>`,
+  which the host's gateway never serves (its metadata refuses to expose any
+  `EXPOSURE_INTERNAL` procedure at the edge, and a live gateway answers 404
+  "endpoint not exposed"), so every consumer failed against a real host; the
+  tests passed only against a fake ModuleCapabilitiesService. Now:
+  - the three mints go to the gateway's module broker as JSON
+    (`POST /modules/_work-context`, `/modules/_operation-context`,
+    `/modules/_source-operation-context`) with `X-Codefly-Internal-Token` and
+    `X-Codefly-Module-Secret`;
+  - `ExchangeOperation` calls accounts' `authority` gRPC endpoint with the
+    module Work Context in `x-codefly-work-context` and the internal token in
+    `x-codefly-internal-token`, and still refreshes a rejected module Work
+    Context once.
+
+  `New` fails closed with the new `ErrInvalidSeams` on a missing internal
+  token, gateway, gateway base URL or authority address, and on a plaintext
+  seam to anything but `localhost` or a loopback IP unless the consumer sets
+  `AllowInsecureHTTP` from its own mesh-protection assertion; and with
+  `ErrInvalidCredentials` on an empty prefix or secret. The broker client never
+  follows a redirect. The `connect.ClientOption` variadic is gone.
+
+  Refusals change shape with the transport: a broker answer other than 200 is
+  a `*BrokerError` (path, status, reason), wrapped with `ErrInvalidCredentials`
+  on 401 and the new `ErrPermissionDenied` on an operation mint's 403 (which was
+  `connect.CodePermissionDenied`). The source mint maps 412
+  `DELEGATION_MISSING` to `ErrDelegationMissing`, 403 `DELEGATION_REVOKED` to
+  `ErrDelegationRevoked`, and every other 403 — `DELEGATION_INVALID`, or a body
+  naming no reason — to `ErrDelegationInvalid`; it no longer reads a
+  `google.rpc.ErrorInfo`. Consumers (one runtime module and one document-store
+  module) move with this release.
 - The SDK now builds on `github.com/codefly-dev/sdk-go/workcontext` instead of
   the root `github.com/codefly-dev/sdk-go` package, whose Work Context API
   moved to that module in sdk-go v0.2. `moduleauthority` and `workcontext`

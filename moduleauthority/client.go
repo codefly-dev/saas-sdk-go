@@ -1,34 +1,93 @@
 // Package moduleauthority exchanges a composed module's installed authority
-// through the SaaS module-capabilities surface.
+// with the SaaS host, over the two seams the host actually serves a composed
+// module:
+//
+//   - the gateway's module broker (REST, JSON over HTTP on the gateway base
+//     URL) — where a module presents its identity secret and is minted a Work
+//     Context: POST /modules/_work-context, /modules/_operation-context and
+//     /modules/_source-operation-context. The Mint* RPCs of
+//     ModuleCapabilitiesService are EXPOSURE_INTERNAL and are never served at
+//     the gateway edge; the broker is how a module reaches them.
+//   - accounts' named `authority` gRPC endpoint — where a module calls, with
+//     its module Work Context, the procedures the host exports to composed
+//     modules (ExchangeDelegatedOperationAudience among them).
+//
+// Neither address is configured here: the consumer passes what Codefly
+// resolved for it, in Seams.
 package moduleauthority
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
-	"connectrpc.com/connect"
 	codefly "github.com/codefly-dev/sdk-go/workcontext"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
-	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
 const defaultRefreshSkew = 30 * time.Second
 
 var (
+	// ErrInvalidCredentials: the module's credentials are missing, or the
+	// broker refused to prove the module (HTTP 401 — a wrong identity secret or
+	// a wrong internal token; the host does not say which).
 	ErrInvalidCredentials = errors.New("module authority: invalid module credentials")
-	ErrInvalidExchange    = errors.New("module authority: invalid operation exchange")
-	ErrInvalidCapability  = errors.New("module authority: SaaS returned an invalid Work Context")
+	// ErrInvalidExchange: the request names no binding, parent or source.
+	ErrInvalidExchange = errors.New("module authority: invalid operation exchange")
+	// ErrInvalidCapability: SaaS answered with a Work Context this client
+	// refuses to hand out (malformed, expired, or issued for something else).
+	ErrInvalidCapability = errors.New("module authority: SaaS returned an invalid Work Context")
+	// ErrPermissionDenied: the module is proven but may not have what it asked
+	// for (HTTP 403 from the operation mint: a binding that declares no
+	// headless scopes, or one the module does not hold).
+	ErrPermissionDenied = errors.New("module authority: permission denied")
+	// ErrInvalidSeams: New was given an incomplete or unsafe seam. See Seams.
+	ErrInvalidSeams = errors.New("module authority: invalid seams")
 )
 
-// Gateway is the minimal solution-runtime gateway surface used by the client.
+// Gateway is the host gateway seam: its REST base URL and the HTTP client to
+// reach it with, as the consumer's runtime resolved them. solution-runtime's
+// gateway satisfies it.
 type Gateway interface {
 	BaseURL() string
 	HTTPClient() *http.Client
+}
+
+// Seams are the host addresses and the perimeter credential this client
+// talks to. Every field is resolved by the consumer from its Codefly
+// composition; nothing has a default.
+type Seams struct {
+	// Gateway is the host auth-gateway's REST endpoint, where the module
+	// broker mints Work Contexts. Required.
+	Gateway Gateway
+	// Authority is accounts' `authority` gRPC endpoint. Required.
+	Authority Authority
+	// InternalToken is the host's internal perimeter credential, sent as
+	// X-Codefly-Internal-Token to both seams. Required.
+	InternalToken string
+	// AllowInsecureHTTP is the consumer's explicit assertion that plaintext
+	// hops to a non-loopback address are protected out of band (every
+	// in-cluster hop carried by a mutually authenticated mesh). It must come
+	// from the consumer's own configured assertion — never inferred. Without
+	// it, the internal token and the module secret are sent only over https
+	// (or TLS) or to a loopback address, and New refuses anything else.
+	AllowInsecureHTTP bool
+}
+
+// Authority addresses accounts' `authority` gRPC endpoint.
+type Authority struct {
+	// Address is the endpoint's host:port, with no scheme.
+	Address string
+	// TLS, when set, dials the endpoint with this TLS configuration. When nil
+	// the endpoint is dialled as HTTP/2 cleartext (h2c) — the host's in-cluster
+	// contract — which Seams admits only for a loopback address or under
+	// AllowInsecureHTTP.
+	TLS *tls.Config
 }
 
 // Credentials are the Codefly-projected identity of the calling module.
@@ -49,7 +108,8 @@ type ExchangeRequest struct {
 // Client keeps only the module's short-lived Work Context in memory. Parent
 // and exchanged capabilities are request-local and are never cached.
 type Client struct {
-	inner       accountsv1connect.ModuleCapabilitiesServiceClient
+	broker      broker
+	authority   authorityEndpoint
 	credentials Credentials
 	now         func() time.Time
 	refreshSkew time.Duration
@@ -59,15 +119,40 @@ type Client struct {
 	expiresAt time.Time
 }
 
-// New binds module authority exchange to the gateway. The gateway supplies
-// both service discovery and transport; no service address is configured here.
-func New(gw Gateway, credentials Credentials, opts ...connect.ClientOption) *Client {
+// New binds module authority to the host's two seams. It fails closed, with
+// ErrInvalidSeams, on a missing gateway, gateway base URL, authority address
+// or internal token, and on any plaintext seam to a non-loopback address the
+// consumer has not asserted protected; and with ErrInvalidCredentials on an
+// empty prefix or secret. It opens no connection.
+func New(seams Seams, credentials Credentials) (*Client, error) {
+	if credentials.Prefix == "" || credentials.Secret == "" {
+		return nil, ErrInvalidCredentials
+	}
+	if seams.InternalToken == "" {
+		return nil, fmt.Errorf("%w: the internal token is required", ErrInvalidSeams)
+	}
+	gateway, err := newBroker(seams)
+	if err != nil {
+		return nil, err
+	}
+	authority, err := newAuthorityEndpoint(seams)
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
-		inner:       accountsv1connect.NewModuleCapabilitiesServiceClient(gw.HTTPClient(), gw.BaseURL(), opts...),
+		broker:      gateway,
+		authority:   authority,
 		credentials: credentials,
 		now:         time.Now,
 		refreshSkew: defaultRefreshSkew,
-	}
+	}, nil
+}
+
+// Close releases the idle connections this client holds to the authority
+// endpoint. The gateway's HTTP client is the consumer's and is left alone.
+func (c *Client) Close() error {
+	c.authority.close()
+	return nil
 }
 
 // ModuleWorkContext returns a current module capability, refreshing it before
@@ -79,33 +164,26 @@ func (c *Client) ModuleWorkContext(ctx context.Context) (codefly.WorkContextToke
 }
 
 // ExchangeOperation exchanges the signed-in person's retained parent
-// capability through one immutable installed operation binding. A rejected
-// module capability is refreshed and retried once; the parent is never stored.
+// capability through one immutable installed operation binding, on the
+// authority endpoint. A rejected module capability is refreshed and retried
+// once; the parent is never stored.
 func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest) (codefly.WorkContextToken, error) {
 	if exchange.BindingID == "" || exchange.Parent.Encoded() == "" {
 		return codefly.WorkContextToken{}, ErrInvalidExchange
 	}
-
-	module, err := c.ModuleWorkContext(ctx)
+	issued, err := callAsModule(ctx, c, c.authority.capabilities.ExchangeDelegatedOperationAudience, &v1.ModuleExchangeDelegatedOperationAudienceRequest{
+		BindingId:              exchange.BindingID,
+		ParentWorkContextToken: exchange.Parent.Encoded(),
+		Lookup:                 exchange.Lookup,
+	})
 	if err != nil {
-		return codefly.WorkContextToken{}, err
+		return codefly.WorkContextToken{}, fmt.Errorf("module authority: exchange operation audience: %w", err)
 	}
-	issued, err := c.exchange(ctx, module, exchange)
-	if connect.CodeOf(err) != connect.CodeUnauthenticated {
-		return issued, err
+	token, err := codefly.ParseWorkContextToken(issued.GetToken())
+	if err != nil {
+		return codefly.WorkContextToken{}, fmt.Errorf("%w: malformed exchanged token", ErrInvalidCapability)
 	}
-
-	c.mu.Lock()
-	if c.module.Encoded() == module.Encoded() {
-		c.module = codefly.WorkContextToken{}
-		c.expiresAt = time.Time{}
-	}
-	module, refreshErr := c.moduleWorkContextLocked(ctx)
-	c.mu.Unlock()
-	if refreshErr != nil {
-		return codefly.WorkContextToken{}, refreshErr
-	}
-	return c.exchange(ctx, module, exchange)
+	return token, nil
 }
 
 // OperationContext is a Work Context minted with no person present for one
@@ -122,11 +200,12 @@ type OperationContext struct {
 // MintModuleOperationContext obtains, with no person present, a Work Context
 // addressed to one of the module's installed operation audiences — the
 // capability background work presents to another module's service. It
-// authenticates with the module's own credentials, exactly like
-// ModuleWorkContext; SaaS derives audience, scopes (the binding's
-// headless_scopes and nothing else), tenant and a short lifetime from the
-// installation. A binding that declares no headless scopes is refused with
-// connect.CodePermissionDenied.
+// authenticates with the module's own credentials at the gateway broker
+// (POST /modules/_operation-context), exactly like ModuleWorkContext; SaaS
+// derives audience, scopes (the binding's headless_scopes and nothing else),
+// tenant and a short lifetime from the installation. A binding that declares
+// no headless scopes, or that the module does not hold, is refused with
+// ErrPermissionDenied.
 //
 // The result is never cached: it lives about a minute, so a caller mints one
 // per call or short batch and discards it.
@@ -134,39 +213,21 @@ func (c *Client) MintModuleOperationContext(ctx context.Context, bindingID strin
 	if bindingID == "" {
 		return OperationContext{}, ErrInvalidExchange
 	}
-	if c.credentials.Prefix == "" || c.credentials.Secret == "" {
-		return OperationContext{}, ErrInvalidCredentials
+	var issued operationContextResponse
+	if err := c.broker.post(ctx, operationContextPath, c.credentials.Secret, map[string]string{
+		"prefix":  c.credentials.Prefix,
+		"binding": bindingID,
+	}, &issued); err != nil {
+		return OperationContext{}, fmt.Errorf("module authority: mint operation context: %w", brokerRefusal(err))
 	}
-	resp, err := c.inner.MintModuleOperationContext(ctx, connect.NewRequest(&v1.ModuleMintOperationContextRequest{
-		Prefix:  c.credentials.Prefix,
-		Secret:  c.credentials.Secret,
-		Binding: bindingID,
-	}))
+	op, err := issued.operationContext(c.now())
 	if err != nil {
-		return OperationContext{}, fmt.Errorf("module authority: mint operation context: %w", err)
+		return OperationContext{}, err
 	}
-	if resp.Msg.GetExpiresAt() == nil {
-		return OperationContext{}, fmt.Errorf("%w: missing expiry", ErrInvalidCapability)
-	}
-	expiresAt := resp.Msg.GetExpiresAt().AsTime()
-	if !expiresAt.After(c.now()) {
-		return OperationContext{}, fmt.Errorf("%w: capability is already expired", ErrInvalidCapability)
-	}
-	if resp.Msg.GetBinding() != bindingID {
+	if op.BindingID != bindingID {
 		return OperationContext{}, fmt.Errorf("%w: issued for another binding", ErrInvalidCapability)
 	}
-	token, err := codefly.ParseWorkContextToken(resp.Msg.GetToken())
-	if err != nil {
-		return OperationContext{}, fmt.Errorf("%w: malformed operation token", ErrInvalidCapability)
-	}
-	return OperationContext{
-		Token:       token,
-		ExpiresAt:   expiresAt,
-		PrincipalID: resp.Msg.GetPrincipalId(),
-		Tenant:      resp.Msg.GetTenant(),
-		Audience:    resp.Msg.GetAudience(),
-		BindingID:   resp.Msg.GetBinding(),
-	}, nil
+	return op, nil
 }
 
 func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkContextToken, error) {
@@ -176,22 +237,17 @@ func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkConte
 	if c.credentials.Prefix == "" || c.credentials.Secret == "" {
 		return codefly.WorkContextToken{}, ErrInvalidCredentials
 	}
-
-	resp, err := c.inner.MintModuleWorkContext(ctx, connect.NewRequest(&v1.ModuleMintWorkContextRequest{
-		Prefix: c.credentials.Prefix,
-		Secret: c.credentials.Secret,
-	}))
+	var issued workContextResponse
+	if err := c.broker.post(ctx, workContextPath, c.credentials.Secret, map[string]string{
+		"prefix": c.credentials.Prefix,
+	}, &issued); err != nil {
+		return codefly.WorkContextToken{}, fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
+	}
+	expiresAt, err := parseExpiry(issued.ExpiresAt, c.now())
 	if err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("module authority: mint module Work Context: %w", err)
+		return codefly.WorkContextToken{}, err
 	}
-	if resp.Msg.GetExpiresAt() == nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("%w: missing expiry", ErrInvalidCapability)
-	}
-	expiresAt := resp.Msg.GetExpiresAt().AsTime()
-	if !expiresAt.After(c.now()) {
-		return codefly.WorkContextToken{}, fmt.Errorf("%w: capability is already expired", ErrInvalidCapability)
-	}
-	token, err := codefly.ParseWorkContextToken(resp.Msg.GetToken())
+	token, err := codefly.ParseWorkContextToken(issued.Token)
 	if err != nil {
 		return codefly.WorkContextToken{}, fmt.Errorf("%w: malformed token", ErrInvalidCapability)
 	}
@@ -200,20 +256,12 @@ func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkConte
 	return token, nil
 }
 
-func (c *Client) exchange(ctx context.Context, module codefly.WorkContextToken, exchange ExchangeRequest) (codefly.WorkContextToken, error) {
-	req := connect.NewRequest(&v1.ModuleExchangeDelegatedOperationAudienceRequest{
-		BindingId:              exchange.BindingID,
-		ParentWorkContextToken: exchange.Parent.Encoded(),
-		Lookup:                 exchange.Lookup,
-	})
-	req.Header().Set(codefly.WorkContextHeaderName, module.Encoded())
-	resp, err := c.inner.ExchangeDelegatedOperationAudience(ctx, req)
-	if err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("module authority: exchange operation audience: %w", err)
+// forgetModuleWorkContext drops the cached module capability if it is still
+// the one a call was rejected with, so the next caller mints a fresh one. A
+// capability another caller already refreshed is kept.
+func (c *Client) forgetModuleWorkContext(rejected codefly.WorkContextToken) {
+	if c.module.Encoded() == rejected.Encoded() {
+		c.module = codefly.WorkContextToken{}
+		c.expiresAt = time.Time{}
 	}
-	token, err := codefly.ParseWorkContextToken(resp.Msg.GetToken())
-	if err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("%w: malformed exchanged token", ErrInvalidCapability)
-	}
-	return token, nil
 }
