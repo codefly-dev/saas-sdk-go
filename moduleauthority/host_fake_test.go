@@ -252,6 +252,7 @@ type authorityCall struct {
 	internalToken []string
 	workContext   []string
 	request       *v1.ModuleExchangeDelegatedOperationAudienceRequest
+	notice        *v1.ModuleNotifyOrgAdminsRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
@@ -259,6 +260,7 @@ type authorityCall struct {
 var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure: true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
+	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
 }
 
 type fakeAuthority struct {
@@ -291,9 +293,17 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
 	call := authorityCall{method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	// Each procedure's own request message: decoding NotifyOrgAdmins as an
+	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
-	recvErr := stream.RecvMsg(request)
-	call.request = request
+	var recvErr error
+	if method == accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure {
+		call.notice = &v1.ModuleNotifyOrgAdminsRequest{}
+		recvErr = stream.RecvMsg(call.notice)
+	} else {
+		recvErr = stream.RecvMsg(request)
+		call.request = request
+	}
 	a.mu.Lock()
 	a.calls = append(a.calls, call)
 	a.mu.Unlock()
@@ -313,6 +323,17 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.notice != nil {
+		// ModuleNotifyOrgAdmins: the host resolves the administrators and
+		// answers only whether any received the notice.
+		if call.notice.GetTenant() == "" || call.notice.GetCategory() == "" {
+			return status.Error(codes.InvalidArgument, "tenant and category required")
+		}
+		if call.notice.GetType() == "sync" {
+			return status.Error(codes.InvalidArgument, "invalid notification type")
+		}
+		return stream.SendMsg(&v1.ModuleNotifyOrgAdminsResponse{Delivered: true})
 	}
 	if request.GetBindingId() == "" || request.GetParentWorkContextToken() == "" {
 		return status.Error(codes.InvalidArgument, "binding and parent required")
