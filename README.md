@@ -41,11 +41,31 @@ The SDK surfaces are:
   child as an opaque `sdk-go` token. The signed-in person's retained parent and
   the exchanged child remain request-local.
 
+  It talks to the two seams the host serves a composed module, and takes both
+  explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
+
+  - the **gateway's module broker** (REST on the auth-gateway's `rest`
+    endpoint): `POST /modules/_work-context`, `/modules/_operation-context`
+    and `/modules/_source-operation-context`, where the module presents its
+    identity secret. The host never serves the `Mint*` procedures of
+    `ModuleCapabilitiesService` at the gateway edge;
+  - accounts' **`authority` gRPC endpoint** (`saas/accounts/authority`), where
+    the module calls, with its module Work Context, the procedures the host
+    exports to composed modules (`ExchangeDelegatedOperationAudience`).
+
   ```go
-  authority := moduleauthority.New(gw, moduleauthority.Credentials{
-      Prefix: projectedPrefix,
-      Secret: projectedSecret,
-  })
+  authority, err := moduleauthority.New(moduleauthority.Seams{
+      Gateway:       gw,                                   // BaseURL() + HTTPClient()
+      Authority:     moduleauthority.Authority{Address: authorityHostPort}, // TLS: nil = h2c
+      InternalToken: internalToken,
+      // Only from the consumer's own configured assertion that every
+      // in-cluster hop is carried by a mutually authenticated mesh.
+      AllowInsecureHTTP: meshProtected,
+  }, moduleauthority.Credentials{Prefix: projectedPrefix, Secret: projectedSecret})
+  if err != nil {
+      return err // ErrInvalidSeams / ErrInvalidCredentials: fail closed at startup
+  }
+  defer authority.Close()
   child, err := authority.ExchangeOperation(ctx, moduleauthority.ExchangeRequest{
       BindingID: installedBindingID,
       Parent:    retainedParent,
@@ -53,14 +73,16 @@ The SDK surfaces are:
   })
   ```
 
-  The gateway resolves the accounts service and supplies the transport; this
-  package accepts no service URL or port. SaaS owns the installed binding's
-  audience, scopes, lifetime, verification, and audit record.
+  `New` refuses a missing internal token, gateway base URL or authority
+  address, and refuses to send the internal token or the module secret in
+  plaintext to anything but `localhost` or a loopback IP unless
+  `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
+  binding's audience, scopes, lifetime, verification, and audit record.
 
   Background work with no person present mints its own operation context
   instead. It carries exactly the binding's `headless_scopes`; a binding that
-  declares none is refused with `connect.CodePermissionDenied`. It lives about a
-  minute and is never cached, so mint one per call or short batch:
+  declares none is refused with `ErrPermissionDenied`. It lives about a minute
+  and is never cached, so mint one per call or short batch:
 
   ```go
   op, err := authority.MintModuleOperationContext(ctx, installedBindingID)
