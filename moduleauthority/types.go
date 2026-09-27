@@ -10,5 +10,6 @@ type (
 	ModuleMintOperationContextRequest               = v1.ModuleMintOperationContextRequest
 	ModuleMintOperationContextResponse              = v1.ModuleMintOperationContextResponse
 	ModuleExchangeDelegatedOperationAudienceRequest = v1.ModuleExchangeDelegatedOperationAudienceRequest
+	ModuleMintSourceOperationContextResponse        = v1.ModuleMintSourceOperationContextResponse
 	IssuedWorkContext                               = v1.IssuedWorkContext
 )
