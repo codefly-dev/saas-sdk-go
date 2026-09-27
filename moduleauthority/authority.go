@@ -56,6 +56,9 @@ func newAuthorityEndpoint(seams Seams) (authorityEndpoint, error) {
 	}, nil
 }
 
+// present reports whether the client was built with an authority endpoint.
+func (a authorityEndpoint) present() bool { return a.capabilities != nil }
+
 func (a authorityEndpoint) close() {
 	if a.transport != nil {
 		a.transport.CloseIdleConnections()
@@ -74,13 +77,23 @@ func (a authorityEndpoint) close() {
 // method over a procedure the host serves there passes the generated client's
 // method and the request message:
 //
-//	res, err := callAsModule(ctx, c, c.authority.capabilities.SomeProcedure, &v1.SomeRequest{...})
+//	res, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.SomeProcedure, &v1.SomeRequest{...})
+//
+// It takes the procedure as a method expression, not a method value on the
+// client, so a client built without the authority seam answers ErrNoAuthority
+// instead of dereferencing a client it does not have.
 func callAsModule[Req, Res any](
 	ctx context.Context,
 	c *Client,
-	call func(context.Context, *connect.Request[Req]) (*connect.Response[Res], error),
+	procedure func(accountsv1connect.ModuleCapabilitiesServiceClient, context.Context, *connect.Request[Req]) (*connect.Response[Res], error),
 	msg *Req,
 ) (*Res, error) {
+	if !c.authority.present() {
+		return nil, ErrNoAuthority
+	}
+	call := func(ctx context.Context, req *connect.Request[Req]) (*connect.Response[Res], error) {
+		return procedure(c.authority.capabilities, ctx, req)
+	}
 	module, err := c.ModuleWorkContext(ctx)
 	if err != nil {
 		return nil, err

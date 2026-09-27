@@ -6,6 +6,16 @@ Regenerated `gen/` from `module-saas-starter` main (see `SOURCE.txt` for the
 exact ref). The version is bumped to `0.1.0` to match the saas-starter module
 version and to signal the breaking removal below.
 
+### Added (moduleauthority, mint-only clients)
+
+- `Seams.Authority` may be left zero: `New` then builds a mint-only client. The
+  broker's mints (`ModuleWorkContext`, `MintModuleOperationContext`,
+  `MintSourceOperationContext`) work, and every call that needs accounts'
+  authority endpoint fails with the new `ErrNoAuthority` before any request. A
+  module that only mints no longer has to hand the SDK an address it never
+  dials. An authority seam that is set but incomplete is still
+  `ErrInvalidSeams`.
+
 ### Changed (breaking)
 
 - `moduleauthority` now reaches the host through the two seams it actually
