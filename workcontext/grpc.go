@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -89,6 +89,8 @@ func grpcCode(err error) codes.Code {
 		return codes.Unauthenticated
 	case http.StatusForbidden:
 		return codes.PermissionDenied
+	case http.StatusServiceUnavailable:
+		return codes.Unavailable
 	default:
 		return codes.Internal
 	}

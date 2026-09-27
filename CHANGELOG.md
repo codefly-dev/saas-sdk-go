@@ -6,6 +6,20 @@ Regenerated `gen/` from `module-saas-starter` main (see `SOURCE.txt` for the
 exact ref). The version is bumped to `0.1.0` to match the saas-starter module
 version and to signal the breaking removal below.
 
+### Changed (breaking)
+
+- The SDK now builds on `github.com/codefly-dev/sdk-go/workcontext` instead of
+  the root `github.com/codefly-dev/sdk-go` package, whose Work Context API
+  moved to that module in sdk-go v0.2. `moduleauthority` and `workcontext`
+  return and accept `workcontext.WorkContextToken`; a consumer on sdk-go v0.2
+  could not compile `moduleauthority` before this. A consumer still on sdk-go
+  v0.1 root types must move with it.
+- `workcontext` reports a key set it could not fetch as the new
+  `ErrUnavailable` (HTTP 503, gRPC/Connect `Unavailable`), not `ErrInvalid`
+  (401): the token was never judged, so a caller retries rather than being told
+  its credential is bad. No claims are ever returned either way; a key set
+  that is served but unusable is still `ErrInvalid`.
+
 ### Added
 
 - `moduleauthority.Client.MintSourceOperationContext(ctx, sourceID)`: a

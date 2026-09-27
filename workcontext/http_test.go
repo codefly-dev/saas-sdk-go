@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 
 	"github.com/codefly-dev/saas-sdk-go/workcontext"
 )

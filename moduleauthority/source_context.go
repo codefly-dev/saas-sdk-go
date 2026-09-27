@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"connectrpc.com/connect"
-	codefly "github.com/codefly-dev/sdk-go"
+	codefly "github.com/codefly-dev/sdk-go/workcontext"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
