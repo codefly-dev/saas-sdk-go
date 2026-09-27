@@ -7,6 +7,21 @@ exact ref). The version is bumped to `0.1.0` to match the saas-starter module
 version and to signal the breaking removal below.
 
 ### Added
+
+- `moduleauthority.Client.MintSourceOperationContext(ctx, sourceID)`: a
+  short-lived Work Context minted through the active delegation a person
+  recorded when they connected a datasource source. It acts in the source's
+  organization, is owned by that person, and names the module as the sole
+  actor; SaaS derives the organization, audience and scopes from the
+  delegation, so the caller names only the source. A refusal is typed as
+  `ErrDelegationMissing` (reconnect the source), `ErrDelegationRevoked` or
+  `ErrDelegationInvalid`; nothing else is claimed to be one. Returns
+  `SourceOperationContext`; `ModuleMintSourceOperationContextResponse` is
+  re-exported.
+- `gen/` regenerated from module-saas-starter `2c35828` (source delegations,
+  #940): `ModuleCapabilitiesService/MintSourceOperationContext`,
+  `DatasourceService/ListSourceDelegations` and `RevokeSourceDelegation`, and
+  the directory service that landed upstream since `2637cbb`.
 - `moduleauthority.Client.MintModuleOperationContext` — mints, with no person
   present, a Work Context for one installed operation binding's
   `headless_scopes` (`ModuleCapabilitiesService/MintModuleOperationContext`).

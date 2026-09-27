@@ -1,4 +1,4 @@
-gen/ generated from codefly-dev/module-saas-starter@2637cbb4557e912a009456b80c3f26a83287c6e6
+gen/ generated from codefly-dev/module-saas-starter@2c35828c43671cf7bf6b4b6940a8682ad21fbf02
 (accounts public proto: module/services/accounts/proto)
 
 module version: 0.1.0 (module/module.package.codefly.yaml)
