@@ -68,13 +68,20 @@ type UserNotice struct {
 	// this module is bound to (or the module must be cross-tenant).
 	Tenant string
 	// UserID is the recipient, a member of Tenant. The host refuses a
-	// non-member as PermissionDenied.
+	// non-member as PermissionDenied, but PermissionDenied also means a
+	// misconfigured credential or principal — a wrong internal token, a
+	// procedure the endpoint does not serve, a tenant the module is not bound
+	// to — so it does not identify a non-member
+	// (codefly-dev/module-saas-starter#1011 asks for a code of its own).
 	UserID string
 	Title  string
 	Body   string
 	// Type is one of info, success, warning, error, billing, security; empty
 	// means info. The host refuses any other as InvalidArgument.
-	Type      string
+	Type string
+	// ActionURL is the link the host shows with the notice. A module should
+	// send a same-origin relative path: codefly-dev/module-saas-starter#1012
+	// asks the host to refuse anything else from a module.
 	ActionURL string
 	// Category is the notification policy category (security, billing,
 	// product, marketing, digest); the recipient's settings apply to an
