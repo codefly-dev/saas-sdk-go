@@ -6,6 +6,16 @@ Regenerated `gen/` from `module-saas-starter` main (see `SOURCE.txt` for the
 exact ref). The version is bumped to `0.1.0` to match the saas-starter module
 version and to signal the breaking removal below.
 
+### Added (moduleauthority, notify one person)
+
+- `Client.NotifyUser(ctx, UserNotice) (bool, error)` calls
+  `ModuleCapabilitiesService.NotifyUser` on the authority endpoint as the
+  module, through the same credentials and refresh-once rule as every authority
+  call. The host checks the recipient is a member of the tenant and routes the
+  notice through their category policy; the result is whether it was delivered
+  (false when an optional category was switched off). A notice without a
+  tenant, recipient, title or category is `ErrInvalidNotice` before any call.
+
 ### Added (moduleauthority, mint-only clients)
 
 - `Seams.Authority` may be left zero: `New` then builds a mint-only client. The
