@@ -253,6 +253,7 @@ type authorityCall struct {
 	workContext   []string
 	request       *v1.ModuleExchangeDelegatedOperationAudienceRequest
 	notice        *v1.ModuleNotifyOrgAdminsRequest
+	userNotice    *v1.ModuleNotifyUserRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
@@ -261,6 +262,7 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure: true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
+	accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:                         true,
 }
 
 type fakeAuthority struct {
@@ -297,10 +299,14 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
-	if method == accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure {
+	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:
 		call.notice = &v1.ModuleNotifyOrgAdminsRequest{}
 		recvErr = stream.RecvMsg(call.notice)
-	} else {
+	case accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:
+		call.userNotice = &v1.ModuleNotifyUserRequest{}
+		recvErr = stream.RecvMsg(call.userNotice)
+	default:
 		recvErr = stream.RecvMsg(request)
 		call.request = request
 	}
@@ -334,6 +340,21 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 			return status.Error(codes.InvalidArgument, "invalid notification type")
 		}
 		return stream.SendMsg(&v1.ModuleNotifyOrgAdminsResponse{Delivered: true})
+	}
+	if n := call.userNotice; n != nil {
+		// ModuleNotifyUser: a known type, a member recipient, and category
+		// policy — an optional category the recipient switched off is a
+		// success that was not delivered.
+		if n.GetTenant() == "" || n.GetUserId() == "" || n.GetCategory() == "" {
+			return status.Error(codes.InvalidArgument, "tenant, user and category required")
+		}
+		if n.GetType() == "sync" {
+			return status.Error(codes.InvalidArgument, "invalid notification type")
+		}
+		if n.GetUserId() == nonMember {
+			return status.Error(codes.PermissionDenied, "user is not a member of tenant")
+		}
+		return stream.SendMsg(&v1.ModuleNotifyUserResponse{NotificationId: "n-1", Delivered: n.GetCategory() != "marketing"})
 	}
 	if request.GetBindingId() == "" || request.GetParentWorkContextToken() == "" {
 		return status.Error(codes.InvalidArgument, "binding and parent required")
