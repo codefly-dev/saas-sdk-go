@@ -249,6 +249,8 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
+	installation   *v1.ModuleCurrentInstallationRequest
+	authorization  []string
 	artifact       *v1.ModuleExecutableArtifactRequest
 	revokeArtifact *v1.ModuleRevokeExecutableArtifactRequest
 	method         string
@@ -262,6 +264,7 @@ type authorityCall struct {
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:             true,
 	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
 	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
 	accountsv1connect.ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:           true,
@@ -300,12 +303,15 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
+		call.installation = &v1.ModuleCurrentInstallationRequest{}
+		recvErr = stream.RecvMsg(call.installation)
 	case accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure, accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:
 		call.artifact = &v1.ModuleExecutableArtifactRequest{}
 		recvErr = stream.RecvMsg(call.artifact)
@@ -341,6 +347,21 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.installation != nil {
+		if call.installation.ParentWorkContextToken == "denied.token" {
+			return status.Error(codes.PermissionDenied, "current authority denied")
+		}
+		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, SolutionIdentifier: "acme/example"}
+		switch call.installation.ParentWorkContextToken {
+		case "wrong-id.token":
+			out.InstallationId = testOwner
+		case "missing-tenant.token":
+			out.TenantId = ""
+		case "empty-source.token":
+			out.SolutionIdentifier = ""
+		}
+		return stream.SendMsg(out)
 	}
 	if call.artifact != nil {
 		if call.artifact.PolicyId == "denied" {

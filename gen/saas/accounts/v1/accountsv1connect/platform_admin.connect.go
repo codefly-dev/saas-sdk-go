@@ -102,6 +102,9 @@ const (
 	// PlatformAdminServiceListEventSubscriptionsProcedure is the fully-qualified name of the
 	// PlatformAdminService's ListEventSubscriptions RPC.
 	PlatformAdminServiceListEventSubscriptionsProcedure = "/saas.accounts.v1.PlatformAdminService/ListEventSubscriptions"
+	// PlatformAdminServiceListPlatformCatalogueProcedure is the fully-qualified name of the
+	// PlatformAdminService's ListPlatformCatalogue RPC.
+	PlatformAdminServiceListPlatformCatalogueProcedure = "/saas.accounts.v1.PlatformAdminService/ListPlatformCatalogue"
 )
 
 // PlatformAdminServiceClient is a client for the saas.accounts.v1.PlatformAdminService service.
@@ -154,6 +157,9 @@ type PlatformAdminServiceClient interface {
 	// control-plane subscription metadata do.
 	GetEventOperations(context.Context, *connect.Request[v12.GetEventOperationsRequest]) (*connect.Response[v12.GetEventOperationsResponse], error)
 	ListEventSubscriptions(context.Context, *connect.Request[v12.ListEventSubscriptionsRequest]) (*connect.Response[v12.ListEventSubscriptionsResponse], error)
+	// ListPlatformCatalogue lists every composed module and solution with what
+	// it declares, what runs, and which organizations have it installed.
+	ListPlatformCatalogue(context.Context, *connect.Request[v1.ListPlatformCatalogueRequest]) (*connect.Response[v1.ListPlatformCatalogueResponse], error)
 }
 
 // NewPlatformAdminServiceClient constructs a client for the saas.accounts.v1.PlatformAdminService
@@ -299,6 +305,12 @@ func NewPlatformAdminServiceClient(httpClient connect.HTTPClient, baseURL string
 			connect.WithSchema(platformAdminServiceMethods.ByName("ListEventSubscriptions")),
 			connect.WithClientOptions(opts...),
 		),
+		listPlatformCatalogue: connect.NewClient[v1.ListPlatformCatalogueRequest, v1.ListPlatformCatalogueResponse](
+			httpClient,
+			baseURL+PlatformAdminServiceListPlatformCatalogueProcedure,
+			connect.WithSchema(platformAdminServiceMethods.ByName("ListPlatformCatalogue")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -326,6 +338,7 @@ type platformAdminServiceClient struct {
 	replayJob              *connect.Client[v11.ReplayJobRequest, v11.ReplayJobResponse]
 	getEventOperations     *connect.Client[v12.GetEventOperationsRequest, v12.GetEventOperationsResponse]
 	listEventSubscriptions *connect.Client[v12.ListEventSubscriptionsRequest, v12.ListEventSubscriptionsResponse]
+	listPlatformCatalogue  *connect.Client[v1.ListPlatformCatalogueRequest, v1.ListPlatformCatalogueResponse]
 }
 
 // SearchUsers calls saas.accounts.v1.PlatformAdminService.SearchUsers.
@@ -440,6 +453,11 @@ func (c *platformAdminServiceClient) ListEventSubscriptions(ctx context.Context,
 	return c.listEventSubscriptions.CallUnary(ctx, req)
 }
 
+// ListPlatformCatalogue calls saas.accounts.v1.PlatformAdminService.ListPlatformCatalogue.
+func (c *platformAdminServiceClient) ListPlatformCatalogue(ctx context.Context, req *connect.Request[v1.ListPlatformCatalogueRequest]) (*connect.Response[v1.ListPlatformCatalogueResponse], error) {
+	return c.listPlatformCatalogue.CallUnary(ctx, req)
+}
+
 // PlatformAdminServiceHandler is an implementation of the saas.accounts.v1.PlatformAdminService
 // service.
 type PlatformAdminServiceHandler interface {
@@ -491,6 +509,9 @@ type PlatformAdminServiceHandler interface {
 	// control-plane subscription metadata do.
 	GetEventOperations(context.Context, *connect.Request[v12.GetEventOperationsRequest]) (*connect.Response[v12.GetEventOperationsResponse], error)
 	ListEventSubscriptions(context.Context, *connect.Request[v12.ListEventSubscriptionsRequest]) (*connect.Response[v12.ListEventSubscriptionsResponse], error)
+	// ListPlatformCatalogue lists every composed module and solution with what
+	// it declares, what runs, and which organizations have it installed.
+	ListPlatformCatalogue(context.Context, *connect.Request[v1.ListPlatformCatalogueRequest]) (*connect.Response[v1.ListPlatformCatalogueResponse], error)
 }
 
 // NewPlatformAdminServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -632,6 +653,12 @@ func NewPlatformAdminServiceHandler(svc PlatformAdminServiceHandler, opts ...con
 		connect.WithSchema(platformAdminServiceMethods.ByName("ListEventSubscriptions")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformAdminServiceListPlatformCatalogueHandler := connect.NewUnaryHandler(
+		PlatformAdminServiceListPlatformCatalogueProcedure,
+		svc.ListPlatformCatalogue,
+		connect.WithSchema(platformAdminServiceMethods.ByName("ListPlatformCatalogue")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/saas.accounts.v1.PlatformAdminService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PlatformAdminServiceSearchUsersProcedure:
@@ -678,6 +705,8 @@ func NewPlatformAdminServiceHandler(svc PlatformAdminServiceHandler, opts ...con
 			platformAdminServiceGetEventOperationsHandler.ServeHTTP(w, r)
 		case PlatformAdminServiceListEventSubscriptionsProcedure:
 			platformAdminServiceListEventSubscriptionsHandler.ServeHTTP(w, r)
+		case PlatformAdminServiceListPlatformCatalogueProcedure:
+			platformAdminServiceListPlatformCatalogueHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -773,4 +802,8 @@ func (UnimplementedPlatformAdminServiceHandler) GetEventOperations(context.Conte
 
 func (UnimplementedPlatformAdminServiceHandler) ListEventSubscriptions(context.Context, *connect.Request[v12.ListEventSubscriptionsRequest]) (*connect.Response[v12.ListEventSubscriptionsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PlatformAdminService.ListEventSubscriptions is not implemented"))
+}
+
+func (UnimplementedPlatformAdminServiceHandler) ListPlatformCatalogue(context.Context, *connect.Request[v1.ListPlatformCatalogueRequest]) (*connect.Response[v1.ListPlatformCatalogueResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.PlatformAdminService.ListPlatformCatalogue is not implemented"))
 }

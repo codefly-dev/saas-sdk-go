@@ -35,6 +35,9 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// ModuleCapabilitiesServiceGetCurrentInstallationProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's GetCurrentInstallation RPC.
+	ModuleCapabilitiesServiceGetCurrentInstallationProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/GetCurrentInstallation"
 	// ModuleCapabilitiesServiceApproveExecutableArtifactProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's ApproveExecutableArtifact RPC.
 	ModuleCapabilitiesServiceApproveExecutableArtifactProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/ApproveExecutableArtifact"
@@ -139,6 +142,9 @@ const (
 // ModuleCapabilitiesServiceClient is a client for the saas.accounts.v1.ModuleCapabilitiesService
 // service.
 type ModuleCapabilitiesServiceClient interface {
+	// Organization-member metadata read, not executable consent or a durable
+	// liveness proof. Returns only a currently active, non-revoked installation.
+	GetCurrentInstallation(context.Context, *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error)
 	// Explicit current-admin consent, never inferred from an execution request.
 	ApproveExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
 	// Read existing exact approval; check live authority and revocation each time.
@@ -265,6 +271,12 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 	baseURL = strings.TrimRight(baseURL, "/")
 	moduleCapabilitiesServiceMethods := v1.File_saas_accounts_v1_module_capabilities_proto.Services().ByName("ModuleCapabilitiesService").Methods()
 	return &moduleCapabilitiesServiceClient{
+		getCurrentInstallation: connect.NewClient[v1.ModuleCurrentInstallationRequest, v1.ModuleCurrentInstallationResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceGetCurrentInstallationProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("GetCurrentInstallation")),
+			connect.WithClientOptions(opts...),
+		),
 		approveExecutableArtifact: connect.NewClient[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse](
 			httpClient,
 			baseURL+ModuleCapabilitiesServiceApproveExecutableArtifactProcedure,
@@ -468,6 +480,7 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 
 // moduleCapabilitiesServiceClient implements ModuleCapabilitiesServiceClient.
 type moduleCapabilitiesServiceClient struct {
+	getCurrentInstallation             *connect.Client[v1.ModuleCurrentInstallationRequest, v1.ModuleCurrentInstallationResponse]
 	approveExecutableArtifact          *connect.Client[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse]
 	authorizeExecutableArtifact        *connect.Client[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse]
 	revokeExecutableArtifact           *connect.Client[v1.ModuleRevokeExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse]
@@ -501,6 +514,11 @@ type moduleCapabilitiesServiceClient struct {
 	unsubscribe                        *connect.Client[v1.ModuleUnsubscribeRequest, emptypb.Empty]
 	listSubscriptions                  *connect.Client[v1.ModuleListSubscriptionsRequest, v1.ModuleListSubscriptionsResponse]
 	replayEvents                       *connect.Client[v1.ModuleReplayEventsRequest, v1.ModuleReplayEventsResponse]
+}
+
+// GetCurrentInstallation calls saas.accounts.v1.ModuleCapabilitiesService.GetCurrentInstallation.
+func (c *moduleCapabilitiesServiceClient) GetCurrentInstallation(ctx context.Context, req *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error) {
+	return c.getCurrentInstallation.CallUnary(ctx, req)
 }
 
 // ApproveExecutableArtifact calls
@@ -683,6 +701,9 @@ func (c *moduleCapabilitiesServiceClient) ReplayEvents(ctx context.Context, req 
 // ModuleCapabilitiesServiceHandler is an implementation of the
 // saas.accounts.v1.ModuleCapabilitiesService service.
 type ModuleCapabilitiesServiceHandler interface {
+	// Organization-member metadata read, not executable consent or a durable
+	// liveness proof. Returns only a currently active, non-revoked installation.
+	GetCurrentInstallation(context.Context, *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error)
 	// Explicit current-admin consent, never inferred from an execution request.
 	ApproveExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
 	// Read existing exact approval; check live authority and revocation each time.
@@ -805,6 +826,12 @@ type ModuleCapabilitiesServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	moduleCapabilitiesServiceMethods := v1.File_saas_accounts_v1_module_capabilities_proto.Services().ByName("ModuleCapabilitiesService").Methods()
+	moduleCapabilitiesServiceGetCurrentInstallationHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceGetCurrentInstallationProcedure,
+		svc.GetCurrentInstallation,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("GetCurrentInstallation")),
+		connect.WithHandlerOptions(opts...),
+	)
 	moduleCapabilitiesServiceApproveExecutableArtifactHandler := connect.NewUnaryHandler(
 		ModuleCapabilitiesServiceApproveExecutableArtifactProcedure,
 		svc.ApproveExecutableArtifact,
@@ -1005,6 +1032,8 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 	)
 	return "/saas.accounts.v1.ModuleCapabilitiesService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
+			moduleCapabilitiesServiceGetCurrentInstallationHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:
 			moduleCapabilitiesServiceApproveExecutableArtifactHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:
@@ -1079,6 +1108,10 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 
 // UnimplementedModuleCapabilitiesServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedModuleCapabilitiesServiceHandler struct{}
+
+func (UnimplementedModuleCapabilitiesServiceHandler) GetCurrentInstallation(context.Context, *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.GetCurrentInstallation is not implemented"))
+}
 
 func (UnimplementedModuleCapabilitiesServiceHandler) ApproveExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.ApproveExecutableArtifact is not implemented"))
