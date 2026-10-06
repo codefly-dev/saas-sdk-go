@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -248,17 +249,22 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
-	method        string
-	internalToken []string
-	workContext   []string
-	request       *v1.ModuleExchangeDelegatedOperationAudienceRequest
-	notice        *v1.ModuleNotifyOrgAdminsRequest
-	userNotice    *v1.ModuleNotifyUserRequest
+	artifact       *v1.ModuleExecutableArtifactRequest
+	revokeArtifact *v1.ModuleRevokeExecutableArtifactRequest
+	method         string
+	internalToken  []string
+	workContext    []string
+	request        *v1.ModuleExchangeDelegatedOperationAudienceRequest
+	notice         *v1.ModuleNotifyOrgAdminsRequest
+	userNotice     *v1.ModuleNotifyUserRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
+	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
+	accountsv1connect.ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:           true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure: true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
@@ -300,6 +306,12 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure, accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:
+		call.artifact = &v1.ModuleExecutableArtifactRequest{}
+		recvErr = stream.RecvMsg(call.artifact)
+	case accountsv1connect.ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:
+		call.revokeArtifact = &v1.ModuleRevokeExecutableArtifactRequest{}
+		recvErr = stream.RecvMsg(call.revokeArtifact)
 	case accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:
 		call.notice = &v1.ModuleNotifyOrgAdminsRequest{}
 		recvErr = stream.RecvMsg(call.notice)
@@ -329,6 +341,19 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.artifact != nil {
+		if call.artifact.PolicyId == "denied" {
+			return status.Error(codes.PermissionDenied, "exact artifact approval required")
+		}
+		revision := call.artifact.Identity.ExpectedRevision
+		if call.artifact.PolicyId == "mismatched-receipt" {
+			revision--
+		}
+		return stream.SendMsg(&v1.ModuleExecutableArtifactResponse{SchemaVersion: "host.executable-artifact/v1", QualifiedName: "host/approved-artifacts/11111111-1111-4111-8111-111111111111", Digest: "sha256:" + strings.Repeat("a", 64), ExpectedRevision: revision})
+	}
+	if call.revokeArtifact != nil {
+		return stream.SendMsg(&v1.ModuleExecutableArtifactResponse{SchemaVersion: "host.executable-artifact/v1", QualifiedName: "host/approved-artifacts/" + call.revokeArtifact.ApprovalId, Digest: "sha256:" + strings.Repeat("a", 64), ExpectedRevision: 0})
 	}
 	if call.notice != nil {
 		// ModuleNotifyOrgAdmins: the host resolves the administrators and

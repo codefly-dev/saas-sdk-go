@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — exact executable artifact consent
+
+### Added
+- Module authority methods for explicit approval, live exact authorization and
+  terminal revocation, with canonical subject bytes and exact int64 revisions.
+- Regenerated the complete API from host da6d1b2, including current installation,
+  organization, invitation and datasource contracts. No generated file was curated.
+
+
 ## Unreleased (targets 0.1.0)
 
 Regenerated `gen/` from `module-saas-starter` main (see `SOURCE.txt` for the

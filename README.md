@@ -190,3 +190,31 @@ import (
     v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 )
 ```
+
+
+### Exact executable artifact consent
+
+`moduleauthority.Client` exposes `ApproveExecutableArtifact`,
+`AuthorizeExecutableArtifact`, and `RevokeExecutableArtifact` on the resolved
+accounts authority endpoint, using the ordinary cached module credential plus
+an independently signed human parent. The first is an explicit administrator
+activation action; the second only checks existing exact consent. Never approve
+as a fallback on a refused run. Neither operation dispatches work or moves an
+active pointer.
+
+`ArtifactRequest` names the installation, installed policy ID and
+`ArtifactIdentity`: its schema, source, complete canonical subject bytes,
+ordered exact contract references and an int64 expected revision. The host
+validates its installed `MODULE_PRINCIPALS[<module>].artifact_policies` ceiling.
+The SDK preserves subject bytes and int64 values exactly, bounds the request,
+and refuses mismatched or malformed authorization receipts. The module owns
+canonical identity extraction, including every script/runtime and content pin;
+the host does not interpret configuration or fabricate publisher attestation.
+
+Consent belongs to the tenant and survives administrator turnover. The host
+rechecks current caller authority, installation, source, policy and explicit
+revocation on each run. Revocation addresses the approval UUID from the returned
+`host/approved-artifacts/<uuid>` Ref, even if the policy was disabled. Revoked
+exact identities are terminal; a newly selected content version or activation
+revision needs explicit new consent. These Refs are not tool or artifact-access
+credentials.
