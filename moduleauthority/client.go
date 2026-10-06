@@ -38,7 +38,8 @@ var (
 	// broker refused to prove the module (HTTP 401 — a wrong identity secret or
 	// a wrong internal token; the host does not say which).
 	ErrInvalidCredentials = errors.New("module authority: invalid module credentials")
-	// ErrInvalidExchange: the request names no binding, parent or source.
+	// ErrInvalidExchange: the request names no binding or source, or does not
+	// present exactly one of a parent capability and a delegation reference.
 	ErrInvalidExchange = errors.New("module authority: invalid operation exchange")
 	// ErrInvalidCapability: SaaS answered with a Work Context this client
 	// refuses to hand out (malformed, expired, or issued for something else).
@@ -107,10 +108,30 @@ type Credentials struct {
 // ExchangeRequest selects one installed operation binding. SaaS derives the
 // audience, scopes, and lifetime from the installation rather than accepting
 // them from the caller.
+//
+// The caller presents its authority one of two ways, and exactly one. Setting
+// both, or neither, is ErrInvalidExchange here rather than a round trip: the
+// host enforces the same exclusivity as a message-level rule, and a request
+// that cannot be authorized should not reach it.
+//
+//   - Parent, a live capability the caller already holds. The child is
+//     attenuated against it and expires with it, so work that outlives the
+//     parent cannot be authorized this way at all.
+//   - DelegationID, a reference to a host-owned, revocable source delegation.
+//     No capability is presented and none needs to still be valid: the host
+//     re-checks the delegation and mints a fresh short child from it. This is
+//     how work longer than any Work Context stays authorized, and how it
+//     renews — by exchanging again against the same reference, after the
+//     previous child has already expired.
 type ExchangeRequest struct {
 	BindingID string
 	Parent    codefly.WorkContextToken
 	Lookup    bool
+	// DelegationID names one source delegation, as MintSourceOperationContext
+	// reported it. It is an identifier, never a credential: on its own it
+	// authorizes nothing, and the caller's own module Work Context still
+	// authenticates the call.
+	DelegationID string
 }
 
 // Client keeps only the module's short-lived Work Context in memory. Parent
@@ -173,18 +194,23 @@ func (c *Client) ModuleWorkContext(ctx context.Context) (codefly.WorkContextToke
 	return c.moduleWorkContextLocked(ctx)
 }
 
-// ExchangeOperation exchanges the signed-in person's retained parent
-// capability through one immutable installed operation binding, on the
-// authority endpoint. A rejected module capability is refreshed and retried
-// once; the parent is never stored.
+// ExchangeOperation exchanges one immutable installed operation binding on the
+// authority endpoint, under exactly one of the request's two authority arms. A
+// rejected module capability is refreshed and retried once; neither the parent
+// nor the issued child is ever stored.
 func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest) (codefly.WorkContextToken, error) {
-	if exchange.BindingID == "" || exchange.Parent.Encoded() == "" {
+	parent := exchange.Parent.Encoded()
+	// Exactly one of the two arms, which is the host's message-level rule read
+	// back here: a request carrying both presents an authority the host would
+	// have to choose between, and one carrying neither presents none at all.
+	if exchange.BindingID == "" || (parent == "") == (exchange.DelegationID == "") {
 		return codefly.WorkContextToken{}, ErrInvalidExchange
 	}
 	issued, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.ExchangeDelegatedOperationAudience, &v1.ModuleExchangeDelegatedOperationAudienceRequest{
 		BindingId:              exchange.BindingID,
-		ParentWorkContextToken: exchange.Parent.Encoded(),
+		ParentWorkContextToken: parent,
 		Lookup:                 exchange.Lookup,
+		DelegationId:           exchange.DelegationID,
 	})
 	if err != nil {
 		return codefly.WorkContextToken{}, fmt.Errorf("module authority: exchange operation audience: %w", err)

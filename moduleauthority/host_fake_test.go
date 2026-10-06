@@ -381,8 +381,12 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		}
 		return stream.SendMsg(&v1.ModuleNotifyUserResponse{NotificationId: "n-1", Delivered: n.GetCategory() != "marketing"})
 	}
-	if request.GetBindingId() == "" || request.GetParentWorkContextToken() == "" {
-		return status.Error(codes.InvalidArgument, "binding and parent required")
+	// The host's own message-level rule: a binding, and exactly one of the two
+	// authority arms. Stated here so a client that sent both, or neither, is
+	// caught by the fake the way the real surface would catch it.
+	if request.GetBindingId() == "" ||
+		(request.GetParentWorkContextToken() == "") == (request.GetDelegationId() == "") {
+		return status.Error(codes.InvalidArgument, "binding and exactly one of parent or delegation required")
 	}
 	return stream.SendMsg(&v1.IssuedWorkContext{Token: "child.token"})
 }

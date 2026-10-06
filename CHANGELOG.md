@@ -25,6 +25,20 @@ version and to signal the breaking removal below.
   (false when an optional category was switched off). A notice without a
   tenant, recipient, title or category is `ErrInvalidNotice` before any call.
 
+### Added (moduleauthority, delegation-reference exchange)
+
+- `ExchangeRequest.DelegationID` presents a host-owned, revocable source
+  delegation instead of a parent capability, on the arm
+  `ExchangeDelegatedOperationAudience` already serves. Nothing long-lived is
+  minted: the reference is an identifier, the host re-checks the delegation on
+  every call and mints a fresh short child, and the caller's own module Work
+  Context still authenticates the request. Because no capability is presented,
+  the arm is not bounded by any token's remaining life and may be called again
+  after the previous child has expired — which is how work longer than a Work
+  Context renews. `ExchangeRequest` now requires exactly one of `Parent` and
+  `DelegationID`; both, or neither, is `ErrInvalidExchange` before anything is
+  sent, matching the host's message-level rule.
+
 ### Added (moduleauthority, mint-only clients)
 
 - `Seams.Authority` may be left zero: `New` then builds a mint-only client. The
