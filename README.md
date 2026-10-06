@@ -241,3 +241,22 @@ revocation on each run. Revocation addresses the approval UUID from the returned
 exact identities are terminal; a newly selected content version or activation
 revision needs explicit new consent. These Refs are not tool or artifact-access
 credentials.
+
+### Current installation identity
+
+`moduleauthority.Client.GetCurrentInstallation(ctx, CurrentInstallationRequest)`
+reads the host's current active, non-revoked installation identity. Supply the
+original verified parent token and `InstallationID`. The client presents its own
+module Work Context independently on the resolved authority endpoint. It never
+forwards a viewer bearer, selects a tenant/source, or mints broader parent scopes.
+
+The result is `CurrentInstallation{InstallationID, TenantID, SolutionIdentifier}`.
+The SDK requires the exact requested ID and a nonempty, well-formed result;
+the consumer must compare `TenantID` to its independently verified request tenant
+and apply its own source naming rules. A successful observation is not executable
+consent, a grant or durable liveness proof. Re-read for each new request.
+
+The host preserves its organization-member metadata-read rule: no new permission
+or binding is required. It checks current parent authority and delegation,
+authenticated module/audience/tenant alignment, current membership, and exact
+active record identity. A refusal never invokes a bearer-based fallback.

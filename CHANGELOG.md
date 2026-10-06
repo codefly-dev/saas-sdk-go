@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — current installation identity
+
+- Added `moduleauthority.Client.GetCurrentInstallation` with independent module
+  credentials and parent proof, exact installation selector and an identity-only
+  active/non-revoked response. Denials do not fall back to viewer credentials.
+- Regenerated the complete API from host `21f139ee4`, retaining delegation-reference
+  exchange and executable-artifact approval. The source also adds the current
+  platform catalogue read; no generated files were selected or discarded.
+
+
 ## Unreleased — exact executable artifact consent
 
 ### Added
