@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — exact executable artifact consent
+
+### Added
+- Module authority methods for explicit approval, live exact authorization and
+  terminal revocation, with canonical subject bytes and exact int64 revisions.
+- Regenerated the complete API from host da6d1b2, including current installation,
+  organization, invitation and datasource contracts. No generated file was curated.
+
+
 ## Unreleased (targets 0.1.0)
 
 Regenerated `gen/` from `module-saas-starter` main (see `SOURCE.txt` for the
@@ -15,6 +24,20 @@ version and to signal the breaking removal below.
   notice through their category policy; the result is whether it was delivered
   (false when an optional category was switched off). A notice without a
   tenant, recipient, title or category is `ErrInvalidNotice` before any call.
+
+### Added (moduleauthority, delegation-reference exchange)
+
+- `ExchangeRequest.DelegationID` presents a host-owned, revocable source
+  delegation instead of a parent capability, on the arm
+  `ExchangeDelegatedOperationAudience` already serves. Nothing long-lived is
+  minted: the reference is an identifier, the host re-checks the delegation on
+  every call and mints a fresh short child, and the caller's own module Work
+  Context still authenticates the request. Because no capability is presented,
+  the arm is not bounded by any token's remaining life and may be called again
+  after the previous child has expired — which is how work longer than a Work
+  Context renews. `ExchangeRequest` now requires exactly one of `Parent` and
+  `DelegationID`; both, or neither, is `ErrInvalidExchange` before anything is
+  sent, matching the host's message-level rule.
 
 ### Added (moduleauthority, mint-only clients)
 
