@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
@@ -248,6 +249,7 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
+	audit         *v1.ModuleEmitAuditEventRequest
 	boundary      *v1.VerifyWorkContextRuntimeBoundaryRequest
 	authorization []string
 	method        string
@@ -261,6 +263,8 @@ type authorityCall struct {
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
+	accountsv1connect.ModuleCapabilitiesServiceLookupAuditEventProcedure:                   true,
 	accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:   true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure: true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
@@ -306,6 +310,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	case accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:
 		call.boundary = &v1.VerifyWorkContextRuntimeBoundaryRequest{}
 		recvErr = stream.RecvMsg(call.boundary)
+	case accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure, accountsv1connect.ModuleCapabilitiesServiceLookupAuditEventProcedure:
+		call.audit = &v1.ModuleEmitAuditEventRequest{}
+		recvErr = stream.RecvMsg(call.audit)
 	case accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:
 		call.notice = &v1.ModuleNotifyOrgAdminsRequest{}
 		recvErr = stream.RecvMsg(call.notice)
@@ -346,6 +353,22 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 			return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{TenantId: testTenant})
 		}
 		return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{TenantId: testTenant, BoundaryId: exampleSource})
+	}
+	if call.audit != nil {
+		switch call.audit.GetIdempotencyKey() {
+		case "conflict":
+			return status.Error(codes.FailedPrecondition, "audit intent conflict")
+		case "unavailable":
+			return status.Error(codes.Unavailable, "audit storage unavailable")
+		}
+		if method == accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure {
+			return stream.SendMsg(&emptypb.Empty{})
+		}
+		eventID := "event-1"
+		if call.audit.GetIdempotencyKey() == "missing" {
+			eventID = ""
+		}
+		return stream.SendMsg(&v1.ModuleLookupAuditEventResponse{EventId: eventID})
 	}
 	if call.notice != nil {
 		// ModuleNotifyOrgAdmins: the host resolves the administrators and

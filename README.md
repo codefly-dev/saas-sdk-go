@@ -96,6 +96,15 @@ The SDK surfaces are:
   with both halves live and compatible. This method requires the unreleased
   host contract recorded in `SOURCE.txt`.
 
+  `EmitAuditEvent(ctx, AuditEvent)` and `LookupAuditEvent(ctx, AuditEvent)` use
+  that authority seam for registered audit effects. Keep the complete event and
+  its stable key for recovery. A lookup returns `AuditReceipt.EventID` only for
+  matching intent under current host authority. An empty ID is inconclusive;
+  neither method automatically retries an uncertain effect. Host error codes
+  remain available through `connect.CodeOf(err)`, including failed preconditions
+  for changed intent or historical keys without a verifiable receipt. These
+  methods require the same unreleased host contract in `SOURCE.txt`.
+
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
 

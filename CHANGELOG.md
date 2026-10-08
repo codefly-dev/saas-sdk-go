@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — audit effect receipts
+
+- Added `moduleauthority.Client.EmitAuditEvent` and `LookupAuditEvent` with
+  complete intent, current module authority and preserved host error codes.
+- Empty receipts remain inconclusive; no automatic effect retry.
+- Regenerated from the exact local host commit in `SOURCE.txt`. Module version
+  remains 0.1.0; these contracts are not a published release.
+
+
 ## Unreleased — runtime boundary attestation
 
 - Added `moduleauthority.Client.VerifyWorkContextRuntimeBoundary`, preserving the
