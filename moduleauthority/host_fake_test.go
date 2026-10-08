@@ -248,6 +248,8 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
+	boundary      *v1.VerifyWorkContextRuntimeBoundaryRequest
+	authorization []string
 	method        string
 	internalToken []string
 	workContext   []string
@@ -259,6 +261,7 @@ type authorityCall struct {
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:   true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure: true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
@@ -294,12 +297,15 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{method: method, authorization: md.Get("authorization"), internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:
+		call.boundary = &v1.VerifyWorkContextRuntimeBoundaryRequest{}
+		recvErr = stream.RecvMsg(call.boundary)
 	case accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:
 		call.notice = &v1.ModuleNotifyOrgAdminsRequest{}
 		recvErr = stream.RecvMsg(call.notice)
@@ -329,6 +335,17 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.boundary != nil {
+		switch call.boundary.ForwardedWorkContextToken {
+		case "denied.token":
+			return status.Error(codes.PermissionDenied, "boundary refused")
+		case "missing-tenant.token":
+			return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{BoundaryId: exampleSource})
+		case "missing-boundary.token":
+			return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{TenantId: testTenant})
+		}
+		return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{TenantId: testTenant, BoundaryId: exampleSource})
 	}
 	if call.notice != nil {
 		// ModuleNotifyOrgAdmins: the host resolves the administrators and

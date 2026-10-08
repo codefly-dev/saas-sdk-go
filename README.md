@@ -88,6 +88,14 @@ The SDK surfaces are:
   op, err := authority.MintModuleOperationContext(ctx, installedBindingID)
   // op.Token goes in x-codefly-work-context on the call to op.Audience.
   ```
+  `VerifyWorkContextRuntimeBoundary(ctx, forwarded)` uses the same independent
+  module authentication to attest an original viewer capability. Its result
+  (`TenantID`, `BoundaryID`) is a current observation, never a grant or a cached
+  proof: the consumer must compare both to its independently verified context
+  and enforce the context's scopes. The host requires an active registration
+  with both halves live and compatible. This method requires the unreleased
+  host contract recorded in `SOURCE.txt`.
+
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
 

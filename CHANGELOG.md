@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — runtime boundary attestation
+
+- Added `moduleauthority.Client.VerifyWorkContextRuntimeBoundary`, preserving the
+  forwarded capability and independently authenticating the consuming module.
+- Regenerated the complete API from the local host experiment recorded in
+  `SOURCE.txt`; module version remains 0.1.0. This is not a published release.
+
+
 ## Unreleased (targets 0.1.0)
 
 Regenerated `gen/` from `module-saas-starter` main (see `SOURCE.txt` for the
