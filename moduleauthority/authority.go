@@ -12,9 +12,10 @@ import (
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
-// authorityEndpoint is this client's connection to accounts' `authority`
-// gRPC endpoint: the generated ModuleCapabilitiesService client, speaking the
-// gRPC protocol over HTTP/2 (TLS, or h2c where the transport rule admits it).
+// authorityEndpoint holds the generated ModuleCapabilitiesService client. New
+// uses Accounts' authority endpoint over gRPC/HTTP2; NewGatewayAuthority uses
+// the host's bounded binary-protobuf Connect bridge. Both retain the owner's
+// authority decisions and the selected transport's credential protections.
 //
 // Every procedure the host serves there authenticates the calling module from
 // its module Work Context; call them through callAsModule, never directly, so

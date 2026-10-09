@@ -1,6 +1,6 @@
 // Package moduleauthority exchanges a composed module's installed authority
-// with the SaaS host, over the two seams the host actually serves a composed
-// module:
+// with the SaaS host, using its broker and an explicitly selected authority
+// transport:
 //
 //   - the gateway's module broker (REST, JSON over HTTP on the gateway base
 //     URL) — where a module presents its identity secret and is minted a Work
@@ -10,7 +10,10 @@
 //     the gateway edge; the broker is how a module reaches them.
 //   - accounts' named `authority` gRPC endpoint — where a module calls, with
 //     its module Work Context, the procedures the host exports to composed
-//     modules (ExchangeDelegatedOperationAudience among them).
+//     modules (ExchangeDelegatedOperationAudience among them). New selects this
+//     direct transport. NewGatewayAuthority instead selects the gateway bridge
+//     for operation exchange, runtime-boundary verification and audit receipts;
+//     it has no fallback to the direct endpoint.
 //
 // Neither address is configured here: the consumer passes what Codefly
 // resolved for it, in Seams.

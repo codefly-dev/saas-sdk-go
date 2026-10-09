@@ -216,6 +216,8 @@ audit emission and receipt lookup. Leave `seams.Authority` empty; this construct
 rejects a simultaneous direct endpoint and never falls back to one. It retains
 the normal credential validation, no-redirect HTTP client and one authentication
 refresh. Other authority methods are not exposed by this bounded bridge.
+The wire format is binary protobuf over Connect; the gateway forwards the
+canonical messages to Accounts without maintaining a second message schema.
 
 This constructor requires a host implementing that bridge. Its source tests cover
 transport behavior; they do not qualify a selected host release or composition.

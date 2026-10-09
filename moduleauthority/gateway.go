@@ -27,7 +27,7 @@ func NewGatewayAuthority(seams Seams, credentials Credentials) (*Client, error) 
 	c.authority = authorityEndpoint{
 		capabilities: accountsv1connect.NewModuleCapabilitiesServiceClient(
 			c.broker.client, c.broker.baseURL+"/modules/_authority",
-			connect.WithProtoJSON(), connect.WithReadMaxBytes(maxBrokerResponse),
+			connect.WithReadMaxBytes(maxBrokerResponse),
 		),
 		token: seams.InternalToken,
 	}

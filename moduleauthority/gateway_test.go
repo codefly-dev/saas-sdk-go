@@ -24,6 +24,9 @@ func TestGatewayAuthorityExchangesThroughOnlyTheGateway(t *testing.T) {
 	var calls atomic.Int32
 	bridge := connect.NewUnaryHandler(procedure, func(ctx context.Context, req *connect.Request[v1.ModuleExchangeDelegatedOperationAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 		calls.Add(1)
+		if req.Header().Get("Content-Type") != "application/proto" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("bridge requires canonical binary protobuf"))
+		}
 		if req.Header().Get(internalTokenHeader) != testInternalToken || req.Header().Get(codefly.WorkContextHeaderName) != "module.token1" {
 			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid fixture proof"))
 		}
