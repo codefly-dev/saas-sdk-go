@@ -8,10 +8,10 @@ import (
 )
 
 // NewGatewayAuthority uses the host's operation-authority bridge instead of a
-// direct accounts connection. It supports ExchangeOperation, runtime-boundary
-// verification, audit emission and audit receipt lookup, plus the ordinary
-// broker mints. The selected host must implement /modules/_authority; there is
-// no fallback to direct accounts access or another authority surface.
+// direct accounts connection. Authority calls use binary-protobuf Connect;
+// broker mints keep their existing transport. The selected host must expose
+// each requested procedure under /modules/_authority. A generated client does
+// not establish host support. There is no fallback to direct accounts access.
 //
 // Authority must be empty. Gateway, credentials and transport protections are
 // validated exactly as for New. The bridge retains the existing host decisions;
