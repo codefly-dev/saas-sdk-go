@@ -207,3 +207,15 @@ import (
     v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 )
 ```
+
+### Gateway-only operation authority
+
+`moduleauthority.NewGatewayAuthority(seams, credentials)` selects the host's
+`/modules/_authority` bridge for operation exchange, runtime-boundary verification,
+audit emission and receipt lookup. Leave `seams.Authority` empty; this constructor
+rejects a simultaneous direct endpoint and never falls back to one. It retains
+the normal credential validation, no-redirect HTTP client and one authentication
+refresh. Other authority methods are not exposed by this bounded bridge.
+
+This constructor requires a host implementing that bridge. Its source tests cover
+transport behavior; they do not qualify a selected host release or composition.
