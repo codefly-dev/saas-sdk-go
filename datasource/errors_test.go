@@ -1,7 +1,9 @@
 package datasource
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -48,26 +50,13 @@ func TestHostErrorMapping(t *testing.T) {
 			if got.Error() != tt.err.Error() {
 				t.Fatalf("host diagnostic was changed: %q", got.Error())
 			}
-			if tt.want == ErrOutcomeUnknown {
-				var retryable *connect.Error
-				if errors.As(got, &retryable) {
-					t.Fatal("unknown outcome exposes a retryable transport error")
-				}
-			} else if !errors.Is(got, tt.err) {
+			var transport *connect.Error
+			if !errors.Is(got, tt.err) || !errors.As(got, &transport) || transport != tt.err {
 				t.Fatal("host error was lost")
 			}
 		})
 	}
 
-	t.Run("input pointer", func(t *testing.T) {
-		err := detailedError(t, connect.CodeInvalidArgument, &errdetails.BadRequest{
-			FieldViolations: []*errdetails.BadRequest_FieldViolation{{Field: "/invoice/items/0/id"}},
-		})
-		var input *InputError
-		if !errors.As(mapHostError(err, true, now), &input) || input.Pointer != "/invoice/items/0/id" || input.Error() != err.Error() {
-			t.Fatalf("input = %#v", input)
-		}
-	})
 	t.Run("provider refusal without status", func(t *testing.T) {
 		err := detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
 			Reason: "SOURCE_PROVIDER_REFUSED",
@@ -145,5 +134,26 @@ func TestRateLimitReset(t *testing.T) {
 				t.Fatal("rate limit lost host diagnostic")
 			}
 		})
+	}
+}
+
+func TestUnknownOutcomeWrapsContextAndConnectErrors(t *testing.T) {
+	for _, tt := range []struct {
+		code  connect.Code
+		cause error
+	}{
+		{connect.CodeDeadlineExceeded, context.DeadlineExceeded},
+		{connect.CodeCanceled, context.Canceled},
+	} {
+		host := connect.NewError(tt.code, tt.cause)
+		mapped := mapHostError(host, true, time.Now())
+		wrapped := fmt.Errorf("invoke: %w", mapped)
+		var outcome *OutcomeUnknown
+		var transport *connect.Error
+		if !errors.Is(wrapped, ErrOutcomeUnknown) || !errors.Is(wrapped, tt.cause) ||
+			!errors.As(wrapped, &outcome) || !errors.As(wrapped, &transport) || transport != host ||
+			connect.CodeOf(wrapped) != tt.code || outcome.Unwrap() != host {
+			t.Fatalf("unknown outcome lost its identity or cause: %v", wrapped)
+		}
 	}
 }

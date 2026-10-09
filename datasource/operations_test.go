@@ -197,10 +197,10 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 		{"unknown", connectError(t, connect.CodeUnavailable), checkSentinel(datasource.ErrOutcomeUnknown)},
 		{"lost mutation", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_OPERATION_OUTCOME_UNKNOWN"}), checkSentinel(datasource.ErrOutcomeUnknown)},
 		{"reused effect", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_EFFECT_REUSED"}), checkSentinel(datasource.ErrEffectReused)},
-		{"input", connectError(t, connect.CodeInvalidArgument, &errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{Field: "/invoice/id"}}}),
+		{"input", connectError(t, connect.CodeInvalidArgument, &errdetails.ErrorInfo{Reason: "SOURCE_INPUT_REFUSED"}),
 			func(t *testing.T, err error, _, _ time.Time) {
 				var value *datasource.InputError
-				if !errors.As(err, &value) || value.Pointer != "/invoice/id" {
+				if !errors.As(err, &value) || value.Pointer != "" {
 					t.Errorf("input error = %v", err)
 				}
 			}},
@@ -235,8 +235,11 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 				var refused *datasource.ProviderRefused
 				var transport *connect.Error
 				var outcome *datasource.OutcomeUnknown
-				if errors.As(err, &refused) || errors.As(err, &transport) || result.Receipt.Status != datasource.ReceiptStatusUnknown {
+				if errors.As(err, &refused) || result.Receipt.Status != datasource.ReceiptStatusUnknown {
 					t.Fatalf("unknown outcome misclassified: %+v, %v", result, err)
+				}
+				if !errors.As(err, &transport) || connect.CodeOf(err) != connect.CodeOf(tt.err) {
+					t.Fatal("unknown outcome lost its wrapped Connect error")
 				}
 				if !errors.As(err, &outcome) || outcome.Receipt.EffectID != result.Receipt.EffectID ||
 					connect.CodeOf(outcome.Cause()) != connect.CodeOf(tt.err) || outcome.Cause().Error() != tt.err.Error() {

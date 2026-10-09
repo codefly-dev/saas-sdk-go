@@ -90,16 +90,18 @@ The SDK surfaces are:
   `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
   not evidence of failure or permission to repeat an effect.** Invoke also
   reports transport loss or deadline expiry after dispatch conservatively as
-  unknown, since it cannot prove the operation was read-only. That outcome does not unwrap
-  to a retryable Connect transport error. An unavailable lookup also returns
-  an unknown receipt: it cannot establish what happened to the effect. Use a
+  unknown, since it cannot prove the operation was read-only. Check
+  `errors.Is(err, datasource.ErrOutcomeUnknown)` **before** transport-code
+  retry logic: the wrapped Connect error remains available for diagnostics,
+  but its code does not establish whether the effect happened. An unavailable
+  lookup also returns an unknown receipt: it cannot establish what happened to the effect. Use a
   fresh bounded context to look up an effect after the original context has
   expired.
 
-  For logging and metrics, `errors.As(err, &outcome)` with
-  `var outcome *datasource.OutcomeUnknown` exposes `outcome.Cause()` and its
-  original Connect code. This explicit diagnostic access does not put a
-  retryable transport error in the outcome's unwrap chain.
+  For logging and metrics, `errors.As` can inspect both
+  `*datasource.OutcomeUnknown` (including its receipt) and the wrapped
+  `*connect.Error`; `errors.Is` also preserves an underlying context error.
+  The SDK never retries either error.
 
   `DeclareOperations(ctx, orgID, sourceID, []datasource.Operation)` replaces
   the source's declaration set atomically under the host's administrator
@@ -129,7 +131,7 @@ The SDK surfaces are:
   | PermissionDenied | `ErrNotPermitted` (`errors.Is`) |
   | Invoke NotFound | `ErrUnknownOperation` (`errors.Is`) |
   | Lookup NotFound | receipt plus `ErrEffectNotFound` (`errors.Is`); keep the ID for an explicit reinvoke |
-  | InvalidArgument | `*InputError`; `Pointer` is populated only from a structured BadRequest field violation |
+  | InvalidArgument | `*InputError`; `Pointer` is empty at the recorded host ref |
   | ResourceExhausted + DATASOURCE_RATE_LIMITED | `*RateLimited`, with `ResetAt` from `reset_at` or `RetryInfo` |
   | FailedPrecondition + SOURCE_OPERATION_OUTCOME_UNKNOWN | receipt plus `ErrOutcomeUnknown` (`errors.Is`); the mutation may have happened |
   | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused` |

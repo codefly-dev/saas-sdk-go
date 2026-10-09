@@ -9,9 +9,9 @@
 - Add `ErrNotPermitted`, `ErrUnknownOperation`, `InputError`, `RateLimited`,
   `ProviderRefused`, `OperationRefused`, `ErrEffectReused`, `ErrEffectNotFound`
   and `ErrOutcomeUnknown`. The host's `SOURCE_OPERATION_OUTCOME_UNKNOWN`
-  reason retains the effect ID and never exposes a retryable transport error.
-  `*OutcomeUnknown.Cause()` provides the original diagnostic explicitly for
-  logging and metrics without enabling generic transport retries.
+  reason retains the effect ID. `*OutcomeUnknown` wraps the original error for
+  `errors.Is`/`errors.As` and Connect diagnostics; callers must check
+  `ErrOutcomeUnknown` before applying transport retry rules. The SDK never retries.
   Only `SOURCE_PROVIDER_REFUSED` maps to a provider refusal; its status remains
   unavailable at this host ref. Host messages remain unchanged.
 - Lookup misses return the original ID with `NOT_ATTEMPTED`; callers may

@@ -92,9 +92,9 @@ func (e *hostError) Unwrap() error        { return e.cause }
 func (e *hostError) Is(target error) bool { return target == e.kind }
 
 // OutcomeUnknown means the provider may have acted. Receipt retains the effect
-// ID. It deliberately does not unwrap to a retryable Connect transport error;
-// Cause exposes that diagnostic explicitly for logging and metrics only.
-// Test the outcome with errors.Is(err, ErrOutcomeUnknown).
+// ID and Unwrap preserves the original diagnostic for errors.Is/errors.As.
+// Check errors.Is(err, ErrOutcomeUnknown) before classifying transport errors:
+// the wrapped transport code is not permission to retry the effect.
 type OutcomeUnknown struct {
 	Receipt Receipt
 	cause   error
@@ -107,6 +107,7 @@ func (e *OutcomeUnknown) Error() string {
 	return e.cause.Error()
 }
 func (e *OutcomeUnknown) Is(target error) bool { return target == ErrOutcomeUnknown }
+func (e *OutcomeUnknown) Unwrap() error        { return e.cause }
 
 // Cause returns the original diagnostic, if any. Its transport code does not
 // establish whether the effect happened and must not drive an effect retry.
