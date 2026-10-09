@@ -88,7 +88,7 @@ workflow) and fails on any difference — the reproduction check from the
 | `settings/` | presence-aware `Field[M, T]` runtime; `JSONCodec` is the only typed↔ProtoJSON boundary |
 | `settings/catalog/` | Go / TypeScript / proto catalog renderers that `module-compose` calls |
 | `workcontext/` | callee-side verification: HTTP, Connect, gRPC middleware plus scope checks |
-| `moduleauthority/` | a module's own authority: Work Context mints at the gateway broker, exchanges on accounts' `authority` gRPC endpoint |
+| `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport |
 | `gen/` | generated output. Regenerated, never edited |
 | `internal/apiboundary` | the public-API boundary gate, with fixtures that prove it still looks |
 | `internal/agentcontext` | the budget and frontmatter contract for this file and the skills |
