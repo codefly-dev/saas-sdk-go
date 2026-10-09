@@ -96,12 +96,12 @@ func (c *Client) DeclareOperations(ctx context.Context, orgID, sourceID string, 
 		if err != nil {
 			return err
 		}
-		var effect v1.SourceOperationEffect
+		var effect v1.SourceOperation_Effect
 		switch operation.Effect {
 		case EffectReadOnly:
-			effect = v1.SourceOperationEffect_SOURCE_OPERATION_EFFECT_READ_ONLY
+			effect = v1.SourceOperation_READ_ONLY
 		case EffectMutation:
-			effect = v1.SourceOperationEffect_SOURCE_OPERATION_EFFECT_MUTATION
+			effect = v1.SourceOperation_MUTATION
 		default:
 			return &InputError{cause: fmt.Errorf("datasource: invalid operation effect %q", operation.Effect)}
 		}
@@ -136,9 +136,9 @@ func (c *Client) ListOperations(ctx context.Context, orgID, sourceID string) ([]
 		}
 		var effect Effect
 		switch value.GetEffect() {
-		case v1.SourceOperationEffect_SOURCE_OPERATION_EFFECT_READ_ONLY:
+		case v1.SourceOperation_READ_ONLY:
 			effect = EffectReadOnly
-		case v1.SourceOperationEffect_SOURCE_OPERATION_EFFECT_MUTATION:
+		case v1.SourceOperation_MUTATION:
 			effect = EffectMutation
 		default:
 			return nil, fmt.Errorf("datasource: unsupported host operation effect %v", value.GetEffect())

@@ -25,7 +25,7 @@ type Operation struct {
 	Input          json.RawMessage
 	Output         json.RawMessage
 	Effect         Effect
-	MaxOutputBytes int64
+	MaxOutputBytes uint32
 }
 
 // ReceiptStatus is the host's observation of an effect, not a retry decision.
