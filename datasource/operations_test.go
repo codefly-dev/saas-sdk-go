@@ -17,8 +17,6 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/codefly-dev/saas-sdk-go/datasource"
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
@@ -28,7 +26,7 @@ import (
 type operationsHandler struct {
 	accountsv1connect.UnimplementedDatasourceServiceHandler
 	invoke  func(context.Context, *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error)
-	lookup  func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.LookupInvokeSourceOperationResponse], error)
+	lookup  func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error)
 	declare func(context.Context, *connect.Request[v1.DeclareSourceOperationsRequest]) (*connect.Response[v1.DeclareSourceOperationsResponse], error)
 	list    func(context.Context, *connect.Request[v1.ListSourceOperationsRequest]) (*connect.Response[v1.ListSourceOperationsResponse], error)
 }
@@ -37,7 +35,7 @@ func (h *operationsHandler) InvokeSourceOperation(ctx context.Context, req *conn
 	return h.invoke(ctx, req)
 }
 
-func (h *operationsHandler) LookupInvokeSourceOperation(ctx context.Context, req *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.LookupInvokeSourceOperationResponse], error) {
+func (h *operationsHandler) LookupInvokeSourceOperation(ctx context.Context, req *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
 	return h.lookup(ctx, req)
 }
 
@@ -87,19 +85,10 @@ func newOperationsGateway(t *testing.T, h *operationsHandler) gw {
 	return gw{base: server.URL, client: client}
 }
 
-func object(t *testing.T, value map[string]any) *structpb.Struct {
-	t.Helper()
-	result, err := structpb.NewStruct(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result
-}
-
 func committedReceipt(id string) *v1.SourceOperationReceipt {
 	return &v1.SourceOperationReceipt{
-		EffectId: id, Status: v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_COMMITTED,
-		CommittedAt: timestamppb.New(time.Unix(1_791_540_000, 123)), ProviderStatus: 200,
+		EffectId: id, Status: "committed",
+		CommittedAt: time.Unix(1_791_540_000, 123).UTC().Format(time.RFC3339Nano), ProviderStatus: 200, OutputJson: `{}`,
 	}
 }
 
@@ -134,7 +123,7 @@ func TestInvokeForwardsGatewayContextMintsEffectAndNeverDeduplicates(t *testing.
 			t.Error("same-effect replay changed input")
 		}
 		return connect.NewResponse(&v1.InvokeSourceOperationResponse{
-			Output: object(t, map[string]any{"count": float64(2)}), Receipt: committedReceipt(req.Msg.GetEffectId()),
+			OutputJson: `{"count":2}`, Receipt: committedReceipt(req.Msg.GetEffectId()),
 		}), nil
 	}}
 	c := newOperationsClient(t, h)
@@ -146,7 +135,7 @@ func TestInvokeForwardsGatewayContextMintsEffectAndNeverDeduplicates(t *testing.
 		t.Fatal(err)
 	}
 	if result.Receipt.EffectID != first.GetEffectId() || result.Receipt.Status != datasource.ReceiptStatusCommitted ||
-		!result.Receipt.CommittedAt.Equal(committedReceipt("").GetCommittedAt().AsTime()) || result.Receipt.ProviderStatus != 200 {
+		!result.Receipt.CommittedAt.Equal(time.Unix(1_791_540_000, 123)) || result.Receipt.ProviderStatus != 200 {
 		t.Fatalf("receipt = %+v", result.Receipt)
 	}
 	var output map[string]int
@@ -164,14 +153,14 @@ func TestInvokeForwardsGatewayContextMintsEffectAndNeverDeduplicates(t *testing.
 
 func TestInvokeChangedInputReachesHostAndIsRefused(t *testing.T) {
 	var calls atomic.Int32
-	var first *structpb.Struct
+	var first string
 	h := &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
 		calls.Add(1)
-		if first != nil && !proto.Equal(first, req.Msg.GetInput()) {
+		if first != "" && first != req.Msg.GetInputJson() {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("effect ID has different input"))
 		}
-		first = req.Msg.GetInput()
-		return connect.NewResponse(&v1.InvokeSourceOperationResponse{Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
+		first = req.Msg.GetInputJson()
+		return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
 	}}
 	c := newOperationsClient(t, h)
 	result, err := c.Invoke(context.Background(), "org", "source", "create_invoice", map[string]any{"amount": 1})
@@ -262,8 +251,8 @@ func checkSentinel(want error) func(*testing.T, error, time.Time, time.Time) {
 
 func TestLookupUnknownIsReceiptAndNeverInvokes(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
-		c := newOperationsClient(t, &operationsHandler{lookup: func(_ context.Context, req *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.LookupInvokeSourceOperationResponse], error) {
-			if req.Msg.GetOrgId() != "org" || req.Msg.GetSourceId() != "source" || req.Msg.GetEffectId() != "effect" {
+		c := newOperationsClient(t, &operationsHandler{lookup: func(_ context.Context, req *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+			if req.Msg.GetEffectId() != "effect" || req.Msg.ProtoReflect().Descriptor().Fields().Len() != 1 {
 				t.Errorf("lookup selectors = %v", req.Msg)
 			}
 			if req.Header().Get("x-codefly-effect-id") != "" {
@@ -271,11 +260,11 @@ func TestLookupUnknownIsReceiptAndNeverInvokes(t *testing.T) {
 			}
 			receipt := committedReceipt("effect")
 			if unknown {
-				receipt.Status = v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_UNKNOWN
-				receipt.CommittedAt = nil
+				receipt.Status = "unknown"
+				receipt.CommittedAt = ""
 				receipt.ProviderStatus = 0
 			}
-			return connect.NewResponse(&v1.LookupInvokeSourceOperationResponse{Receipt: receipt}), nil
+			return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: receipt}), nil
 		}})
 		receipt, err := c.Lookup(context.Background(), "org", "source", "effect")
 		if unknown != errors.Is(err, datasource.ErrOutcomeUnknown) || receipt == nil || receipt.EffectID != "effect" {
@@ -288,7 +277,7 @@ func TestLookupUnknownIsReceiptAndNeverInvokes(t *testing.T) {
 }
 
 func TestLookupUnavailableRetainsUnknownReceipt(t *testing.T) {
-	c := newOperationsClient(t, &operationsHandler{lookup: func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.LookupInvokeSourceOperationResponse], error) {
+	c := newOperationsClient(t, &operationsHandler{lookup: func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("host unreachable"))
 	}})
 	receipt, err := c.Lookup(context.Background(), "org", "source", "effect")
@@ -372,17 +361,17 @@ func TestInvokeUnknownAndMalformedReceiptsRetainOriginalEffectID(t *testing.T) {
 		name    string
 		receipt *v1.SourceOperationReceipt
 	}{
-		{"unknown", &v1.SourceOperationReceipt{EffectId: "effect", Status: v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_UNKNOWN}},
+		{"unknown", &v1.SourceOperationReceipt{EffectId: "effect", Status: "unknown"}},
 		{"missing", nil},
 		{"mismatch", committedReceipt("another-effect")},
 		{"unspecified", &v1.SourceOperationReceipt{EffectId: "effect"}},
-		{"invalid timestamp", &v1.SourceOperationReceipt{EffectId: "effect", Status: v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_COMMITTED, CommittedAt: &timestamppb.Timestamp{Nanos: -1}}},
+		{"invalid timestamp", &v1.SourceOperationReceipt{EffectId: "effect", Status: "committed", CommittedAt: "invalid-time"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls atomic.Int32
 			c := newOperationsClient(t, &operationsHandler{invoke: func(context.Context, *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
 				calls.Add(1)
-				return connect.NewResponse(&v1.InvokeSourceOperationResponse{Receipt: tt.receipt}), nil
+				return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: tt.receipt}), nil
 			}})
 			result, err := c.Invoke(context.Background(), "org", "source", "create_invoice", map[string]any{}, datasource.WithEffectID("effect"))
 			if !errors.Is(err, datasource.ErrOutcomeUnknown) || result == nil || result.Receipt.EffectID != "effect" || calls.Load() != 1 {
@@ -412,7 +401,7 @@ func TestInvokeInvalidJSONDoesNotReachHost(t *testing.T) {
 
 func TestInvokeAddsOnlyEffectHeaderToGeneratedClient(t *testing.T) {
 	gateway := newOperationsGateway(t, &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
-		return connect.NewResponse(&v1.InvokeSourceOperationResponse{Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
+		return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
 	}})
 	var headers []http.Header
 	interceptor := connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
@@ -424,7 +413,7 @@ func TestInvokeAddsOnlyEffectHeaderToGeneratedClient(t *testing.T) {
 	option := connect.WithInterceptors(interceptor)
 	raw := accountsv1connect.NewDatasourceServiceClient(gateway.HTTPClient(), gateway.BaseURL(), option)
 	_, err := raw.InvokeSourceOperation(context.Background(), connect.NewRequest(&v1.InvokeSourceOperationRequest{
-		OrgId: "org", SourceId: "source", Operation: "list_invoices", EffectId: "effect", Input: object(t, map[string]any{}),
+		OrgId: "org", SourceId: "source", Operation: "list_invoices", EffectId: "effect", InputJson: `{}`,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -455,9 +444,53 @@ func TestWithDeadlineKeepsEarlierParentDeadline(t *testing.T) {
 		}
 	})
 	c := newOperationsClient(t, &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
-		return connect.NewResponse(&v1.InvokeSourceOperationResponse{Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
+		return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
 	}}, connect.WithInterceptors(interceptor))
 	if _, err := c.Invoke(ctx, "org", "source", "list_invoices", map[string]any{}, datasource.WithDeadline(time.Now().Add(time.Hour))); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInvokeJSONTextPreservesNumbersOverConnect(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		opts []connect.ClientOption
+	}{
+		{"binary", nil},
+		{"json", []connect.ClientOption{connect.WithProtoJSON()}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const input = `{"decimal":1.234567890123456789,"id":9007199254740993}`
+			const output = " {\"id\":18446744073709551615,\"value\":1.234567890123456789} "
+			c := newOperationsClient(t, &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+				if req.Msg.GetInputJson() != input {
+					t.Errorf("input JSON changed: %s", req.Msg.GetInputJson())
+				}
+				receipt := committedReceipt(req.Msg.GetEffectId())
+				receipt.OutputJson = output
+				return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: output, Receipt: receipt}), nil
+			}}, tt.opts...)
+			for _, inputValue := range []any{
+				json.RawMessage(input),
+				map[string]any{"id": int64(9007199254740993), "decimal": json.Number("1.234567890123456789")},
+			} {
+				result, err := c.Invoke(context.Background(), "org", "source", "list_invoices", inputValue)
+				if err != nil || string(result.Output) != output {
+					t.Fatalf("result = %+v, %v", result, err)
+				}
+			}
+		})
+	}
+}
+
+func TestInvokeInvalidHostOutputRetainsCommittedReceipt(t *testing.T) {
+	for _, output := range []string{"", "null", "[]", "{} {}", `{"incomplete"`} {
+		c := newOperationsClient(t, &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+			return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: output, Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
+		}})
+		result, err := c.Invoke(context.Background(), "org", "source", "list_invoices", map[string]any{})
+		if err == nil || result == nil || result.Receipt.Status != datasource.ReceiptStatusCommitted || result.Receipt.EffectID == "" {
+			t.Fatalf("invalid output %q: %+v, %v", output, result, err)
+		}
 	}
 }

@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
 	connectrpc.com/connect v1.21.0
-	github.com/codefly-dev/core v0.3.32
+	github.com/codefly-dev/core v0.14.0
 	github.com/codefly-dev/sdk-go/workcontext v0.0.0-20260927024316-b3fb40d43099
 	github.com/google/uuid v1.6.0
 	golang.org/x/tools v0.51.0

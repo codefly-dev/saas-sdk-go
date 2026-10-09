@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased — callable sources (awaits host #1049)
+## Unreleased — callable sources (awaits host tag)
 
-- Prepare `datasource.Client.Invoke`, `Lookup`, `DeclareOperations` and
+- Add `datasource.Client.Invoke`, `Lookup`, `DeclareOperations` and
   `ListOperations` on the existing gateway-bound Connect client, matching the
   Python facade. Add operations, JSON output, receipts, UUIDv7 effect IDs and
   per-call deadlines; the host alone owns replay and provider dispatch.
@@ -10,11 +10,42 @@
   `ProviderRefused` and `ErrOutcomeUnknown`. Unknown retains the effect ID and
   never exposes a retryable transport error. Host messages remain unchanged.
 - Document the call and retry contracts in `README.md` and package examples.
+- Invoke payloads use `input_json` / `output_json` strings containing exactly
+  one JSON object, preserving numeric precision. Declaration schemas retain
+  the host's `Struct` representation. Lookup sends only the effect ID; its
+  existing org/source arguments cannot override the host's derived authority.
 - Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
   data; the gate and its fixtures are unchanged.
-- The RPC integration is awaiting the upstream proto. `SOURCE.txt` continues
-  to describe the existing generated tree until regeneration from the host
-  PR head. This SDK must not release until the host tag exists and is consumed.
+- Regenerate the full host API from PR #1052 head
+  `f4ce896d954101b164c3b511cbeea555f17302f7`, recorded in `SOURCE.txt` with module
+  version `0.1.0`. This is a development PR head, not a release tag. Release
+  waits for the host tag and regeneration from its commit.
+- Re-export the OAuth2 grant type/constants reachable from source reads. The
+  generation template emits all host-owned `saas/` schemas and imports Core's
+  Runnable descriptors from Core v0.14.0, matching the host's vendor closure;
+  plugin versions are unchanged.
+
+### Removed / changed (breaking, inherited host contract)
+
+- `moduleauthority.CurrentInstallation.SolutionIdentifier` is replaced by
+  `TargetID` and `BindingID`, reflecting the host's immutable authority
+  identities. The SDK validates the target UUID and nonempty binding.
+- Generated `Installation.SolutionIdentifier`,
+  `InstallSolutionRequest.SolutionIdentifier` and
+  `ModuleCurrentInstallationResponse.SolutionIdentifier` are removed in favor
+  of target/binding identity fields. Their `GetSolutionIdentifier` methods
+  disappear too.
+- Generated `PutSolutionRegistration` / `DeleteSolutionRegistration` RPCs,
+  procedure constants and request types (including the Put request's oneof
+  wrappers), `SolutionFrontendRegistration` and `SolutionBackendRegistration`
+  are removed. The host reconciles delivered presence; there is no writer RPC
+  replacement. Read contracts and new entitlement/target contracts are retained.
+- Generated `SolutionFrontendBinding.LeaseExpiresAt`,
+  `SolutionBackendBinding.LeaseExpiresAt`, `SolutionRegistration.RuntimeBoundary`
+  and their getters, and the
+  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_EXPIRED` constant
+  are removed by the same delivered-presence contract. No generated output was
+  edited or restored to retain the older API.
 
 ## Unreleased — current installation identity
 

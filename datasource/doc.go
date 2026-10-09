@@ -8,6 +8,8 @@
 // never return it. Invoke, Lookup, DeclareOperations and ListOperations are
 // the call half. A caller supplies JSON input and an operation name, never a
 // provider URL or credential.
+// Input and output use JSON-object strings in the host's bounded wire profile;
+// numeric values never cross protobuf Struct's floating-point representation.
 //
 //	result, err := datasource.New(gw).Invoke(ctx, orgID, sourceID,
 //		"list_invoices", map[string]any{"limit": 20})

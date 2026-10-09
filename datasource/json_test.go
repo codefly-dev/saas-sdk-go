@@ -16,11 +16,11 @@ func TestInputJSONObject(t *testing.T) {
 		}{Value: "example"},
 		json.RawMessage(`{"count":2,"empty":{},"nothing":null}`),
 	} {
-		encoded, err := inputStruct(input)
+		encoded, err := inputJSON(input)
 		if err != nil {
 			t.Fatal(err)
 		}
-		output, err := structJSON(encoded)
+		output, err := objectJSON(encoded)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -37,11 +37,24 @@ func TestInputJSONObject(t *testing.T) {
 		}
 	}
 	for _, input := range []any{nil, "text", 42, []string{}, make(chan int),
-		map[string]any{"bad": math.Inf(1)}, json.RawMessage(`{"broken"`)} {
-		_, err := inputStruct(input)
+		map[string]any{"bad": math.Inf(1)}, json.RawMessage(`{"broken"`), json.RawMessage(`{} {}`)} {
+		_, err := inputJSON(input)
 		var invalid *InputError
 		if !errors.As(err, &invalid) {
 			t.Errorf("%T: error = %v, want InputError", input, err)
 		}
+	}
+}
+
+func TestObjectJSONRejectsNonObjectAndTrailingData(t *testing.T) {
+	for _, value := range []string{"", "null", "[]", "42", `"text"`, "{} {}", "{} trailing", "{", "{\"x\":\"\xff\"}"} {
+		if _, err := objectJSON(value); err == nil {
+			t.Errorf("accepted invalid object %q", value)
+		}
+	}
+	const original = "  {\"id\":9007199254740993,\"decimal\":1.234567890123456789} \n"
+	got, err := objectJSON(original)
+	if err != nil || string(got) != original {
+		t.Fatalf("JSON text changed: %q, %v", got, err)
 	}
 }

@@ -54,7 +54,11 @@ The SDK surfaces are:
   ```
 
   `Invoke` marshals a JSON object (a map, struct with JSON tags, or
-  `json.RawMessage`) to protobuf `Struct`. `WithDeadline(time.Time)` bounds
+  `json.RawMessage`) to the host's `input_json` string. The response's
+  `output_json` is validated as one JSON object and returned as
+  `json.RawMessage`, preserving its number precision and text. Invocation
+  payloads never pass through protobuf `Struct`; declaration schemas still
+  use the host's `Struct` fields. `WithDeadline(time.Time)` bounds
   only this call; an earlier context deadline still wins. `WithEffectID(id)`
   supplies an effect ID; when absent or empty, the SDK mints a UUIDv7. Once a
   call is attempted, even an error returns a non-nil `Result` containing that
@@ -67,7 +71,11 @@ The SDK surfaces are:
   receipt cache. Do not change the ID to recover an uncertain mutation.
 
   `Lookup(ctx, orgID, sourceID, effectID)` returns the receipt without
-  invoking the provider. An unknown receipt is returned alongside
+  invoking the provider. The shared SDK signature keeps `orgID` and
+  `sourceID`, but the wire request sends **only `effect_id`**: the host derives
+  the tenant from the gateway's Work Context and recovers the source from the
+  stored effect binding. These two arguments cannot select or override lookup
+  authority. An unknown receipt is returned alongside
   `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
   not evidence of failure or permission to repeat an effect.** Invoke also
   reports transport loss or deadline expiry conservatively as unknown, since
@@ -114,10 +122,10 @@ The SDK surfaces are:
   `NotPermitted`, `UnknownOperation`, `InputError`, `RateLimited`,
   `ProviderRefused` and `OutcomeUnknown`.
 
-  This call surface is unreleased pending the four host RPCs from
-  [module-saas-starter#1049](https://github.com/codefly-dev/module-saas-starter/issues/1049).
-  Development regenerates the complete bindings from that PR's exact head;
-  release waits for its host tag and regenerates from the tagged commit.
+  This call surface uses the four host RPCs from
+  [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
+  `SOURCE.txt` records its exact development PR head. It is not a release tag:
+  release waits for the host tag and regeneration from the tagged commit.
 - **`moduleauthority/`** — the module-principal side of installed operation
   authority. A long-running module supplies its Codefly-projected registration
   credential once; the client mints and refreshes the module's short-lived Work
@@ -286,6 +294,13 @@ the correct module path. **Never hand-edit `gen/` or sed the module path** — t
 protobuf file descriptors embed length-prefixed package strings and a text
 rewrite corrupts them (panics at `init()`). Always regenerate.
 
+The template generates the complete host-owned `saas/` schema tree. Its
+vendored `codefly/` import closure is compiled for Runnable annotations, with
+imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
+those Go descriptors. Emitting a second copy in this SDK would conflict at
+protobuf initialization. The Core dependency matches the host's vendored
+contract version, and the generation plugin versions remain pinned.
+
 > Wiring this regen into module-saas-starter's release (so a saas tag publishes a
 > matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).
 
@@ -334,10 +349,13 @@ original verified parent token and `InstallationID`. The client presents its own
 module Work Context independently on the resolved authority endpoint. It never
 forwards a viewer bearer, selects a tenant/source, or mints broader parent scopes.
 
-The result is `CurrentInstallation{InstallationID, TenantID, SolutionIdentifier}`.
-The SDK requires the exact requested ID and a nonempty, well-formed result;
-the consumer must compare `TenantID` to its independently verified request tenant
-and apply its own source naming rules. A successful observation is not executable
+The result is `CurrentInstallation{InstallationID, TenantID, TargetID, BindingID}`.
+The SDK requires the exact requested ID, valid tenant/target UUIDs and a
+nonempty binding identity. This replaces the removed `SolutionIdentifier`
+field: the host returns the immutable target and its delivered binding,
+rather than a reusable route alias. The consumer must compare `TenantID`
+to its independently verified request tenant and use the target/binding
+identities for authority decisions. A successful observation is not executable
 consent, a grant or durable liveness proof. Re-read for each new request.
 
 The host preserves its organization-member metadata-read rule: no new permission

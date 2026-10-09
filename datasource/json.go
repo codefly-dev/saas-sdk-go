@@ -4,20 +4,35 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-func inputStruct(input any) (*structpb.Struct, error) {
+// Payloads remain JSON text, preserving integer precision and number spelling.
+// Only operation declaration schemas cross the Struct boundary below.
+func inputJSON(input any) (string, error) {
 	data, err := json.Marshal(input)
 	if err != nil {
-		return nil, &InputError{cause: err}
+		return "", &InputError{cause: err}
 	}
-	return jsonStruct(data)
+	if _, err := objectJSON(string(data)); err != nil {
+		return "", &InputError{cause: err}
+	}
+	return string(data), nil
 }
 
-func jsonStruct(data []byte) (*structpb.Struct, error) {
+func objectJSON(value string) (json.RawMessage, error) {
+	data := []byte(value)
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(data) || !json.Valid(data) {
+		return nil, errors.New("datasource: expected exactly one JSON object")
+	}
+	return json.RawMessage(data), nil
+}
+
+func schemaStruct(data []byte) (*structpb.Struct, error) {
 	if trimmed := bytes.TrimSpace(data); len(trimmed) == 0 || trimmed[0] != '{' {
 		return nil, &InputError{cause: errors.New("datasource: input must be a JSON object")}
 	}
@@ -28,7 +43,7 @@ func jsonStruct(data []byte) (*structpb.Struct, error) {
 	return value, nil
 }
 
-func structJSON(value *structpb.Struct) (json.RawMessage, error) {
+func schemaJSON(value *structpb.Struct) (json.RawMessage, error) {
 	if value == nil {
 		return nil, nil
 	}

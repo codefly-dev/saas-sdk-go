@@ -17,7 +17,7 @@ import (
 // On an RPC error the returned Result still carries the effect ID. An unknown
 // outcome must be looked up, not interpreted as permission to repeat an effect.
 func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, input any, opts ...InvokeOption) (*Result, error) {
-	value, err := inputStruct(input)
+	value, err := inputJSON(input)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 	}
 	result := &Result{Receipt: Receipt{EffectID: options.effectID, Status: ReceiptStatusUnknown}}
 	request := connect.NewRequest(&v1.InvokeSourceOperationRequest{
-		OrgId: orgID, SourceId: sourceID, Operation: operation, Input: value, EffectId: options.effectID,
+		OrgId: orgID, SourceId: sourceID, Operation: operation, InputJson: value, EffectId: options.effectID,
 	})
 	request.Header().Set("x-codefly-effect-id", options.effectID)
 	response, err := c.inner.InvokeSourceOperation(ctx, request)
@@ -54,7 +54,7 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 	if receipt.Status == ReceiptStatusUnknown {
 		return result, ErrOutcomeUnknown
 	}
-	result.Output, err = structJSON(response.Msg.GetOutput())
+	result.Output, err = objectJSON(response.Msg.GetOutputJson())
 	return result, err
 }
 
@@ -62,9 +62,11 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 // unknown outcome is returned alongside ErrOutcomeUnknown (errors.Is works).
 // An unavailable lookup also leaves the outcome unknown; it is never a reason
 // to dispatch the effect again.
+// orgID and sourceID preserve the shared SDK signature; the host derives their
+// authority from the gateway's Work Context and the stored effect binding.
 func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (*Receipt, error) {
 	response, err := c.inner.LookupInvokeSourceOperation(ctx, connect.NewRequest(&v1.LookupInvokeSourceOperationRequest{
-		OrgId: orgID, SourceId: sourceID, EffectId: effectID,
+		EffectId: effectID,
 	}))
 	if err != nil {
 		mapped := mapHostError(err, connect.CodeOf(err) == connect.CodeUnavailable, time.Now())
@@ -88,20 +90,20 @@ func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (
 func (c *Client) DeclareOperations(ctx context.Context, orgID, sourceID string, operations []Operation) error {
 	declared := make([]*v1.SourceOperation, 0, len(operations))
 	for _, operation := range operations {
-		input, err := jsonStruct(operation.Input)
+		input, err := schemaStruct(operation.Input)
 		if err != nil {
 			return err
 		}
-		output, err := jsonStruct(operation.Output)
+		output, err := schemaStruct(operation.Output)
 		if err != nil {
 			return err
 		}
 		var effect v1.SourceOperation_Effect
 		switch operation.Effect {
 		case EffectReadOnly:
-			effect = v1.SourceOperation_READ_ONLY
+			effect = v1.SourceOperation_EFFECT_READ_ONLY
 		case EffectMutation:
-			effect = v1.SourceOperation_MUTATION
+			effect = v1.SourceOperation_EFFECT_MUTATION
 		default:
 			return &InputError{cause: fmt.Errorf("datasource: invalid operation effect %q", operation.Effect)}
 		}
@@ -126,19 +128,19 @@ func (c *Client) ListOperations(ctx context.Context, orgID, sourceID string) ([]
 	}
 	operations := make([]Operation, 0, len(response.Msg.GetOperations()))
 	for _, value := range response.Msg.GetOperations() {
-		input, err := structJSON(value.GetInputSchema())
+		input, err := schemaJSON(value.GetInputSchema())
 		if err != nil {
 			return nil, err
 		}
-		output, err := structJSON(value.GetOutputSchema())
+		output, err := schemaJSON(value.GetOutputSchema())
 		if err != nil {
 			return nil, err
 		}
 		var effect Effect
 		switch value.GetEffect() {
-		case v1.SourceOperation_READ_ONLY:
+		case v1.SourceOperation_EFFECT_READ_ONLY:
 			effect = EffectReadOnly
-		case v1.SourceOperation_MUTATION:
+		case v1.SourceOperation_EFFECT_MUTATION:
 			effect = EffectMutation
 		default:
 			return nil, fmt.Errorf("datasource: unsupported host operation effect %v", value.GetEffect())
@@ -157,20 +159,19 @@ func operationReceipt(value *v1.SourceOperationReceipt, effectID string) (*Recei
 	}
 	receipt := &Receipt{EffectID: effectID, ProviderStatus: int(value.GetProviderStatus())}
 	switch value.GetStatus() {
-	case v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_COMMITTED:
+	case "committed":
 		receipt.Status = ReceiptStatusCommitted
-	case v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_REFUSED:
-		receipt.Status = ReceiptStatusRefused
-	case v1.SourceOperationReceiptStatus_SOURCE_OPERATION_RECEIPT_STATUS_UNKNOWN:
+	case "unknown":
 		receipt.Status = ReceiptStatusUnknown
 	default:
 		return nil, fmt.Errorf("datasource: unsupported host receipt status %v", value.GetStatus())
 	}
-	if committed := value.GetCommittedAt(); committed != nil {
-		if err := committed.CheckValid(); err != nil {
+	if committed := value.GetCommittedAt(); committed != "" {
+		var err error
+		receipt.CommittedAt, err = time.Parse(time.RFC3339Nano, committed)
+		if err != nil {
 			return nil, fmt.Errorf("datasource: invalid receipt commit time: %w", err)
 		}
-		receipt.CommittedAt = committed.AsTime()
 	}
 	return receipt, nil
 }

@@ -77,6 +77,8 @@ type (
 	ApiDatasourceConfig = v1.ApiDatasourceConfig
 	// ApiOAuth2Config is the non-secret OAuth configuration of an API source.
 	ApiOAuth2Config = v1.ApiOAuth2Config
+	// ApiOAuth2Grant selects the host's OAuth2 credential lifecycle.
+	ApiOAuth2Grant = v1.ApiOAuth2Config_Grant
 	// ApiCredentialKind identifies how an API source authenticates.
 	ApiCredentialKind = v1.ApiCredentialKind
 	// CrawlerDatasourceConfig is the configuration of a public web crawler.
@@ -118,6 +120,11 @@ const (
 )
 
 const (
+	ApiOAuth2GrantUnspecified       = v1.ApiOAuth2Config_GRANT_UNSPECIFIED
+	ApiOAuth2GrantRefreshToken      = v1.ApiOAuth2Config_GRANT_REFRESH_TOKEN
+	ApiOAuth2GrantClientCredentials = v1.ApiOAuth2Config_GRANT_CLIENT_CREDENTIALS
+	ApiOAuth2GrantAuthorizationCode = v1.ApiOAuth2Config_GRANT_AUTHORIZATION_CODE
+
 	ApiCredentialKindUnspecified = v1.ApiCredentialKind_API_CREDENTIAL_KIND_UNSPECIFIED
 	ApiCredentialKindBearer      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_BEARER
 	ApiCredentialKindBasic       = v1.ApiCredentialKind_API_CREDENTIAL_KIND_BASIC

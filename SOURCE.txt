@@ -1,5 +1,8 @@
-gen/ generated from codefly-dev/module-saas-starter@21f139ee433695ae2129899f265c59b99f6661af
+gen/ generated from codefly-dev/module-saas-starter@f4ce896d954101b164c3b511cbeea555f17302f7
 (accounts public proto: module/services/accounts/proto)
 
 module version: 0.1.0 (module/module.package.codefly.yaml)
 This SDK's release is matched to the saas-starter module version above.
+
+Development ref: PR #1052 head, not a release tag.
+Release waits on the host tag; regenerate from its commit before releasing.
