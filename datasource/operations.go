@@ -37,20 +37,19 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 		}
 		options.effectID = id.String()
 	}
-	if !options.deadline.IsZero() {
+	if options.deadlineSet {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, options.deadline)
 		defer cancel()
 	}
-	result := &Result{Receipt: Receipt{EffectID: options.effectID, Status: ReceiptStatusNotAttempted}}
-	if err := ctx.Err(); err != nil {
-		return result, err
+	if err := operationContextError(ctx); err != nil {
+		return nil, err
 	}
+	result := &Result{Receipt: Receipt{EffectID: options.effectID, Status: ReceiptStatusUnknown}}
 	request := connect.NewRequest(&v1.InvokeSourceOperationRequest{
 		OrgId: orgID, SourceId: sourceID, Operation: operation, InputJson: value, EffectId: options.effectID,
 	})
 	request.Header().Set("x-codefly-effect-id", options.effectID)
-	result.Receipt.Status = ReceiptStatusUnknown
 	response, err := c.inner.InvokeSourceOperation(ctx, request)
 	if err != nil {
 		mapped := mapHostError(err, true, time.Now())
@@ -86,10 +85,17 @@ func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (
 	if err := validateEffectID(effectID); err != nil {
 		return nil, err
 	}
+	if err := operationContextError(ctx); err != nil {
+		return nil, err
+	}
 	response, err := c.inner.LookupInvokeSourceOperation(ctx, connect.NewRequest(&v1.LookupInvokeSourceOperationRequest{
 		EffectId: effectID,
 	}))
 	if err != nil {
+		if !connect.IsWireError(err) {
+			receipt := &Receipt{EffectID: effectID, Status: ReceiptStatusUnknown}
+			return receipt, &OutcomeUnknown{Receipt: *receipt, cause: err}
+		}
 		if connect.CodeOf(err) == connect.CodeNotFound {
 			return &Receipt{EffectID: effectID, Status: ReceiptStatusNotAttempted}, &hostError{kind: ErrEffectNotFound, cause: err}
 		}
@@ -219,4 +225,12 @@ func validateEffectID(id string) error {
 		return &InputError{cause: errors.New("datasource: effect ID must be 1–128 UTF-8 bytes without control bytes or surrounding spaces")}
 	}
 	return nil
+}
+
+func operationContextError(ctx context.Context) error {
+	err := ctx.Err()
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &InputError{cause: fmt.Errorf("datasource: deadline expired before dispatch: %w", err)}
+	}
+	return err
 }

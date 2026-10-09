@@ -1,9 +1,12 @@
 package datasource_test
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -637,6 +640,8 @@ func TestCanceledBeforeDispatchIsNotUnknown(t *testing.T) {
 	c := newOperationsClient(t, &operationsHandler{}, connect.WithInterceptors(interceptor))
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
 	for _, tt := range []struct {
 		ctx  context.Context
 		opts []datasource.InvokeOption
@@ -644,14 +649,160 @@ func TestCanceledBeforeDispatchIsNotUnknown(t *testing.T) {
 	}{
 		{canceled, nil, context.Canceled},
 		{context.Background(), []datasource.InvokeOption{datasource.WithDeadline(time.Now().Add(-time.Second))}, context.DeadlineExceeded},
+		{context.Background(), []datasource.InvokeOption{datasource.WithDeadline(time.Time{})}, context.DeadlineExceeded},
+		{expired, nil, context.DeadlineExceeded},
+		{expired, []datasource.InvokeOption{datasource.WithDeadline(time.Now().Add(time.Minute))}, context.DeadlineExceeded},
 	} {
 		result, err := c.Invoke(tt.ctx, "org", "source", "create_invoice", json.RawMessage(`{}`), tt.opts...)
-		if !errors.Is(err, tt.want) || errors.Is(err, datasource.ErrOutcomeUnknown) || result == nil ||
-			result.Receipt.EffectID == "" || result.Receipt.Status != datasource.ReceiptStatusNotAttempted {
+		if !errors.Is(err, tt.want) || errors.Is(err, datasource.ErrOutcomeUnknown) || result != nil {
 			t.Fatalf("preflight = %+v, %v", result, err)
+		}
+		var input *datasource.InputError
+		if errors.As(err, &input) != (tt.want == context.DeadlineExceeded) {
+			t.Fatalf("expired deadline must be InputError; cancellation remains context.Canceled: %v", err)
+		}
+		if tt.ctx.Err() != nil {
+			receipt, err := c.Lookup(tt.ctx, "org", "source", "persisted-effect")
+			if receipt != nil || !errors.Is(err, tt.want) || errors.Is(err, datasource.ErrOutcomeUnknown) ||
+				errors.As(err, &input) != (tt.want == context.DeadlineExceeded) {
+				t.Fatalf("lookup preflight = %+v, %v", receipt, err)
+			}
 		}
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("canceled call dispatched %d RPCs", calls.Load())
+	}
+}
+
+func TestNonConnectHTTPFailuresAreUnknownAfterDispatch(t *testing.T) {
+	for _, status := range []int{400, 401, 403, 404, 408, 409, 422, 429, 499, 500, 501, 502, 503, 504, 599} {
+		for _, body := range []struct {
+			name, contentType, text string
+		}{
+			{"text", "text/plain", "upstream request failed"},
+			{"html", "text/html", "<html>upstream request failed</html>"},
+			{"empty", "application/json", ""},
+			{"invalid JSON", "application/json", "{"},
+		} {
+			for _, effectID := range []string{"", "persisted-effect"} {
+				t.Run(fmt.Sprintf("%d/%s/%s", status, body.name, effectID), func(t *testing.T) {
+					var calls atomic.Int32
+					receivedIDs := make(chan string, 2)
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						calls.Add(1)
+						data, err := io.ReadAll(r.Body)
+						if err != nil {
+							t.Error(err)
+						}
+						if r.URL.Path == accountsv1connect.DatasourceServiceInvokeSourceOperationProcedure {
+							var request v1.InvokeSourceOperationRequest
+							if err := proto.Unmarshal(data, &request); err != nil {
+								t.Error(err)
+							}
+							if request.GetEffectId() != r.Header.Get("x-codefly-effect-id") {
+								t.Error("effect header changed")
+							}
+							receivedIDs <- request.GetEffectId()
+						} else if r.URL.Path == accountsv1connect.DatasourceServiceLookupInvokeSourceOperationProcedure {
+							var request v1.LookupInvokeSourceOperationRequest
+							if err := proto.Unmarshal(data, &request); err != nil {
+								t.Error(err)
+							}
+							receivedIDs <- request.GetEffectId()
+						} else {
+							t.Errorf("unexpected procedure %s", r.URL.Path)
+						}
+						w.Header().Set("Content-Type", body.contentType)
+						w.WriteHeader(status)
+						_, _ = io.WriteString(w, body.text)
+					}))
+					t.Cleanup(server.Close)
+					c := datasource.New(gw{base: server.URL, client: server.Client()})
+					var opts []datasource.InvokeOption
+					if effectID != "" {
+						opts = append(opts, datasource.WithEffectID(effectID))
+					}
+					result, err := c.Invoke(context.Background(), "org", "source", "create_invoice", json.RawMessage(`{}`), opts...)
+					var outcome *datasource.OutcomeUnknown
+					var transport *connect.Error
+					if result == nil || !errors.Is(err, datasource.ErrOutcomeUnknown) || !errors.As(err, &outcome) ||
+						!errors.As(err, &transport) || result.Receipt.Status != datasource.ReceiptStatusUnknown {
+						t.Fatalf("HTTP %d invoke = %+v, %v", status, result, err)
+					}
+					id := result.Receipt.EffectID
+					if id == "" || (effectID != "" && id != effectID) || outcome.Receipt.EffectID != id || calls.Load() != 1 {
+						t.Fatalf("effect ID lost or SDK retried: %+v, calls %d", result, calls.Load())
+					}
+					if received := <-receivedIDs; received != id {
+						t.Fatalf("invoke sent %q, returned %q", received, id)
+					}
+					receipt, err := c.Lookup(context.Background(), "org", "source", id)
+					if receipt == nil || !errors.Is(err, datasource.ErrOutcomeUnknown) || !errors.As(err, &outcome) ||
+						receipt.EffectID != id || outcome.Receipt.EffectID != id || receipt.Status != datasource.ReceiptStatusUnknown ||
+						errors.Is(err, datasource.ErrEffectNotFound) || calls.Load() != 2 {
+						t.Fatalf("HTTP %d lookup = %+v, %v, calls %d", status, receipt, err, calls.Load())
+					}
+					if received := <-receivedIDs; received != id {
+						t.Fatalf("lookup sent %q, want %q", received, id)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDecodedConnectHTTPFailuresKeepTheirMappings(t *testing.T) {
+	for _, compressed := range []bool{false, true} {
+		for _, tt := range []struct {
+			code   connect.Code
+			status int
+			want   error
+			body   string
+		}{
+			{connect.CodeInternal, 500, nil, `{"code":"internal","message":"host diagnostic"}`},
+			{connect.CodeUnauthenticated, 401, nil, `{"code":"unauthenticated","message":"host diagnostic"}`},
+			{connect.CodeResourceExhausted, 429, nil, `{"code":"resource_exhausted","message":"host diagnostic"}`},
+			{connect.CodePermissionDenied, 403, datasource.ErrNotPermitted, `{"code":"permission_denied","message":"host diagnostic"}`},
+			// Connect owns decoding: missing/unrecognized string codes use its
+			// HTTP fallback, and a recognized code wins over HTTP status.
+			{connect.CodeUnavailable, 429, datasource.ErrOutcomeUnknown, `{}`},
+			{connect.CodeUnknown, 500, nil, `{}`},
+			{connect.CodeUnavailable, 429, datasource.ErrOutcomeUnknown, `{"code":"future_code"}`},
+			{connect.CodeUnknown, 500, nil, `{"code":"future_code"}`},
+			{connect.CodePermissionDenied, 500, datasource.ErrNotPermitted, `{"code":"permission_denied"}`},
+		} {
+			t.Run(fmt.Sprintf("%s/gzip=%t", tt.code, compressed), func(t *testing.T) {
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					if compressed {
+						w.Header().Set("Content-Encoding", "gzip")
+					}
+					w.WriteHeader(tt.status)
+					var writer io.Writer = w
+					if compressed {
+						zip := gzip.NewWriter(w)
+						defer zip.Close()
+						writer = zip
+					}
+					_, _ = io.WriteString(writer, tt.body)
+				}))
+				t.Cleanup(server.Close)
+				c := datasource.New(gw{base: server.URL, client: server.Client()})
+				result, err := c.Invoke(context.Background(), "org", "source", "create_invoice", json.RawMessage(`{}`))
+				var transport *connect.Error
+				if result == nil || result.Receipt.EffectID == "" || errors.Is(err, datasource.ErrOutcomeUnknown) != (tt.want == datasource.ErrOutcomeUnknown) ||
+					!errors.As(err, &transport) || !connect.IsWireError(err) || transport.Code() != tt.code ||
+					(tt.want != nil && !errors.Is(err, tt.want)) {
+					t.Fatalf("valid Connect invoke = %+v, %v", result, err)
+				}
+				_, err = c.Lookup(context.Background(), "org", "source", result.Receipt.EffectID)
+				if errors.Is(err, datasource.ErrOutcomeUnknown) != (tt.want == datasource.ErrOutcomeUnknown) || !connect.IsWireError(err) || connect.CodeOf(err) != tt.code ||
+					(tt.want != nil && !errors.Is(err, tt.want)) || calls.Load() != 2 {
+					t.Fatalf("valid Connect lookup = %v, calls %d", err, calls.Load())
+				}
+			})
+		}
 	}
 }

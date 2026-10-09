@@ -38,7 +38,7 @@ type ReceiptStatus string
 const (
 	ReceiptStatusCommitted ReceiptStatus = "COMMITTED"
 	ReceiptStatusUnknown   ReceiptStatus = "UNKNOWN"
-	// ReceiptStatusNotAttempted labels a Lookup miss or local preflight rejection.
+	// ReceiptStatusNotAttempted labels a Lookup miss.
 	// The host can also return NotFound for a removed declaration, so a lookup
 	// miss is not historical proof that the provider never acted. Keep the ID.
 	ReceiptStatusNotAttempted ReceiptStatus = "NOT_ATTEMPTED"

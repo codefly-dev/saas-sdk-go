@@ -9,6 +9,7 @@ type invokeOptions struct {
 	effectID    string
 	effectIDSet bool
 	deadline    time.Time
+	deadlineSet bool
 }
 
 // WithEffectID reuses a caller-owned effect ID. The host replays an identical
@@ -20,7 +21,8 @@ func WithEffectID(id string) InvokeOption {
 }
 
 // WithDeadline bounds the call by an absolute deadline. An earlier deadline on
-// ctx still wins. Expiry does not prove that a provider mutation did not happen.
+// ctx still wins. A deadline expired before dispatch returns InputError with no
+// result. Expiry after dispatch does not prove that a mutation did not happen.
 func WithDeadline(deadline time.Time) InvokeOption {
-	return func(o *invokeOptions) { o.deadline = deadline }
+	return func(o *invokeOptions) { o.deadline, o.deadlineSet = deadline, true }
 }

@@ -20,7 +20,8 @@
 // retries or deduplicates: the host alone replays byte-identical input_json under
 // the same ID and refuses different input. Persist the encoded input with the
 // ID and reuse json.RawMessage for replay. WithDeadline bounds the call, not
-// the effect.
+// the effect. An already-expired deadline returns InputError with no result
+// before dispatch; a deadline expiring after dispatch leaves the outcome unknown.
 //
 // ErrOutcomeUnknown is a typed outcome: the provider may have acted. Lookup
 // returns the receipt alongside that sentinel, tested with errors.Is. Retain the

@@ -15,7 +15,7 @@ import (
 
 func detailedError(t *testing.T, code connect.Code, details ...proto.Message) *connect.Error {
 	t.Helper()
-	err := connect.NewError(code, errors.New("provider said credential-looking-example-secret"))
+	err := connect.NewWireError(code, errors.New("provider said credential-looking-example-secret"))
 	for _, message := range details {
 		detail, detailErr := connect.NewErrorDetail(message)
 		if detailErr != nil {
@@ -66,6 +66,15 @@ func TestHostErrorMapping(t *testing.T) {
 			t.Fatalf("refusal = %#v", refused)
 		}
 	})
+	t.Run("forged provider status is ignored", func(t *testing.T) {
+		err := detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
+			Reason: "SOURCE_PROVIDER_REFUSED", Metadata: map[string]string{"provider_status": "401"},
+		})
+		var refused *ProviderRefused
+		if !errors.As(mapHostError(err, true, now), &refused) || refused.Status != 0 {
+			t.Fatalf("unadmitted metadata became a provider status: %#v", refused)
+		}
+	})
 	for _, reason := range []string{"", "SOURCE_DECLARATION_CHANGED", "SOURCE_REAUTH_REQUIRED", "SOURCE_OUTPUT_REFUSED",
 		"SOURCE_EFFECT_REQUIRED", "SOURCE_OPERATIONS_UNAVAILABLE", "SOURCE_DECLARATION_INVALID", "SOURCE_EFFECT_BINDING_CHANGED", "FUTURE_REASON"} {
 		t.Run("precondition/"+reason, func(t *testing.T) {
@@ -82,7 +91,7 @@ func TestHostErrorMapping(t *testing.T) {
 		})
 	}
 	t.Run("input without structured pointer", func(t *testing.T) {
-		err := connect.NewError(connect.CodeInvalidArgument, errors.New("source operation: invalid at /invoice/id"))
+		err := connect.NewWireError(connect.CodeInvalidArgument, errors.New("source operation: invalid at /invoice/id"))
 		var invalid *InputError
 		if !errors.As(mapHostError(err, true, now), &invalid) || invalid.Pointer != "" || invalid.Error() != err.Error() {
 			t.Fatalf("input = %#v", invalid)
@@ -102,9 +111,12 @@ func TestHostErrorMapping(t *testing.T) {
 			t.Errorf("read transport failure %v was presented as an effect outcome: %v", err, got)
 		}
 	}
-	plain := errors.New("local error")
-	if mapHostError(plain, true, now) != plain || mapHostError(nil, true, now) != nil {
-		t.Fatal("non-Connect error changed")
+	plain := errors.New("transport error")
+	if mapHostError(plain, false, now) != plain || mapHostError(nil, true, now) != nil {
+		t.Fatal("unrelated error changed")
+	}
+	if mapped := mapHostError(plain, true, now); !errors.Is(mapped, ErrOutcomeUnknown) || !errors.Is(mapped, plain) {
+		t.Fatal("post-dispatch transport error lost its unknown outcome or cause")
 	}
 }
 

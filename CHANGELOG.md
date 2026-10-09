@@ -18,8 +18,12 @@
   explicitly reinvoke with the same ID. Committed receipts include `Output`,
   so recovery can retrieve output without another invoke. Receipt statuses are
   `COMMITTED`, `UNKNOWN` and `NOT_ATTEMPTED`.
-- Validate effect IDs and reject an already-canceled context or expired
-  deadline before dispatch. Add operation descriptions and host-computed
+- Every non-Connect HTTP failure after Invoke/Lookup dispatch, including 4xx,
+  429 and 500, returns `ErrOutcomeUnknown` with the original effect ID and
+  diagnostic cause. Decoded RPC errors retain their existing typed mappings.
+- Validate effect IDs and reject an expired deadline before dispatch with
+  `InputError`, no result and zero RPC calls. Explicit cancellation returns
+  `context.Canceled` with no result. Add operation descriptions and host-computed
   digests to declaration/list round-tripping.
 - Document the call and retry contracts in `README.md` and package examples.
 - Invoke payloads use `input_json` / `output_json` strings containing exactly

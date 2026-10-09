@@ -63,8 +63,10 @@ The SDK surfaces are:
   supplies an effect ID of 1–128 UTF-8 bytes without control bytes or surrounding
   spaces (which HTTP would trim); interior spaces and Unicode are supported;
   when omitted, the SDK mints a UUIDv7. Invalid IDs return `*InputError` before
-  dispatch. An already-canceled context or expired deadline returns the plain
-  context error before dispatch. Once a call is attempted, even an error
+  dispatch. A deadline already expired before dispatch (including an earlier
+  parent deadline) returns `*InputError` with no `Result` and zero RPC calls.
+  An explicitly canceled context returns `context.Canceled` with no result.
+  Once a call is attempted, even an error
   returns a non-nil `Result` containing that
   ID in `Receipt.EffectID`. Persist a caller-owned ID **before** invoking a
   mutation if it must survive a process crash.
@@ -90,7 +92,11 @@ The SDK surfaces are:
   `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
   not evidence of failure or permission to repeat an effect.** Invoke also
   reports transport loss or deadline expiry after dispatch conservatively as
-  unknown, since it cannot prove the operation was read-only. Check
+  unknown, since it cannot prove the operation was read-only. Every non-Connect
+  HTTP error after Invoke or Lookup dispatch, including 4xx, 429 and 500,
+  likewise returns `ErrOutcomeUnknown` with the original ID. The Connect
+  decoder identifies RPC errors; decoded errors retain their code/reason
+  mappings. Check
   `errors.Is(err, datasource.ErrOutcomeUnknown)` **before** transport-code
   retry logic: the wrapped Connect error remains available for diagnostics,
   but its code does not establish whether the effect happened. An unavailable
@@ -137,6 +143,7 @@ The SDK surfaces are:
   | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused` |
   | FailedPrecondition + SOURCE_EFFECT_REUSED | `ErrEffectReused` (`errors.Is`) |
   | Other FailedPrecondition | `*OperationRefused`, with the structured `Reason` or an empty string |
+  | Non-Connect HTTP error after Invoke/Lookup dispatch (4xx or 5xx) | receipt plus `ErrOutcomeUnknown`; retain the original ID |
   | Ambiguous Invoke / unknown receipt | receipt plus `ErrOutcomeUnknown` (`errors.Is`) |
 
   The recorded host ref does not emit `BadRequest.FieldViolation` or provider

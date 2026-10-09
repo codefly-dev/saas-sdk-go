@@ -120,6 +120,12 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 	if err == nil {
 		return nil
 	}
+	// HTTP status alone cannot establish whether the host attempted an effect.
+	// Use Connect's decoded-wire marker, not its inferred HTTP-to-code mapping:
+	// for example, a proxy's plain 429 and 500 otherwise produce different codes.
+	if effectOutcome && !connect.IsWireError(err) {
+		return &OutcomeUnknown{cause: err}
+	}
 	var ce *connect.Error
 	if !errors.As(err, &ce) {
 		return err
