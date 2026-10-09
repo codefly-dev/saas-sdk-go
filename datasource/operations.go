@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -25,7 +26,11 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 	for _, option := range opts {
 		option(&options)
 	}
-	if options.effectID == "" {
+	if options.effectIDSet {
+		if err := validateEffectID(options.effectID); err != nil {
+			return nil, err
+		}
+	} else {
 		id, err := uuid.NewV7()
 		if err != nil {
 			return nil, fmt.Errorf("datasource: mint effect ID: %w", err)
@@ -37,24 +42,34 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 		ctx, cancel = context.WithDeadline(ctx, options.deadline)
 		defer cancel()
 	}
-	result := &Result{Receipt: Receipt{EffectID: options.effectID, Status: ReceiptStatusUnknown}}
+	result := &Result{Receipt: Receipt{EffectID: options.effectID, Status: ReceiptStatusNotAttempted}}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	request := connect.NewRequest(&v1.InvokeSourceOperationRequest{
 		OrgId: orgID, SourceId: sourceID, Operation: operation, InputJson: value, EffectId: options.effectID,
 	})
 	request.Header().Set("x-codefly-effect-id", options.effectID)
+	result.Receipt.Status = ReceiptStatusUnknown
 	response, err := c.inner.InvokeSourceOperation(ctx, request)
 	if err != nil {
-		return result, mapHostError(err, true, time.Now())
+		mapped := mapHostError(err, true, time.Now())
+		var unknown *OutcomeUnknown
+		if errors.As(mapped, &unknown) {
+			unknown.Receipt = result.Receipt
+		}
+		return result, mapped
 	}
 	receipt, err := operationReceipt(response.Msg.GetReceipt(), options.effectID)
 	if err != nil {
-		return result, &unknownOutcome{cause: err}
+		return result, &OutcomeUnknown{Receipt: result.Receipt, cause: err}
 	}
 	result.Receipt = *receipt
 	if receipt.Status == ReceiptStatusUnknown {
-		return result, ErrOutcomeUnknown
+		return result, &OutcomeUnknown{Receipt: *receipt}
 	}
 	result.Output, err = objectJSON(response.Msg.GetOutputJson())
+	result.Receipt.Output = result.Output
 	return result, err
 }
 
@@ -62,27 +77,40 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 // unknown outcome is returned alongside ErrOutcomeUnknown (errors.Is works).
 // An unavailable lookup also leaves the outcome unknown; it is never a reason
 // to dispatch the effect again.
+// A NotFound response returns ErrEffectNotFound and the original ID for an
+// explicit same-ID invoke. At the recorded host ref, a removed declaration can
+// also produce NotFound; it is not proof that the provider never acted.
 // orgID and sourceID preserve the shared SDK signature; the host derives their
 // authority from the gateway's Work Context and the stored effect binding.
 func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (*Receipt, error) {
+	if err := validateEffectID(effectID); err != nil {
+		return nil, err
+	}
 	response, err := c.inner.LookupInvokeSourceOperation(ctx, connect.NewRequest(&v1.LookupInvokeSourceOperationRequest{
 		EffectId: effectID,
 	}))
 	if err != nil {
+		if connect.CodeOf(err) == connect.CodeNotFound {
+			return &Receipt{EffectID: effectID, Status: ReceiptStatusNotAttempted}, &hostError{kind: ErrEffectNotFound, cause: err}
+		}
 		mapped := mapHostError(err, connect.CodeOf(err) == connect.CodeUnavailable, time.Now())
-		if errors.Is(mapped, ErrOutcomeUnknown) {
-			return &Receipt{EffectID: effectID, Status: ReceiptStatusUnknown}, mapped
+		var unknown *OutcomeUnknown
+		if errors.As(mapped, &unknown) {
+			unknown.Receipt = Receipt{EffectID: effectID, Status: ReceiptStatusUnknown}
+			return &unknown.Receipt, mapped
 		}
 		return nil, mapped
 	}
 	receipt, err := operationReceipt(response.Msg.GetReceipt(), effectID)
 	if err != nil {
-		return nil, err
+		receipt = &Receipt{EffectID: effectID, Status: ReceiptStatusUnknown}
+		return receipt, &OutcomeUnknown{Receipt: *receipt, cause: err}
 	}
 	if receipt.Status == ReceiptStatusUnknown {
-		return receipt, ErrOutcomeUnknown
+		return receipt, &OutcomeUnknown{Receipt: *receipt}
 	}
-	return receipt, nil
+	receipt.Output, err = objectJSON(response.Msg.GetOutputJson())
+	return receipt, err
 }
 
 // DeclareOperations asks the host to replace the source's declarations
@@ -108,7 +136,7 @@ func (c *Client) DeclareOperations(ctx context.Context, orgID, sourceID string, 
 			return &InputError{cause: fmt.Errorf("datasource: invalid operation effect %q", operation.Effect)}
 		}
 		declared = append(declared, &v1.SourceOperation{
-			Name: operation.Name, Method: operation.Method, Path: operation.Path, Query: operation.Query,
+			Name: operation.Name, Description: operation.Description, Method: operation.Method, Path: operation.Path, Query: operation.Query,
 			InputSchema: input, OutputSchema: output, Effect: effect, MaxOutputBytes: operation.MaxOutputBytes,
 		})
 	}
@@ -146,7 +174,8 @@ func (c *Client) ListOperations(ctx context.Context, orgID, sourceID string) ([]
 			return nil, fmt.Errorf("datasource: unsupported host operation effect %v", value.GetEffect())
 		}
 		operations = append(operations, Operation{
-			Name: value.GetName(), Method: value.GetMethod(), Path: value.GetPath(), Query: value.GetQuery(),
+			Name: value.GetName(), Description: value.GetDescription(), Digest: value.GetDigest(),
+			Method: value.GetMethod(), Path: value.GetPath(), Query: value.GetQuery(),
 			Input: input, Output: output, Effect: effect, MaxOutputBytes: value.GetMaxOutputBytes(),
 		})
 	}
@@ -174,4 +203,20 @@ func operationReceipt(value *v1.SourceOperationReceipt, effectID string) (*Recei
 		}
 	}
 	return receipt, nil
+}
+
+func validateEffectID(id string) error {
+	valid := len(id) > 0 && len(id) <= 128 && utf8.ValidString(id)
+	// net/http trims surrounding ASCII spaces from header values, which would
+	// make the effect header differ from the protobuf field at the host.
+	if valid {
+		valid = id[0] != ' ' && id[len(id)-1] != ' '
+	}
+	for i := 0; i < len(id) && valid; i++ {
+		valid = id[i] >= 0x20 && id[i] != 0x7f
+	}
+	if !valid {
+		return &InputError{cause: errors.New("datasource: effect ID must be 1–128 UTF-8 bytes without control bytes or surrounding spaces")}
+	}
+	return nil
 }

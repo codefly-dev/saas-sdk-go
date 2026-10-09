@@ -26,11 +26,15 @@ func Example_invoke() {
 			fmt.Println("outcome still unknown", receipt.EffectID)
 			return // no repeated effect, and no newly minted ID
 		}
+		if errors.Is(lookupErr, datasource.ErrEffectNotFound) {
+			fmt.Println("effect not found; an explicit same-ID invoke is safe", receipt.EffectID)
+			return
+		}
 		if lookupErr != nil {
 			fmt.Println(lookupErr)
 			return
 		}
-		fmt.Println(receipt.Status)
+		fmt.Println(receipt.Status, string(receipt.Output))
 		return
 	}
 	if err != nil {

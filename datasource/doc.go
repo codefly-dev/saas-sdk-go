@@ -17,11 +17,15 @@
 // Invoke mints a UUIDv7 when WithEffectID is absent. Once a call is attempted,
 // Result.Receipt.EffectID remains available even on error. Persist a caller-owned
 // ID before a mutation if recovery must survive a process crash. The SDK never
-// retries or deduplicates: the host alone replays identical input under the same
-// ID and refuses different input. WithDeadline bounds the call, not the effect.
+// retries or deduplicates: the host alone replays byte-identical input_json under
+// the same ID and refuses different input. Persist the encoded input with the
+// ID and reuse json.RawMessage for replay. WithDeadline bounds the call, not
+// the effect.
 //
 // ErrOutcomeUnknown is a typed outcome: the provider may have acted. Lookup
 // returns the receipt alongside that sentinel, tested with errors.Is. Retain the
 // ID and look it up with a live context; do not infer a failed effect or mint a
 // new ID to retry. See Example_invoke for the complete compiled example.
+// Lookup's ErrEffectNotFound retains the ID for a safe explicit same-ID invoke;
+// committed receipts include Output without another invocation.
 package datasource

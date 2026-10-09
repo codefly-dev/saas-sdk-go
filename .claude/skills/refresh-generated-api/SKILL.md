@@ -45,9 +45,11 @@ Three properties of that template matter:
 
 - **The inputs select the complete host-owned `saas/` schema tree.** The
   vendored `codefly/` closure is import-only: its `go_package_prefix` resolves
-  to `github.com/codefly-dev/core/generated/go`, and the Go dependency must
-  match the host's vendored contract version. Generating another copy of Core's
-  descriptors here creates duplicate protobuf registrations at initialization.
+  to `github.com/codefly-dev/core/generated/go`. Require a compatible Core
+  version that provides those packages; validate the dependency floor against
+  SDK and consumer builds instead of copying the host's dependency generation.
+  Generating another copy of Core's descriptors here creates duplicate protobuf
+  registrations at initialization.
 
 - **`clean: true` wipes `gen/` first.** So a proto deleted upstream disappears
   here rather than lingering — which is how `AuditExportService` left in 0.1.0.

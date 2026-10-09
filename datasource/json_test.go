@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,14 @@ func TestInputJSONObject(t *testing.T) {
 		if !errors.As(err, &invalid) {
 			t.Errorf("%T: error = %v, want InputError", input, err)
 		}
+	}
+}
+
+func TestByteInputExplainsRawMessage(t *testing.T) {
+	_, err := inputJSON([]byte(`{"count":2}`))
+	var invalid *InputError
+	if !errors.As(err, &invalid) || !strings.Contains(err.Error(), "json.RawMessage") {
+		t.Fatalf("byte input = %v", err)
 	}
 }
 

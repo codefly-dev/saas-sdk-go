@@ -13,6 +13,9 @@ import (
 // Payloads remain JSON text, preserving integer precision and number spelling.
 // Only operation declaration schemas cross the Struct boundary below.
 func inputJSON(input any) (string, error) {
+	if _, ok := input.([]byte); ok {
+		return "", &InputError{cause: errors.New("datasource: use json.RawMessage for an encoded JSON object, not []byte")}
+	}
 	data, err := json.Marshal(input)
 	if err != nil {
 		return "", &InputError{cause: err}

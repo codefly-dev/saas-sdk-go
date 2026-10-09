@@ -60,30 +60,46 @@ The SDK surfaces are:
   payloads never pass through protobuf `Struct`; declaration schemas still
   use the host's `Struct` fields. `WithDeadline(time.Time)` bounds
   only this call; an earlier context deadline still wins. `WithEffectID(id)`
-  supplies an effect ID; when absent or empty, the SDK mints a UUIDv7. Once a
-  call is attempted, even an error returns a non-nil `Result` containing that
+  supplies an effect ID of 1–128 UTF-8 bytes without control bytes or surrounding
+  spaces (which HTTP would trim); interior spaces and Unicode are supported;
+  when omitted, the SDK mints a UUIDv7. Invalid IDs return `*InputError` before
+  dispatch. An already-canceled context or expired deadline returns the plain
+  context error before dispatch. Once a call is attempted, even an error
+  returns a non-nil `Result` containing that
   ID in `Receipt.EffectID`. Persist a caller-owned ID **before** invoking a
   mutation if it must survive a process crash.
 
-  Repeating the same effect ID and input asks the **host** to replay its
-  receipt. Different input under the same ID is refused. Every explicit
+  Repeating the same effect ID and **byte-identical `input_json`** asks the
+  **host** to replay its receipt. Persist the encoded input with the ID and
+  reuse it as `json.RawMessage`: rebuilding an equivalent object with a
+  different field order can be refused. Every valid explicit
   `Invoke` reaches the host: the SDK has no retry loop, deduplication or
   receipt cache. Do not change the ID to recover an uncertain mutation.
 
-  `Lookup(ctx, orgID, sourceID, effectID)` returns the receipt without
-  invoking the provider. The shared SDK signature keeps `orgID` and
+  `Lookup(ctx, orgID, sourceID, effectID)` returns the receipt and its committed
+  `Output` without invoking the provider. The shared SDK signature keeps `orgID` and
   `sourceID`, but the wire request sends **only `effect_id`**: the host derives
   the tenant from the gateway's Work Context and recovers the source from the
   stored effect binding. These two arguments cannot select or override lookup
-  authority. An unknown receipt is returned alongside
+  authority. A lookup miss returns `ErrEffectNotFound` and a receipt carrying
+  the same ID with status `NOT_ATTEMPTED`; an explicit reinvoke with that ID is
+  safe, and the SDK never invokes automatically. At the recorded host ref,
+  NotFound can also mean the declaration disappeared after an attempt; it is
+  not proof the provider never acted. Keep the original ID in either case.
+  An unknown receipt is returned alongside
   `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
   not evidence of failure or permission to repeat an effect.** Invoke also
-  reports transport loss or deadline expiry conservatively as unknown, since
-  it cannot prove the operation was read-only. That outcome does not unwrap
+  reports transport loss or deadline expiry after dispatch conservatively as
+  unknown, since it cannot prove the operation was read-only. That outcome does not unwrap
   to a retryable Connect transport error. An unavailable lookup also returns
   an unknown receipt: it cannot establish what happened to the effect. Use a
   fresh bounded context to look up an effect after the original context has
   expired.
+
+  For logging and metrics, `errors.As(err, &outcome)` with
+  `var outcome *datasource.OutcomeUnknown` exposes `outcome.Cause()` and its
+  original Connect code. This explicit diagnostic access does not put a
+  retryable transport error in the outcome's unwrap chain.
 
   `DeclareOperations(ctx, orgID, sourceID, []datasource.Operation)` replaces
   the source's declaration set atomically under the host's administrator
@@ -93,13 +109,16 @@ The SDK surfaces are:
   ```go
   err := ds.DeclareOperations(ctx, orgID, sourceID, []datasource.Operation{{
       Name: "list_invoices", Method: "GET", Path: "/invoices", Query: []string{"limit"},
+      Description: "List available invoices",
       Input: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}},"additionalProperties":false}`),
       Output: json.RawMessage(`{"type":"object"}`),
       Effect: datasource.EffectReadOnly, MaxOutputBytes: 65536,
   }})
   ```
 
-  The host admits the schemas, route, effect and output cap. Invocation never
+  `ListOperations` includes each operation's description and host-computed
+  `Digest`; declarations ignore a caller-supplied digest. The host admits the
+  schemas, route, effect and output cap. Invocation never
   accepts a provider URL or credential. The gateway's HTTP client carries
   the person's Work Context unchanged; this facade adds only
   `x-codefly-effect-id` to the normal Connect request, matching the request's
@@ -108,19 +127,32 @@ The SDK surfaces are:
   | Host response | Go result |
   | --- | --- |
   | PermissionDenied | `ErrNotPermitted` (`errors.Is`) |
-  | NotFound | `ErrUnknownOperation` (`errors.Is`) |
-  | InvalidArgument + BadRequest | `*InputError`, with the first field violation's JSON `Pointer` |
+  | Invoke NotFound | `ErrUnknownOperation` (`errors.Is`) |
+  | Lookup NotFound | receipt plus `ErrEffectNotFound` (`errors.Is`); keep the ID for an explicit reinvoke |
+  | InvalidArgument | `*InputError`; `Pointer` is populated only from a structured BadRequest field violation |
   | ResourceExhausted + DATASOURCE_RATE_LIMITED | `*RateLimited`, with `ResetAt` from `reset_at` or `RetryInfo` |
-  | FailedPrecondition | `*ProviderRefused`, with the host's `provider_status` as `Status` (zero if absent) |
+  | FailedPrecondition + SOURCE_OPERATION_OUTCOME_UNKNOWN | receipt plus `ErrOutcomeUnknown` (`errors.Is`); the mutation may have happened |
+  | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused` |
+  | FailedPrecondition + SOURCE_EFFECT_REUSED | `ErrEffectReused` (`errors.Is`) |
+  | Other FailedPrecondition | `*OperationRefused`, with the structured `Reason` or an empty string |
   | Ambiguous Invoke / unknown receipt | receipt plus `ErrOutcomeUnknown` (`errors.Is`) |
+
+  The recorded host ref does not emit `BadRequest.FieldViolation` or provider
+  status metadata on errors: `InputError.Pointer` is empty and
+  `ProviderRefused.Status` stays zero. Those details belong to the host's
+  [#1049 contract](https://github.com/codefly-dev/module-saas-starter/issues/1049).
+  Its receipt guard also emits detail-free precondition refusals, represented
+  as `OperationRefused` with an empty reason. A precondition refusal does not
+  establish the outcome of an earlier attempt under that ID.
 
   Other errors retain their Connect identity. Host diagnostic messages are
   preserved, including credential-looking text: **the host is the disclosure
   guard**. The SDK neither redacts messages nor treats their prose as status
   metadata. These names mirror the Python facade's `invoke`, `lookup`,
   `declare_operations`, `list_operations`, `Operation`, `Result`, `Receipt`,
-  `NotPermitted`, `UnknownOperation`, `InputError`, `RateLimited`,
-  `ProviderRefused` and `OutcomeUnknown`.
+  `NotPermitted`, `UnknownOperation`, `EffectNotFound`, `EffectReused`,
+  `InputError`, `RateLimited`, `ProviderRefused`, `OperationRefused` and
+  `OutcomeUnknown`.
 
   This call surface uses the four host RPCs from
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
@@ -298,8 +330,10 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. The Core dependency matches the host's vendored
-contract version, and the generation plugin versions remain pinned.
+protobuf initialization. Core v0.3.41 supplies the required Runnable package;
+the SDK need not adopt the host's entire dependency generation. Verify the
+compatible dependency floor with SDK and consumer builds when refreshing it.
+The generation plugin versions remain pinned.
 
 > Wiring this regen into module-saas-starter's release (so a saas tag publishes a
 > matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).

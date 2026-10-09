@@ -7,8 +7,20 @@
   Python facade. Add operations, JSON output, receipts, UUIDv7 effect IDs and
   per-call deadlines; the host alone owns replay and provider dispatch.
 - Add `ErrNotPermitted`, `ErrUnknownOperation`, `InputError`, `RateLimited`,
-  `ProviderRefused` and `ErrOutcomeUnknown`. Unknown retains the effect ID and
-  never exposes a retryable transport error. Host messages remain unchanged.
+  `ProviderRefused`, `OperationRefused`, `ErrEffectReused`, `ErrEffectNotFound`
+  and `ErrOutcomeUnknown`. The host's `SOURCE_OPERATION_OUTCOME_UNKNOWN`
+  reason retains the effect ID and never exposes a retryable transport error.
+  `*OutcomeUnknown.Cause()` provides the original diagnostic explicitly for
+  logging and metrics without enabling generic transport retries.
+  Only `SOURCE_PROVIDER_REFUSED` maps to a provider refusal; its status remains
+  unavailable at this host ref. Host messages remain unchanged.
+- Lookup misses return the original ID with `NOT_ATTEMPTED`; callers may
+  explicitly reinvoke with the same ID. Committed receipts include `Output`,
+  so recovery can retrieve output without another invoke. Receipt statuses are
+  `COMMITTED`, `UNKNOWN` and `NOT_ATTEMPTED`.
+- Validate effect IDs and reject an already-canceled context or expired
+  deadline before dispatch. Add operation descriptions and host-computed
+  digests to declaration/list round-tripping.
 - Document the call and retry contracts in `README.md` and package examples.
 - Invoke payloads use `input_json` / `output_json` strings containing exactly
   one JSON object, preserving numeric precision. Declaration schemas retain
@@ -22,8 +34,8 @@
   waits for the host tag and regeneration from its commit.
 - Re-export the OAuth2 grant type/constants reachable from source reads. The
   generation template emits all host-owned `saas/` schemas and imports Core's
-  Runnable descriptors from Core v0.14.0, matching the host's vendor closure;
-  plugin versions are unchanged.
+  Runnable descriptors from Core v0.3.41, which supplies the required package
+  while preserving consumer compatibility; plugin versions are unchanged.
 
 ### Removed / changed (breaking, inherited host contract)
 

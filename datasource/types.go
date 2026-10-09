@@ -19,6 +19,7 @@ const (
 // admission, JSON Schema validation, routing, credentials and output limits.
 type Operation struct {
 	Name           string
+	Description    string
 	Method         string
 	Path           string
 	Query          []string
@@ -26,6 +27,9 @@ type Operation struct {
 	Output         json.RawMessage
 	Effect         Effect
 	MaxOutputBytes uint32
+	// Digest is read from ListOperations; DeclareOperations ignores it because
+	// the host computes the admitted declaration's digest.
+	Digest string
 }
 
 // ReceiptStatus is the host's observation of an effect, not a retry decision.
@@ -33,8 +37,11 @@ type ReceiptStatus string
 
 const (
 	ReceiptStatusCommitted ReceiptStatus = "COMMITTED"
-	ReceiptStatusRefused   ReceiptStatus = "REFUSED"
 	ReceiptStatusUnknown   ReceiptStatus = "UNKNOWN"
+	// ReceiptStatusNotAttempted labels a Lookup miss or local preflight rejection.
+	// The host can also return NotFound for a removed declaration, so a lookup
+	// miss is not historical proof that the provider never acted. Keep the ID.
+	ReceiptStatusNotAttempted ReceiptStatus = "NOT_ATTEMPTED"
 )
 
 // Receipt identifies an effect for Lookup. Unknown means its outcome is not
@@ -45,6 +52,9 @@ type Receipt struct {
 	Status         ReceiptStatus
 	CommittedAt    time.Time
 	ProviderStatus int
+	// Output is the committed output, also available after Lookup. It is nil
+	// when there is no committed output.
+	Output json.RawMessage
 }
 
 // Result carries the provider output and the host receipt. Invoke also returns

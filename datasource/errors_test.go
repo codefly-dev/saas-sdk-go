@@ -36,6 +36,8 @@ func TestHostErrorMapping(t *testing.T) {
 		{"unavailable", detailedError(t, connect.CodeUnavailable), ErrOutcomeUnknown},
 		{"deadline", detailedError(t, connect.CodeDeadlineExceeded), ErrOutcomeUnknown},
 		{"canceled", detailedError(t, connect.CodeCanceled), ErrOutcomeUnknown},
+		{"lost mutation", detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_OPERATION_OUTCOME_UNKNOWN"}), ErrOutcomeUnknown},
+		{"effect reuse", detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_EFFECT_REUSED"}), ErrEffectReused},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,13 +68,35 @@ func TestHostErrorMapping(t *testing.T) {
 			t.Fatalf("input = %#v", input)
 		}
 	})
-	t.Run("provider status", func(t *testing.T) {
+	t.Run("provider refusal without status", func(t *testing.T) {
 		err := detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
-			Reason: "DATASOURCE_PROVIDER_REFUSED", Metadata: map[string]string{"provider_status": "403"},
+			Reason: "SOURCE_PROVIDER_REFUSED",
 		})
 		var refused *ProviderRefused
-		if !errors.As(mapHostError(err, true, now), &refused) || refused.Status != 403 || refused.Error() != err.Error() {
+		if !errors.As(mapHostError(err, true, now), &refused) || refused.Status != 0 || refused.Error() != err.Error() {
 			t.Fatalf("refusal = %#v", refused)
+		}
+	})
+	for _, reason := range []string{"", "SOURCE_DECLARATION_CHANGED", "SOURCE_REAUTH_REQUIRED", "SOURCE_OUTPUT_REFUSED",
+		"SOURCE_EFFECT_REQUIRED", "SOURCE_OPERATIONS_UNAVAILABLE", "SOURCE_DECLARATION_INVALID", "SOURCE_EFFECT_BINDING_CHANGED", "FUTURE_REASON"} {
+		t.Run("precondition/"+reason, func(t *testing.T) {
+			err := detailedError(t, connect.CodeFailedPrecondition)
+			if reason != "" {
+				err = detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: reason})
+			}
+			got := mapHostError(err, true, now)
+			var refused *OperationRefused
+			var provider *ProviderRefused
+			if !errors.As(got, &refused) || refused.Reason != reason || !errors.Is(got, err) || errors.As(got, &provider) {
+				t.Fatalf("host precondition = %v", got)
+			}
+		})
+	}
+	t.Run("input without structured pointer", func(t *testing.T) {
+		err := connect.NewError(connect.CodeInvalidArgument, errors.New("source operation: invalid at /invoice/id"))
+		var invalid *InputError
+		if !errors.As(mapHostError(err, true, now), &invalid) || invalid.Pointer != "" || invalid.Error() != err.Error() {
+			t.Fatalf("input = %#v", invalid)
 		}
 	})
 	for _, code := range []connect.Code{connect.CodeUnknown, connect.CodeUnauthenticated, connect.CodeAlreadyExists,

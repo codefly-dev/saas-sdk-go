@@ -157,7 +157,7 @@ func TestInvokeChangedInputReachesHostAndIsRefused(t *testing.T) {
 	h := &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
 		calls.Add(1)
 		if first != "" && first != req.Msg.GetInputJson() {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("effect ID has different input"))
+			return nil, connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_EFFECT_REUSED"})
 		}
 		first = req.Msg.GetInputJson()
 		return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
@@ -168,8 +168,7 @@ func TestInvokeChangedInputReachesHostAndIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = c.Invoke(context.Background(), "org", "source", "create_invoice", map[string]any{"amount": 2}, datasource.WithEffectID(result.Receipt.EffectID))
-	var refusal *datasource.ProviderRefused
-	if !errors.As(err, &refusal) || calls.Load() != 2 {
+	if !errors.Is(err, datasource.ErrEffectReused) || calls.Load() != 2 {
 		t.Fatalf("refusal = %v, host calls = %d", err, calls.Load())
 	}
 }
@@ -196,6 +195,8 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 		{"permission", connectError(t, connect.CodePermissionDenied), checkSentinel(datasource.ErrNotPermitted)},
 		{"operation", connectError(t, connect.CodeNotFound), checkSentinel(datasource.ErrUnknownOperation)},
 		{"unknown", connectError(t, connect.CodeUnavailable), checkSentinel(datasource.ErrOutcomeUnknown)},
+		{"lost mutation", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_OPERATION_OUTCOME_UNKNOWN"}), checkSentinel(datasource.ErrOutcomeUnknown)},
+		{"reused effect", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_EFFECT_REUSED"}), checkSentinel(datasource.ErrEffectReused)},
 		{"input", connectError(t, connect.CodeInvalidArgument, &errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{Field: "/invoice/id"}}}),
 			func(t *testing.T, err error, _, _ time.Time) {
 				var value *datasource.InputError
@@ -210,10 +211,10 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 					t.Errorf("rate limit = %#v", value)
 				}
 			}},
-		{"provider", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "DATASOURCE_PROVIDER_REFUSED", Metadata: map[string]string{"provider_status": "401"}}),
+		{"provider", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_PROVIDER_REFUSED"}),
 			func(t *testing.T, err error, _, _ time.Time) {
 				var value *datasource.ProviderRefused
-				if !errors.As(err, &value) || value.Status != 401 {
+				if !errors.As(err, &value) || value.Status != 0 {
 					t.Errorf("provider refusal = %v", err)
 				}
 			}},
@@ -229,6 +230,18 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 			tt.check(t, err, before, time.Now())
 			if result == nil || result.Receipt.EffectID == "" {
 				t.Fatal("RPC error lost the minted effect ID")
+			}
+			if errors.Is(err, datasource.ErrOutcomeUnknown) {
+				var refused *datasource.ProviderRefused
+				var transport *connect.Error
+				var outcome *datasource.OutcomeUnknown
+				if errors.As(err, &refused) || errors.As(err, &transport) || result.Receipt.Status != datasource.ReceiptStatusUnknown {
+					t.Fatalf("unknown outcome misclassified: %+v, %v", result, err)
+				}
+				if !errors.As(err, &outcome) || outcome.Receipt.EffectID != result.Receipt.EffectID ||
+					connect.CodeOf(outcome.Cause()) != connect.CodeOf(tt.err) || outcome.Cause().Error() != tt.err.Error() {
+					t.Fatal("explicit outcome diagnostics lost the Connect code, message, or effect ID")
+				}
 			}
 			if err.Error() != tt.err.Error() {
 				t.Errorf("host error message was changed: %q", err)
@@ -298,6 +311,12 @@ func TestOperationDeclarationsRoundTrip(t *testing.T) {
 		declare: func(_ context.Context, req *connect.Request[v1.DeclareSourceOperationsRequest]) (*connect.Response[v1.DeclareSourceOperationsResponse], error) {
 			check(req.Msg.GetOrgId(), req.Msg.GetSourceId(), req.Header())
 			declared = req.Msg.GetOperations()
+			for _, operation := range declared {
+				if operation.GetDigest() != "" {
+					t.Error("declaration sent a caller-supplied digest")
+				}
+				operation.Digest = "host-digest"
+			}
 			return connect.NewResponse(&v1.DeclareSourceOperationsResponse{}), nil
 		},
 		list: func(_ context.Context, req *connect.Request[v1.ListSourceOperationsRequest]) (*connect.Response[v1.ListSourceOperationsResponse], error) {
@@ -309,12 +328,14 @@ func TestOperationDeclarationsRoundTrip(t *testing.T) {
 	for _, effect := range []datasource.Effect{datasource.EffectReadOnly, datasource.EffectMutation} {
 		want := datasource.Operation{
 			Name: "list_invoices", Method: "GET", Path: "/accounts/{id}/invoices", Query: []string{"limit"},
+			Description: "List available invoices", Digest: "caller-digest-is-ignored",
 			Input: json.RawMessage(`{"type":"object","additionalProperties":false}`), Output: json.RawMessage(`{"type":"object"}`),
 			Effect: effect, MaxOutputBytes: 65536,
 		}
 		if err := c.DeclareOperations(ctx, "org", "source", []datasource.Operation{want}); err != nil {
 			t.Fatal(err)
 		}
+		want.Digest = "host-digest"
 		got, err := c.ListOperations(ctx, "org", "source")
 		if err != nil || len(got) != 1 {
 			t.Fatalf("list = %+v, %v", got, err)
@@ -356,7 +377,7 @@ func TestInvokeDeadlineRetainsEffectID(t *testing.T) {
 	}
 }
 
-func TestInvokeUnknownAndMalformedReceiptsRetainOriginalEffectID(t *testing.T) {
+func TestUnknownAndMalformedReceiptsRetainOriginalEffectID(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		receipt *v1.SourceOperationReceipt
@@ -369,13 +390,24 @@ func TestInvokeUnknownAndMalformedReceiptsRetainOriginalEffectID(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls atomic.Int32
-			c := newOperationsClient(t, &operationsHandler{invoke: func(context.Context, *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
-				calls.Add(1)
-				return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: tt.receipt}), nil
-			}})
+			c := newOperationsClient(t, &operationsHandler{
+				invoke: func(context.Context, *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+					calls.Add(1)
+					return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: tt.receipt}), nil
+				},
+				lookup: func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+					return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: tt.receipt}), nil
+				},
+			})
 			result, err := c.Invoke(context.Background(), "org", "source", "create_invoice", map[string]any{}, datasource.WithEffectID("effect"))
 			if !errors.Is(err, datasource.ErrOutcomeUnknown) || result == nil || result.Receipt.EffectID != "effect" || calls.Load() != 1 {
 				t.Fatalf("result = %+v, %v, host calls = %d", result, err, calls.Load())
+			}
+			receipt, err := c.Lookup(context.Background(), "org", "source", "effect")
+			var outcome *datasource.OutcomeUnknown
+			if !errors.As(err, &outcome) || !errors.Is(err, datasource.ErrOutcomeUnknown) || receipt == nil || receipt.EffectID != "effect" ||
+				outcome.Receipt.EffectID != "effect" || calls.Load() != 1 {
+				t.Fatalf("lookup = %+v, %v, invoke calls = %d", receipt, err, calls.Load())
 			}
 		})
 	}
@@ -492,5 +524,131 @@ func TestInvokeInvalidHostOutputRetainsCommittedReceipt(t *testing.T) {
 		if err == nil || result == nil || result.Receipt.Status != datasource.ReceiptStatusCommitted || result.Receipt.EffectID == "" {
 			t.Fatalf("invalid output %q: %+v, %v", output, result, err)
 		}
+	}
+}
+
+func TestLookupHostOutcomes(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		hostError error
+		want      error
+		status    datasource.ReceiptStatus
+	}{
+		{"not attempted", connect.NewError(connect.CodeNotFound, errors.New("source effect not found")), datasource.ErrEffectNotFound, datasource.ReceiptStatusNotAttempted},
+		{"lost mutation", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_OPERATION_OUTCOME_UNKNOWN"}), datasource.ErrOutcomeUnknown, datasource.ReceiptStatusUnknown},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var lookups, invokes atomic.Int32
+			c := newOperationsClient(t, &operationsHandler{
+				lookup: func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+					lookups.Add(1)
+					return nil, tt.hostError
+				},
+				invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+					invokes.Add(1)
+					if req.Msg.GetEffectId() != "persisted-effect" {
+						t.Error("reinvoke changed the effect ID")
+					}
+					return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: committedReceipt(req.Msg.GetEffectId())}), nil
+				},
+			})
+			receipt, err := c.Lookup(context.Background(), "org", "source", "persisted-effect")
+			var refused *datasource.ProviderRefused
+			if !errors.Is(err, tt.want) || errors.Is(err, datasource.ErrUnknownOperation) || errors.As(err, &refused) ||
+				receipt == nil || receipt.EffectID != "persisted-effect" || receipt.Status != tt.status || receipt.Output != nil {
+				t.Fatalf("lookup = %+v, %v", receipt, err)
+			}
+			if lookups.Load() != 1 || invokes.Load() != 0 || err.Error() != tt.hostError.Error() {
+				t.Fatal("lookup retried, invoked, or changed the host message")
+			}
+			if errors.Is(err, datasource.ErrEffectNotFound) {
+				_, err = c.Invoke(context.Background(), "org", "source", "create_invoice", json.RawMessage(`{}`), datasource.WithEffectID(receipt.EffectID))
+				if err != nil || invokes.Load() != 1 {
+					t.Fatalf("explicit same-ID invoke = %v, calls = %d", err, invokes.Load())
+				}
+			}
+		})
+	}
+}
+
+func TestLookupReturnsCommittedOutputWithoutInvoking(t *testing.T) {
+	const output = `{"id":18446744073709551615,"amount":1.234567890123456789}`
+	c := newOperationsClient(t, &operationsHandler{lookup: func(context.Context, *connect.Request[v1.LookupInvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+		receipt := committedReceipt("effect")
+		receipt.OutputJson = output
+		return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: output, Receipt: receipt}), nil
+	}})
+	receipt, err := c.Lookup(context.Background(), "org", "source", "effect")
+	if err != nil || receipt.Status != datasource.ReceiptStatusCommitted || string(receipt.Output) != output {
+		t.Fatalf("lookup = %+v, %v", receipt, err)
+	}
+}
+
+func TestInvalidEffectIDNeverDispatches(t *testing.T) {
+	var calls atomic.Int32
+	interceptor := connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			calls.Add(1)
+			return next(ctx, req)
+		}
+	})
+	c := newOperationsClient(t, &operationsHandler{}, connect.WithInterceptors(interceptor))
+	for _, id := range []string{"", "bad\nid", "bad\rid", "bad\tid", " leading", "trailing ", "bad\x00id", "bad\x7fid", "\xff", strings.Repeat("x", 129), strings.Repeat("é", 65)} {
+		var input *datasource.InputError
+		result, err := c.Invoke(context.Background(), "org", "source", "create_invoice", json.RawMessage(`{}`), datasource.WithEffectID(id))
+		if result != nil || !errors.As(err, &input) || errors.Is(err, datasource.ErrOutcomeUnknown) {
+			t.Fatalf("invoke ID %q = %+v, %v", id, result, err)
+		}
+		receipt, err := c.Lookup(context.Background(), "org", "source", id)
+		if receipt != nil || !errors.As(err, &input) {
+			t.Fatalf("lookup ID %q = %+v, %v", id, receipt, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("invalid IDs dispatched %d RPCs", calls.Load())
+	}
+}
+
+func TestEffectIDBoundaryReachesHostUnchanged(t *testing.T) {
+	for _, id := range []string{strings.Repeat("x", 126) + "!~", "effect with spaces", "facture-é", "发票", strings.Repeat("é", 64)} {
+		c := newOperationsClient(t, &operationsHandler{invoke: func(_ context.Context, req *connect.Request[v1.InvokeSourceOperationRequest]) (*connect.Response[v1.InvokeSourceOperationResponse], error) {
+			if req.Msg.GetEffectId() != id || req.Header().Get("x-codefly-effect-id") != id {
+				t.Error("effect ID changed")
+			}
+			return connect.NewResponse(&v1.InvokeSourceOperationResponse{OutputJson: `{}`, Receipt: committedReceipt(id)}), nil
+		}})
+		if _, err := c.Invoke(context.Background(), "org", "source", "list_invoices", json.RawMessage(`{}`), datasource.WithEffectID(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCanceledBeforeDispatchIsNotUnknown(t *testing.T) {
+	var calls atomic.Int32
+	interceptor := connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			calls.Add(1)
+			return next(ctx, req)
+		}
+	})
+	c := newOperationsClient(t, &operationsHandler{}, connect.WithInterceptors(interceptor))
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tt := range []struct {
+		ctx  context.Context
+		opts []datasource.InvokeOption
+		want error
+	}{
+		{canceled, nil, context.Canceled},
+		{context.Background(), []datasource.InvokeOption{datasource.WithDeadline(time.Now().Add(-time.Second))}, context.DeadlineExceeded},
+	} {
+		result, err := c.Invoke(tt.ctx, "org", "source", "create_invoice", json.RawMessage(`{}`), tt.opts...)
+		if !errors.Is(err, tt.want) || errors.Is(err, datasource.ErrOutcomeUnknown) || result == nil ||
+			result.Receipt.EffectID == "" || result.Receipt.Status != datasource.ReceiptStatusNotAttempted {
+			t.Fatalf("preflight = %+v, %v", result, err)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("canceled call dispatched %d RPCs", calls.Load())
 	}
 }
