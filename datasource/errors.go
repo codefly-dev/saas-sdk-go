@@ -25,6 +25,22 @@ var (
 	ErrOutcomeUnknown = errors.New("datasource: outcome unknown; look up the effect")
 )
 
+// DatasourceError reports invalid output accompanying a valid committed receipt.
+// Receipt preserves the commit evidence and any valid receipt output. This is
+// not an unknown effect or permission to retry it, especially under a fresh ID.
+type DatasourceError struct {
+	Receipt Receipt
+	cause   error
+}
+
+func (e *DatasourceError) Error() string {
+	if e.cause == nil {
+		return "datasource: invalid committed output"
+	}
+	return e.cause.Error()
+}
+func (e *DatasourceError) Unwrap() error { return e.cause }
+
 // InputError reports a rejected input. Pointer is the host's JSON Pointer from
 // BadRequest.FieldViolation.Field, or empty when no structured pointer is supplied.
 type InputError struct {
@@ -160,6 +176,9 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 	var retry *errdetails.RetryInfo
 	var bad *errdetails.BadRequest
 	for _, detail := range ce.Details() {
+		if detail == nil {
+			continue
+		}
 		value, detailErr := detail.Value()
 		if detailErr != nil {
 			continue
@@ -188,7 +207,7 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 		if info.GetReason() != "DATASOURCE_RATE_LIMITED" {
 			return err
 		}
-		reset, parseErr := time.Parse(time.RFC3339Nano, info.GetMetadata()["reset_at"])
+		reset, parseErr := parseHostTime(info.GetMetadata()["reset_at"])
 		if parseErr != nil {
 			reset = time.Time{}
 			if delay := retry.GetRetryDelay(); delay != nil && delay.CheckValid() == nil && delay.AsDuration() >= 0 {
@@ -199,6 +218,9 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 	case connect.CodeFailedPrecondition:
 		switch info.GetReason() {
 		case "SOURCE_OPERATION_OUTCOME_UNKNOWN":
+			if !effectOutcome {
+				return &OperationRefused{Reason: info.GetReason(), cause: err}
+			}
 			return &OutcomeUnknown{cause: err}
 		case "SOURCE_OPERATION_DECLARATION_REMOVED":
 			status := ReceiptStatusUnknown

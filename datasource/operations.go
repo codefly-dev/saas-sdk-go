@@ -2,6 +2,7 @@ package datasource
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -74,8 +75,7 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 	if receipt.Status == ReceiptStatusUnknown {
 		return result, &OutcomeUnknown{Receipt: *receipt}
 	}
-	result.Output, err = objectJSON(response.Msg.GetOutputJson())
-	result.Receipt.Output = result.Output
+	result.Output, err = committedOutput(response.Msg, &result.Receipt)
 	return result, err
 }
 
@@ -106,7 +106,10 @@ func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (
 		if connect.CodeOf(err) == connect.CodeNotFound {
 			return &Receipt{EffectID: effectID, Status: ReceiptStatusNotAttempted}, &hostError{kind: ErrEffectNotFound, cause: err}
 		}
-		mapped := mapHostError(err, connect.CodeOf(err) == connect.CodeUnavailable, time.Now())
+		if code := connect.CodeOf(err); code == connect.CodeDeadlineExceeded || code == connect.CodeCanceled {
+			return nil, err
+		}
+		mapped := mapHostError(err, true, time.Now())
 		var unknown *OutcomeUnknown
 		if errors.As(mapped, &unknown) {
 			unknown.Receipt = Receipt{EffectID: effectID, Status: ReceiptStatusUnknown}
@@ -127,8 +130,23 @@ func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (
 	if receipt.Status == ReceiptStatusUnknown {
 		return receipt, &OutcomeUnknown{Receipt: *receipt}
 	}
-	receipt.Output, err = objectJSON(response.Msg.GetOutputJson())
+	_, err = committedOutput(response.Msg, receipt)
 	return receipt, err
+}
+
+// Receipt output is the saved evidence. Top-level output supplies Result.Output
+// and must also be a JSON object, but never overwrites the receipt's output.
+func committedOutput(value *v1.InvokeSourceOperationResponse, receipt *Receipt) (json.RawMessage, error) {
+	var err error
+	receipt.Output, err = objectJSON(value.GetReceipt().GetOutputJson())
+	if err != nil {
+		return nil, &DatasourceError{Receipt: *receipt, cause: err}
+	}
+	output, err := objectJSON(value.GetOutputJson())
+	if err != nil {
+		return nil, &DatasourceError{Receipt: *receipt, cause: err}
+	}
+	return output, nil
 }
 
 // DeclareOperations asks the host to replace the source's declarations
@@ -215,7 +233,7 @@ func operationReceipt(value *v1.SourceOperationReceipt, effectID string) (*Recei
 	}
 	if committed := value.GetCommittedAt(); committed != "" {
 		var err error
-		receipt.CommittedAt, err = time.Parse(time.RFC3339Nano, committed)
+		receipt.CommittedAt, err = parseHostTime(committed)
 		if err != nil {
 			return nil, fmt.Errorf("datasource: invalid receipt commit time: %w", err)
 		}

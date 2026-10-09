@@ -51,12 +51,12 @@ type Receipt struct {
 	Status         ReceiptStatus
 	CommittedAt    time.Time
 	ProviderStatus int
-	// Output is the committed output, also available after Lookup. It is nil
-	// when there is no committed output.
+	// Output is the committed receipt.output_json evidence, also available after
+	// Lookup. It is nil when unavailable or malformed (see DatasourceError).
 	Output json.RawMessage
 }
 
-// Result carries the provider output and the host receipt. Invoke also returns
+// Result carries top-level output_json and the host receipt. Invoke also returns
 // a non-nil Result on an RPC error so a minted effect ID is never lost.
 type Result struct {
 	Output  json.RawMessage

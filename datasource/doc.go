@@ -35,4 +35,8 @@
 // never with a fresh ID: a committed status here does not include the saved
 // output. Lookup survives declaration removal/replacement under current source
 // read authority; unresolved or expired receipts remain unknown.
+//
+// DatasourceError retains a valid COMMITTED receipt when either output JSON
+// field is malformed. Receipt.Output uses receipt.output_json; Result.Output
+// uses top-level output_json. Bad output never authorizes repeating a commit.
 package datasource

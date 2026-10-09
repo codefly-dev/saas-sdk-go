@@ -401,6 +401,10 @@ func TestUnknownAndMalformedReceiptsRetainOriginalEffectID(t *testing.T) {
 		{"mismatch", committedReceipt("another-effect")},
 		{"unspecified", &v1.SourceOperationReceipt{EffectId: "effect"}},
 		{"invalid timestamp", &v1.SourceOperationReceipt{EffectId: "effect", Status: "committed", CommittedAt: "invalid-time"}},
+		{"year zero", &v1.SourceOperationReceipt{EffectId: "effect", Status: "committed", CommittedAt: "0000-01-01T00:00:00Z"}},
+		{"excess precision", &v1.SourceOperationReceipt{EffectId: "effect", Status: "committed", CommittedAt: "2026-10-09T12:00:00.1234567890Z"}},
+		{"pending", &v1.SourceOperationReceipt{EffectId: "effect", Status: "pending"}},
+		{"uppercase status", &v1.SourceOperationReceipt{EffectId: "effect", Status: "COMMITTED"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls atomic.Int32

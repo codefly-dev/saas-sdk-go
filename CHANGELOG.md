@@ -2,6 +2,17 @@
 
 ## Unreleased — callable sources (awaits host tag)
 
+- Fix cross-language parity at the error/receipt boundary: skip null and unknown
+  details without losing effect IDs; scope `SOURCE_OPERATION_OUTCOME_UNKNOWN`
+  to Invoke/Lookup; normalize UTF-8 charset, gzip case and BOM on Connect JSON
+  errors while retaining the gateway client and Connect decoder.
+- Add `DatasourceError{Receipt}` for invalid output on a valid COMMITTED receipt.
+  Receipt output comes from `receipt.output_json`; result output comes from the
+  top-level field. Both validate without discarding known commitment. Unknown
+  receipts ignore output; invalid receipt identity/status/time stays unknown.
+- Normalize absent listed schemas to `{}`; declaration still requires both
+  schemas before dispatch. Use the protobuf Timestamp JSON profile for receipt
+  times and rate-limit resets, rejecting year zero and excess fractional digits.
 - Add `datasource.Client.Invoke`, `Lookup`, `DeclareOperations` and
   `ListOperations` on the existing gateway-bound Connect client, matching the
   Python facade. Add operations, JSON output, receipts, UUIDv7 effect IDs and

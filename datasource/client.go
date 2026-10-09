@@ -31,7 +31,7 @@ type Client struct {
 // connect.WithGRPC()) are forwarded to the underlying client.
 func New(gw Gateway, opts ...connect.ClientOption) *Client {
 	return &Client{
-		inner: accountsv1connect.NewDatasourceServiceClient(gw.HTTPClient(), gw.BaseURL(), opts...),
+		inner: accountsv1connect.NewDatasourceServiceClient(connectResponseClient{client: gw.HTTPClient()}, gw.BaseURL(), opts...),
 	}
 }
 

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Payloads remain JSON text, preserving integer precision and number spelling.
@@ -48,8 +51,18 @@ func schemaStruct(data []byte) (*structpb.Struct, error) {
 
 func schemaJSON(value *structpb.Struct) (json.RawMessage, error) {
 	if value == nil {
-		return nil, nil
+		return json.RawMessage(`{}`), nil
 	}
 	data, err := protojson.Marshal(value)
 	return json.RawMessage(data), err
+}
+
+// Use protobuf's shared Timestamp JSON profile, including year/fraction bounds,
+// rather than time.Parse's acceptance of year zero and truncated subseconds.
+func parseHostTime(value string) (time.Time, error) {
+	var timestamp timestamppb.Timestamp
+	if err := protojson.Unmarshal([]byte(strconv.Quote(value)), &timestamp); err != nil {
+		return time.Time{}, err
+	}
+	return timestamp.AsTime(), nil
 }

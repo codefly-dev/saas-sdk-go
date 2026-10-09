@@ -91,6 +91,15 @@ The SDK surfaces are:
   removal or replacement, and unresolved or expired receipts remain unknown.
   The caller's current source read authority still applies; revoked access refuses.
 
+  `Receipt.Output` always comes from the saved `receipt.output_json` evidence;
+  `Result.Output` comes from the top-level `output_json`. Both fields must contain
+  one JSON object on a committed response. If either is missing or malformed,
+  `*DatasourceError` retains the COMMITTED receipt, effect ID, commit time and
+  provider status (and any valid receipt output). Bad output does not erase a
+  commit or authorize another effect. Missing/mismatched receipt identity,
+  unsupported status or invalid commit time instead yields `ErrOutcomeUnknown`.
+  An UNKNOWN receipt does not require valid output.
+
   Re-invoking a retained effect after its declaration is removed returns
   `*OperationDeclarationRemoved` (`errors.Is(err, ErrOperationDeclarationRemoved)`).
   Its `ReceiptStatus` and `Receipt.Status` carry the host's `receipt_status`:
@@ -125,7 +134,10 @@ The SDK surfaces are:
 
   `DeclareOperations(ctx, orgID, sourceID, []datasource.Operation)` replaces
   the source's declaration set atomically under the host's administrator
-  check. `ListOperations(ctx, orgID, sourceID)` reads it. For example, an API
+  check. Both schemas must be supplied as JSON objects; omitted schemas return
+  `InputError` before dispatch. Explicit `{}` is accepted for host admission.
+  `ListOperations(ctx, orgID, sourceID)` reads the set and represents absent
+  schemas as `{}`, so its operations can be re-declared. For example, an API
   connected to `https://example.com` could declare:
 
   ```go
@@ -160,6 +172,21 @@ The SDK surfaces are:
   | Other FailedPrecondition | `*OperationRefused`, with the structured `Reason` or an empty string |
   | Non-Connect HTTP error after Invoke/Lookup dispatch (4xx or 5xx) | receipt plus `ErrOutcomeUnknown`; retain the original ID |
   | Ambiguous Invoke / unknown receipt | receipt plus `ErrOutcomeUnknown` (`errors.Is`) |
+  | Valid COMMITTED receipt with invalid output JSON | receipt plus `*DatasourceError`; commit evidence is retained |
+
+  `SOURCE_OPERATION_OUTCOME_UNKNOWN` is an effect outcome only on Invoke and
+  Lookup. On Declare/List it is `OperationRefused` carrying that reason.
+  Null, unknown or undecodable protobuf error details are skipped; valid
+  neighboring details still determine the outcome. For Declare/List,
+  non-Connect HTTP 403 maps to `ErrNotPermitted` through Connect's HTTP fallback;
+  on Invoke/Lookup the same non-Connect response remains unknown.
+
+  Connect JSON errors accept a case-insensitive UTF-8 charset parameter,
+  case-insensitive gzip encoding and a leading UTF-8 BOM. A response adapter
+  normalizes those encodings before Connect decodes the envelope; it forwards
+  the request unchanged through the gateway's existing HTTP client. Other
+  charsets and media types remain non-Connect. Timestamp strings follow the
+  protobuf JSON profile (years 0001–9999, at most nine fractional digits).
 
   The recorded host ref emits structured input pointers and provider HTTP
   statuses. `InputError.Pointer` is empty when no field violation is supplied;
@@ -177,7 +204,7 @@ The SDK surfaces are:
   metadata. These names mirror the Python facade's `invoke`, `lookup`,
   `declare_operations`, `list_operations`, `Operation`, `Result`, `Receipt`,
   `NotPermitted`, `UnknownOperation`, `EffectNotFound`, `EffectReused`,
-  `InputError`, `RateLimited`, `ProviderRefused`, `OperationRefused`, `OperationDeclarationRemoved` and
+  `DatasourceError`, `InputError`, `RateLimited`, `ProviderRefused`, `OperationRefused`, `OperationDeclarationRemoved` and
   `OutcomeUnknown`.
 
   This call surface uses the four host RPCs from
