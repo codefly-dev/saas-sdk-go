@@ -12,6 +12,18 @@ import (
 
 var ErrInvalidAuditEvent = errors.New("module authority: incomplete or invalid audit event")
 
+// DeclareAuditEventTypes admits this module's event schemas through the same
+// authenticated authority seam as emission. The host validates ownership and
+// compatibility; the SDK neither invents a namespace nor widens the declaration.
+func (c *Client) DeclareAuditEventTypes(ctx context.Context, types []*ModuleAuditEventTypeDeclaration) error {
+	_, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.DeclareAuditEventTypes,
+		&v1.ModuleDeclareAuditEventTypesRequest{Prefix: c.credentials.Prefix, Types: types})
+	if err != nil {
+		return fmt.Errorf("module authority: declare audit event types: %w", err)
+	}
+	return nil
+}
+
 // AuditEvent is the complete intent presented to the host audit spine. Tenant
 // may be empty only for an authorized system event. Actor and solution scope are
 // checked by the host; naming them is not itself proof of authority.

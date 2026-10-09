@@ -249,6 +249,7 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
+	declaration   *v1.ModuleDeclareAuditEventTypesRequest
 	audit         *v1.ModuleEmitAuditEventRequest
 	boundary      *v1.VerifyWorkContextRuntimeBoundaryRequest
 	authorization []string
@@ -263,6 +264,7 @@ type authorityCall struct {
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:             true,
 	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
 	accountsv1connect.ModuleCapabilitiesServiceLookupAuditEventProcedure:                   true,
 	accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:   true,
@@ -307,6 +309,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:
+		call.declaration = &v1.ModuleDeclareAuditEventTypesRequest{}
+		recvErr = stream.RecvMsg(call.declaration)
 	case accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:
 		call.boundary = &v1.VerifyWorkContextRuntimeBoundaryRequest{}
 		recvErr = stream.RecvMsg(call.boundary)
@@ -342,6 +347,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.declaration != nil {
+		return stream.SendMsg(&v1.ModuleDeclareAuditEventTypesResponse{})
 	}
 	if call.boundary != nil {
 		switch call.boundary.ForwardedWorkContextToken {
