@@ -1,6 +1,58 @@
 package datasource
 
-import v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
+import (
+	"encoding/json"
+	"time"
+
+	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
+)
+
+// Effect describes whether a declared operation may change the provider.
+type Effect string
+
+const (
+	EffectReadOnly Effect = "READ_ONLY"
+	EffectMutation Effect = "MUTATION"
+)
+
+// Operation declares a route relative to a connected source. The host owns
+// admission, JSON Schema validation, routing, credentials and output limits.
+type Operation struct {
+	Name           string
+	Method         string
+	Path           string
+	Query          []string
+	Input          json.RawMessage
+	Output         json.RawMessage
+	Effect         Effect
+	MaxOutputBytes int64
+}
+
+// ReceiptStatus is the host's observation of an effect, not a retry decision.
+type ReceiptStatus string
+
+const (
+	ReceiptStatusCommitted ReceiptStatus = "COMMITTED"
+	ReceiptStatusRefused   ReceiptStatus = "REFUSED"
+	ReceiptStatusUnknown   ReceiptStatus = "UNKNOWN"
+)
+
+// Receipt identifies an effect for Lookup. Unknown means its outcome is not
+// known; it does not mean that the provider did nothing. CommittedAt is zero
+// when the host has not reported a commit; ProviderStatus is zero when absent.
+type Receipt struct {
+	EffectID       string
+	Status         ReceiptStatus
+	CommittedAt    time.Time
+	ProviderStatus int
+}
+
+// Result carries the provider output and the host receipt. Invoke also returns
+// a non-nil Result on an RPC error so a minted effect ID is never lost.
+type Result struct {
+	Output  json.RawMessage
+	Receipt Receipt
+}
 
 // The message types this package's methods return, re-exported under the
 // facade's own name — see the same block in package accounts for why an

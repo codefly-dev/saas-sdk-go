@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — callable sources (awaits host #1049)
+
+- Prepare `datasource.Client.Invoke`, `Lookup`, `DeclareOperations` and
+  `ListOperations` on the existing gateway-bound Connect client, matching the
+  Python facade. Add operations, JSON output, receipts, UUIDv7 effect IDs and
+  per-call deadlines; the host alone owns replay and provider dispatch.
+- Add `ErrNotPermitted`, `ErrUnknownOperation`, `InputError`, `RateLimited`,
+  `ProviderRefused` and `ErrOutcomeUnknown`. Unknown retains the effect ID and
+  never exposes a retryable transport error. Host messages remain unchanged.
+- Document the call and retry contracts in `README.md` and package examples.
+- Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
+  data; the gate and its fixtures are unchanged.
+- The RPC integration is awaiting the upstream proto. `SOURCE.txt` continues
+  to describe the existing generated tree until regeneration from the host
+  PR head. This SDK must not release until the host tag exists and is consumed.
+
 ## Unreleased — current installation identity
 
 - Added `moduleauthority.Client.GetCurrentInstallation` with independent module

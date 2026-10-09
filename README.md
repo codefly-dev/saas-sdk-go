@@ -34,6 +34,90 @@ The SDK surfaces are:
   })
   _, err = ds.Sync(ctx, org, src.GetId())
   ```
+
+  The **call** half uses that same gateway and client to invoke a declared
+  operation of a connected API as the signed-in person:
+
+  ```go
+  result, err := ds.Invoke(ctx, orgID, sourceID, "list_invoices",
+      map[string]any{"limit": 20}, datasource.WithDeadline(time.Now().Add(10*time.Second)))
+  if errors.Is(err, datasource.ErrOutcomeUnknown) {
+      // Preserve result.Receipt.EffectID. Use Lookup with a live context;
+      // an unknown outcome does not mean the effect failed.
+      return err
+  }
+  if err != nil {
+      return err
+  }
+  output := result.Output // json.RawMessage
+  receipt := result.Receipt
+  ```
+
+  `Invoke` marshals a JSON object (a map, struct with JSON tags, or
+  `json.RawMessage`) to protobuf `Struct`. `WithDeadline(time.Time)` bounds
+  only this call; an earlier context deadline still wins. `WithEffectID(id)`
+  supplies an effect ID; when absent or empty, the SDK mints a UUIDv7. Once a
+  call is attempted, even an error returns a non-nil `Result` containing that
+  ID in `Receipt.EffectID`. Persist a caller-owned ID **before** invoking a
+  mutation if it must survive a process crash.
+
+  Repeating the same effect ID and input asks the **host** to replay its
+  receipt. Different input under the same ID is refused. Every explicit
+  `Invoke` reaches the host: the SDK has no retry loop, deduplication or
+  receipt cache. Do not change the ID to recover an uncertain mutation.
+
+  `Lookup(ctx, orgID, sourceID, effectID)` returns the receipt without
+  invoking the provider. An unknown receipt is returned alongside
+  `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
+  not evidence of failure or permission to repeat an effect.** Invoke also
+  reports transport loss or deadline expiry conservatively as unknown, since
+  it cannot prove the operation was read-only. That outcome does not unwrap
+  to a retryable Connect transport error. An unavailable lookup also returns
+  an unknown receipt: it cannot establish what happened to the effect. Use a
+  fresh bounded context to look up an effect after the original context has
+  expired.
+
+  `DeclareOperations(ctx, orgID, sourceID, []datasource.Operation)` replaces
+  the source's declaration set atomically under the host's administrator
+  check. `ListOperations(ctx, orgID, sourceID)` reads it. For example, an API
+  connected to `https://example.com` could declare:
+
+  ```go
+  err := ds.DeclareOperations(ctx, orgID, sourceID, []datasource.Operation{{
+      Name: "list_invoices", Method: "GET", Path: "/invoices", Query: []string{"limit"},
+      Input: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}},"additionalProperties":false}`),
+      Output: json.RawMessage(`{"type":"object"}`),
+      Effect: datasource.EffectReadOnly, MaxOutputBytes: 65536,
+  }})
+  ```
+
+  The host admits the schemas, route, effect and output cap. Invocation never
+  accepts a provider URL or credential. The gateway's HTTP client carries
+  the person's Work Context unchanged; this facade adds only
+  `x-codefly-effect-id` to the normal Connect request, matching the request's
+  effect ID. It never mints, replaces or sets a Work Context header.
+
+  | Host response | Go result |
+  | --- | --- |
+  | PermissionDenied | `ErrNotPermitted` (`errors.Is`) |
+  | NotFound | `ErrUnknownOperation` (`errors.Is`) |
+  | InvalidArgument + BadRequest | `*InputError`, with the first field violation's JSON `Pointer` |
+  | ResourceExhausted + DATASOURCE_RATE_LIMITED | `*RateLimited`, with `ResetAt` from `reset_at` or `RetryInfo` |
+  | FailedPrecondition | `*ProviderRefused`, with the host's `provider_status` as `Status` (zero if absent) |
+  | Ambiguous Invoke / unknown receipt | receipt plus `ErrOutcomeUnknown` (`errors.Is`) |
+
+  Other errors retain their Connect identity. Host diagnostic messages are
+  preserved, including credential-looking text: **the host is the disclosure
+  guard**. The SDK neither redacts messages nor treats their prose as status
+  metadata. These names mirror the Python facade's `invoke`, `lookup`,
+  `declare_operations`, `list_operations`, `Operation`, `Result`, `Receipt`,
+  `NotPermitted`, `UnknownOperation`, `InputError`, `RateLimited`,
+  `ProviderRefused` and `OutcomeUnknown`.
+
+  This call surface is unreleased pending the four host RPCs from
+  [module-saas-starter#1049](https://github.com/codefly-dev/module-saas-starter/issues/1049).
+  Development regenerates the complete bindings from that PR's exact head;
+  release waits for its host tag and regenerates from the tagged commit.
 - **`moduleauthority/`** — the module-principal side of installed operation
   authority. A long-running module supplies its Codefly-projected registration
   credential once; the client mints and refreshes the module's short-lived Work

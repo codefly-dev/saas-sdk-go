@@ -1,22 +1,3 @@
-// Package datasource is the typed, gateway-bound client facade for the saas
-// DatasourceService — the "connection" half of datasource ingestion. It is the
-// syntactic-sugar layer over the generated Connect stubs, mirroring the accounts
-// facade: it binds the generated client to a solution-runtime Gateway and
-// unwraps the connect.Request/Response envelope so a solution declares a source
-// in a few lines:
-//
-//	ds := datasource.New(gw)
-//	src, err := ds.AddGitHubSource(ctx, datasource.GitHubSource{
-//		OrgID:       org,
-//		Repo:        "codefly-dev/module-saas-starter",
-//		Paths:       []string{"docs"},
-//		Collection:  "handbook",
-//		AccessToken: token,
-//	})
-//	_, err = ds.Sync(ctx, org, src.GetId())
-//
-// The access token is sent once; the connection side encrypts it through the
-// SecretCipher and persists only a secret reference — no read ever returns it.
 package datasource
 
 import (
