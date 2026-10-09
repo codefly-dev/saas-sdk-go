@@ -260,3 +260,16 @@ The host preserves its organization-member metadata-read rule: no new permission
 or binding is required. It checks current parent authority and delegation,
 authenticated module/audience/tenant alignment, current membership, and exact
 active record identity. A refusal never invokes a bearer-based fallback.
+
+### Gateway authority transport and audit declarations
+
+`moduleauthority.NewGatewayAuthority(seams, credentials)` explicitly selects
+the host's binary-protobuf Connect authority bridge on the gateway base URL.
+It refuses a simultaneous direct Authority address and does not fall back to
+Accounts. The selected host must serve this bridge; a generated client alone
+does not establish that a deployed host supports it. The existing `New`
+constructor retains the direct authority transport.
+
+`Client.DeclareAuditEventTypes` presents the module's event schemas through the
+selected authority seam. Ownership and compatibility remain host decisions.
+Public declaration types and enum constants are re-exported by moduleauthority.
