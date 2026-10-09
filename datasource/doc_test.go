@@ -16,7 +16,7 @@ func Example_invoke() {
 	ds := datasource.New(gw)
 	result, err := ds.Invoke(ctx, "org-id", "source-id", "list_invoices",
 		map[string]any{"limit": 20}, datasource.WithDeadline(time.Now().Add(5*time.Second)))
-	if errors.Is(err, datasource.ErrOutcomeUnknown) {
+	if errors.Is(err, datasource.ErrOutcomeUnknown) || errors.Is(err, datasource.ErrOperationDeclarationRemoved) {
 		// Keep the original request values (including the person's Work Context)
 		// while replacing its expired cancellation/deadline for this lookup.
 		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

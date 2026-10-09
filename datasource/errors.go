@@ -17,6 +17,9 @@ var (
 	ErrEffectNotFound = errors.New("datasource: effect not found")
 	// ErrEffectReused means the host rejected changed input under an existing ID.
 	ErrEffectReused = errors.New("datasource: effect ID reused")
+	// ErrOperationDeclarationRemoved means a retained effect's declaration was
+	// removed. Recover with Lookup under the original ID; never mint a fresh ID.
+	ErrOperationDeclarationRemoved = errors.New("datasource: operation declaration removed; look up the original effect")
 	// ErrOutcomeUnknown means the effect may have happened. Inspect the receipt
 	// with Lookup; never interpret this outcome as permission to repeat it.
 	ErrOutcomeUnknown = errors.New("datasource: outcome unknown; look up the effect")
@@ -82,6 +85,28 @@ func (e *OperationRefused) Error() string {
 	return e.cause.Error()
 }
 func (e *OperationRefused) Unwrap() error { return e.cause }
+
+// OperationDeclarationRemoved reports retained effect evidence after its
+// declaration was removed. ReceiptStatus and Receipt.Status carry the host's
+// observation: COMMITTED or UNKNOWN (also used for missing/invalid metadata).
+// This outcome has no output, commit time or provider status; recover those
+// with Lookup using Receipt.EffectID. Never recover with a fresh ID.
+type OperationDeclarationRemoved struct {
+	ReceiptStatus ReceiptStatus
+	Receipt       Receipt
+	cause         error
+}
+
+func (e *OperationDeclarationRemoved) Error() string {
+	if e.cause == nil {
+		return ErrOperationDeclarationRemoved.Error()
+	}
+	return e.cause.Error()
+}
+func (e *OperationDeclarationRemoved) Is(target error) bool {
+	return target == ErrOperationDeclarationRemoved
+}
+func (e *OperationDeclarationRemoved) Unwrap() error { return e.cause }
 
 type hostError struct {
 	kind  error
@@ -175,6 +200,12 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 		switch info.GetReason() {
 		case "SOURCE_OPERATION_OUTCOME_UNKNOWN":
 			return &OutcomeUnknown{cause: err}
+		case "SOURCE_OPERATION_DECLARATION_REMOVED":
+			status := ReceiptStatusUnknown
+			if info.GetMetadata()["receipt_status"] == "committed" {
+				status = ReceiptStatusCommitted
+			}
+			return &OperationDeclarationRemoved{ReceiptStatus: status, Receipt: Receipt{Status: status}, cause: err}
 		case "SOURCE_PROVIDER_REFUSED":
 			encoded := info.GetMetadata()["provider_status"]
 			status, parseErr := strconv.Atoi(encoded)

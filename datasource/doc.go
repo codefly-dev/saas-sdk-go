@@ -29,4 +29,10 @@
 // new ID to retry. See Example_invoke for the complete compiled example.
 // Lookup's ErrEffectNotFound retains the ID for a safe explicit same-ID invoke;
 // committed receipts include Output without another invocation.
+//
+// ErrOperationDeclarationRemoved is a distinct recovery outcome carrying the
+// retained effect's ReceiptStatus (COMMITTED or UNKNOWN). Recover with Lookup,
+// never with a fresh ID: a committed status here does not include the saved
+// output. Lookup survives declaration removal/replacement under current source
+// read authority; unresolved or expired receipts remain unknown.
 package datasource

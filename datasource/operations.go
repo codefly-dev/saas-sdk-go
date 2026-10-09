@@ -17,6 +17,8 @@ import (
 // person. The host owns provider credentials, routing, replay and the receipt.
 // On an RPC error the returned Result still carries the effect ID. An unknown
 // outcome must be looked up, not interpreted as permission to repeat an effect.
+// OperationDeclarationRemoved also requires Lookup with the original ID;
+// its receipt status never authorizes recovery with a fresh ID.
 func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, input any, opts ...InvokeOption) (*Result, error) {
 	value, err := inputJSON(input)
 	if err != nil {
@@ -57,6 +59,11 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 		if errors.As(mapped, &unknown) {
 			unknown.Receipt = result.Receipt
 		}
+		var removed *OperationDeclarationRemoved
+		if errors.As(mapped, &removed) {
+			result.Receipt.Status = removed.ReceiptStatus
+			removed.Receipt = result.Receipt
+		}
 		return result, mapped
 	}
 	receipt, err := operationReceipt(response.Msg.GetReceipt(), options.effectID)
@@ -76,9 +83,9 @@ func (c *Client) Invoke(ctx context.Context, orgID, sourceID, operation string, 
 // unknown outcome is returned alongside ErrOutcomeUnknown (errors.Is works).
 // An unavailable lookup also leaves the outcome unknown; it is never a reason
 // to dispatch the effect again.
-// A NotFound response returns ErrEffectNotFound and the original ID for an
-// explicit same-ID invoke. At the recorded host ref, a removed declaration can
-// also produce NotFound; it is not proof that the provider never acted.
+// A NotFound response means no attempt exists and returns ErrEffectNotFound
+// with the original ID for an explicit same-ID invoke. Saved receipts survive
+// declaration removal or replacement; current source read authority still applies.
 // orgID and sourceID preserve the shared SDK signature; the host derives their
 // authority from the gateway's Work Context and the stored effect binding.
 func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (*Receipt, error) {
@@ -104,6 +111,11 @@ func (c *Client) Lookup(ctx context.Context, orgID, sourceID, effectID string) (
 		if errors.As(mapped, &unknown) {
 			unknown.Receipt = Receipt{EffectID: effectID, Status: ReceiptStatusUnknown}
 			return &unknown.Receipt, mapped
+		}
+		var removed *OperationDeclarationRemoved
+		if errors.As(mapped, &removed) {
+			removed.Receipt.EffectID = effectID
+			return &removed.Receipt, mapped
 		}
 		return nil, mapped
 	}

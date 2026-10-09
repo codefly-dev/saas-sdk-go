@@ -85,11 +85,22 @@ The SDK surfaces are:
   stored effect binding. These two arguments cannot select or override lookup
   authority. A lookup miss returns `ErrEffectNotFound` and a receipt carrying
   the same ID with status `NOT_ATTEMPTED`; an explicit reinvoke with that ID is
-  safe, and the SDK never invokes automatically. The host documents
-  `source effect not found` as never attempted. Its implementation at the
-  recorded ref can also return NotFound when the declaration disappeared
-  after an attempt; a lookup miss is not proof the provider never acted.
-  Keep the original ID in either case.
+  safe, and the SDK never invokes automatically. NotFound means the host has
+  no attempt marker. Once an attempt exists, Lookup recovers the saved receipt
+  independently of the current declaration: committed receipts survive its
+  removal or replacement, and unresolved or expired receipts remain unknown.
+  The caller's current source read authority still applies; revoked access refuses.
+
+  Re-invoking a retained effect after its declaration is removed returns
+  `*OperationDeclarationRemoved` (`errors.Is(err, ErrOperationDeclarationRemoved)`).
+  Its `ReceiptStatus` and `Receipt.Status` carry the host's `receipt_status`:
+  exact `committed` becomes `COMMITTED`; `unknown`, missing or unrecognized
+  metadata becomes `UNKNOWN`. The outcome and `Result.Receipt` retain the
+  original effect ID. This is distinct from a refusal and from `OutcomeUnknown`,
+  even when its receipt status is unknown. No output, commit time or provider
+  status is inferred from the error. **Recover with Lookup, never with a fresh ID.**
+  A committed status here means the saved output must be retrieved through Lookup.
+
   An unknown receipt is returned alongside
   `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
   not evidence of failure or permission to repeat an effect.** Invoke also
@@ -99,7 +110,8 @@ The SDK surfaces are:
   likewise returns `ErrOutcomeUnknown` with the original ID. The Connect
   decoder identifies RPC errors; decoded errors retain their code/reason
   mappings. Check
-  `errors.Is(err, datasource.ErrOutcomeUnknown)` **before** transport-code
+  `errors.Is(err, datasource.ErrOutcomeUnknown)` and
+  `errors.Is(err, datasource.ErrOperationDeclarationRemoved)` **before** transport-code
   retry logic: the wrapped Connect error remains available for diagnostics,
   but its code does not establish whether the effect happened. An unavailable
   lookup also returns an unknown receipt: it cannot establish what happened to the effect. Use a
@@ -142,6 +154,7 @@ The SDK surfaces are:
   | InvalidArgument | `*InputError`, with `Pointer` from the first `BadRequest.FieldViolation.field` |
   | ResourceExhausted + DATASOURCE_RATE_LIMITED | `*RateLimited`, with `ResetAt` from `reset_at` or `RetryInfo` |
   | FailedPrecondition + SOURCE_OPERATION_OUTCOME_UNKNOWN | receipt plus `ErrOutcomeUnknown` (`errors.Is`); the mutation may have happened |
+  | FailedPrecondition + SOURCE_OPERATION_DECLARATION_REMOVED | receipt plus `*OperationDeclarationRemoved` / `ErrOperationDeclarationRemoved`; recover the original ID with Lookup |
   | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused`, with `Status` from `ErrorInfo.metadata["provider_status"]` when known |
   | FailedPrecondition + SOURCE_EFFECT_REUSED | `ErrEffectReused` (`errors.Is`) |
   | Other FailedPrecondition | `*OperationRefused`, with the structured `Reason` or an empty string |
@@ -164,7 +177,7 @@ The SDK surfaces are:
   metadata. These names mirror the Python facade's `invoke`, `lookup`,
   `declare_operations`, `list_operations`, `Operation`, `Result`, `Receipt`,
   `NotPermitted`, `UnknownOperation`, `EffectNotFound`, `EffectReused`,
-  `InputError`, `RateLimited`, `ProviderRefused`, `OperationRefused` and
+  `InputError`, `RateLimited`, `ProviderRefused`, `OperationRefused`, `OperationDeclarationRemoved` and
   `OutcomeUnknown`.
 
   This call surface uses the four host RPCs from

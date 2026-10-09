@@ -16,6 +16,15 @@
   from the host's `provider_status` metadata (canonical HTTP 100–599, zero
   when absent or invalid). `InputError.Pointer` preserves the host's first
   `BadRequest.FieldViolation.field`. Host messages remain unchanged.
+- Add `OperationDeclarationRemoved` / `ErrOperationDeclarationRemoved` for
+  `SOURCE_OPERATION_DECLARATION_REMOVED`. It preserves the original effect ID
+  and `receipt_status` as `ReceiptStatus` and `Receipt.Status` (COMMITTED or
+  UNKNOWN; absent/unrecognized metadata becomes UNKNOWN). Recover with Lookup,
+  never with a fresh ID; the SDK never retries or invents receipt output.
+- Remove the old Lookup caveat: the host now recovers saved receipts after
+  declaration removal/replacement, under current source read authority.
+  Committed receipts survive; unresolved/expired stays unknown. Lookup NotFound
+  means no attempt marker exists.
 - Lookup misses return the original ID with `NOT_ATTEMPTED`; callers may
   explicitly reinvoke with the same ID. Committed receipts include `Output`,
   so recovery can retrieve output without another invoke. Receipt statuses are
@@ -35,7 +44,7 @@
 - Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
   data; the gate and its fixtures are unchanged.
 - Regenerate the full host API from PR #1052 head
-  `86ee51fd8b4d66aad9da2509483e14d3c7534764`, recorded in `SOURCE.txt` with module
+  `2a16c688c61d66645e1063c495fa38eaf2fa52de`, recorded in `SOURCE.txt` with module
   version `0.1.0`. This is a development PR head, not a release tag. Release
   waits for the host tag and regeneration from its commit.
 - Include the runtime-facing `PruneSourceOperationReceipts` and
