@@ -2,6 +2,7 @@ package datasource
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"connectrpc.com/connect"
@@ -51,8 +52,8 @@ func (e *RateLimited) Error() string {
 }
 func (e *RateLimited) Unwrap() error { return e.cause }
 
-// ProviderRefused reports SOURCE_PROVIDER_REFUSED. Status is reserved and stays
-// zero: the recorded host contract does not emit a provider status on errors.
+// ProviderRefused reports SOURCE_PROVIDER_REFUSED. Status is the HTTP status
+// from the host's provider_status metadata, or zero when absent or invalid.
 type ProviderRefused struct {
 	Status int
 	cause  error
@@ -175,7 +176,13 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 		case "SOURCE_OPERATION_OUTCOME_UNKNOWN":
 			return &OutcomeUnknown{cause: err}
 		case "SOURCE_PROVIDER_REFUSED":
-			return &ProviderRefused{cause: err}
+			encoded := info.GetMetadata()["provider_status"]
+			status, parseErr := strconv.Atoi(encoded)
+			// The host emits canonical decimal HTTP statuses from 100 through 599.
+			if parseErr != nil || status < 100 || status > 599 || strconv.Itoa(status) != encoded {
+				status = 0
+			}
+			return &ProviderRefused{Status: status, cause: err}
 		case "SOURCE_EFFECT_REUSED":
 			return &hostError{kind: ErrEffectReused, cause: err}
 		default:

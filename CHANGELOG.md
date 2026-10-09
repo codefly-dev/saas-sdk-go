@@ -12,8 +12,10 @@
   reason retains the effect ID. `*OutcomeUnknown` wraps the original error for
   `errors.Is`/`errors.As` and Connect diagnostics; callers must check
   `ErrOutcomeUnknown` before applying transport retry rules. The SDK never retries.
-  Only `SOURCE_PROVIDER_REFUSED` maps to a provider refusal; its status remains
-  unavailable at this host ref. Host messages remain unchanged.
+  Only `SOURCE_PROVIDER_REFUSED` maps to a provider refusal; its status comes
+  from the host's `provider_status` metadata (canonical HTTP 100–599, zero
+  when absent or invalid). `InputError.Pointer` preserves the host's first
+  `BadRequest.FieldViolation.field`. Host messages remain unchanged.
 - Lookup misses return the original ID with `NOT_ATTEMPTED`; callers may
   explicitly reinvoke with the same ID. Committed receipts include `Output`,
   so recovery can retrieve output without another invoke. Receipt statuses are
@@ -33,9 +35,12 @@
 - Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
   data; the gate and its fixtures are unchanged.
 - Regenerate the full host API from PR #1052 head
-  `f4ce896d954101b164c3b511cbeea555f17302f7`, recorded in `SOURCE.txt` with module
+  `86ee51fd8b4d66aad9da2509483e14d3c7534764`, recorded in `SOURCE.txt` with module
   version `0.1.0`. This is a development PR head, not a release tag. Release
   waits for the host tag and regeneration from its commit.
+- Include the runtime-facing `PruneSourceOperationReceipts` and
+  `LookupPruneSourceOperationReceipts` RPCs in generated bindings only;
+  no receipt retention methods are exposed by the caller facade.
 - Re-export the OAuth2 grant type/constants reachable from source reads. The
   generation template emits all host-owned `saas/` schemas and imports Core's
   Runnable descriptors from Core v0.3.41, which supplies the required package

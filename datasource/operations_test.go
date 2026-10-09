@@ -200,10 +200,16 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 		{"unknown", connectError(t, connect.CodeUnavailable), checkSentinel(datasource.ErrOutcomeUnknown)},
 		{"lost mutation", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_OPERATION_OUTCOME_UNKNOWN"}), checkSentinel(datasource.ErrOutcomeUnknown)},
 		{"reused effect", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_EFFECT_REUSED"}), checkSentinel(datasource.ErrEffectReused)},
-		{"input", connectError(t, connect.CodeInvalidArgument, &errdetails.ErrorInfo{Reason: "SOURCE_INPUT_REFUSED"}),
+		// These details match the host's TestSourceOperationSDKErrorDetails at
+		// the ref in SOURCE.txt: a schema refusal at /id and a provider HTTP 403.
+		{"input", connectError(t, connect.CodeInvalidArgument,
+			&errdetails.ErrorInfo{Reason: "SOURCE_INPUT_REFUSED", Domain: "saas.accounts.v1"},
+			&errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{
+				Field: "/id", Description: "input does not satisfy the declaration",
+			}}}),
 			func(t *testing.T, err error, _, _ time.Time) {
 				var value *datasource.InputError
-				if !errors.As(err, &value) || value.Pointer != "" {
+				if !errors.As(err, &value) || value.Pointer != "/id" {
 					t.Errorf("input error = %v", err)
 				}
 			}},
@@ -214,10 +220,12 @@ func TestInvokeHostErrorsOverConnect(t *testing.T) {
 					t.Errorf("rate limit = %#v", value)
 				}
 			}},
-		{"provider", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{Reason: "SOURCE_PROVIDER_REFUSED"}),
+		{"provider", connectError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
+			Reason: "SOURCE_PROVIDER_REFUSED", Domain: "saas.accounts.v1", Metadata: map[string]string{"provider_status": "403"},
+		}),
 			func(t *testing.T, err error, _, _ time.Time) {
 				var value *datasource.ProviderRefused
-				if !errors.As(err, &value) || value.Status != 0 {
+				if !errors.As(err, &value) || value.Status != 403 {
 					t.Errorf("provider refusal = %v", err)
 				}
 			}},

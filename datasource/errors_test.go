@@ -66,15 +66,35 @@ func TestHostErrorMapping(t *testing.T) {
 			t.Fatalf("refusal = %#v", refused)
 		}
 	})
-	t.Run("forged provider status is ignored", func(t *testing.T) {
-		err := detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
-			Reason: "SOURCE_PROVIDER_REFUSED", Metadata: map[string]string{"provider_status": "401"},
+	for _, tt := range []struct {
+		metadata string
+		status   int
+	}{
+		{"100", 100}, {"403", 403}, {"429", 429}, {"500", 500}, {"599", 599},
+		{"", 0}, {"0", 0}, {"99", 0}, {"600", 0}, {"-403", 0}, {"+403", 0},
+		{"0403", 0}, {" 403", 0}, {"403 ", 0}, {"403.0", 0}, {"４０３", 0},
+		{"invalid", 0}, {"999999999999999999999999", 0},
+	} {
+		t.Run("provider status/"+tt.metadata, func(t *testing.T) {
+			err := detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
+				Reason: "SOURCE_PROVIDER_REFUSED", Domain: "saas.accounts.v1",
+				Metadata: map[string]string{"provider_status": tt.metadata},
+			})
+			var refused *ProviderRefused
+			if !errors.As(mapHostError(err, true, now), &refused) || refused.Status != tt.status ||
+				refused.Error() != err.Error() || !errors.Is(refused, err) {
+				t.Fatalf("provider refusal = %#v, want status %d with unchanged cause", refused, tt.status)
+			}
 		})
-		var refused *ProviderRefused
-		if !errors.As(mapHostError(err, true, now), &refused) || refused.Status != 0 {
-			t.Fatalf("unadmitted metadata became a provider status: %#v", refused)
-		}
+	}
+	// Metadata never changes the meaning of the structured reason.
+	unknown := detailedError(t, connect.CodeFailedPrecondition, &errdetails.ErrorInfo{
+		Reason: "SOURCE_OPERATION_OUTCOME_UNKNOWN", Domain: "saas.accounts.v1",
+		Metadata: map[string]string{"provider_status": "403"},
 	})
+	if mapped := mapHostError(unknown, true, now); !errors.Is(mapped, ErrOutcomeUnknown) {
+		t.Fatalf("provider metadata changed an unknown outcome: %v", mapped)
+	}
 	for _, reason := range []string{"", "SOURCE_DECLARATION_CHANGED", "SOURCE_REAUTH_REQUIRED", "SOURCE_OUTPUT_REFUSED",
 		"SOURCE_EFFECT_REQUIRED", "SOURCE_OPERATIONS_UNAVAILABLE", "SOURCE_DECLARATION_INVALID", "SOURCE_EFFECT_BINDING_CHANGED", "FUTURE_REASON"} {
 		t.Run("precondition/"+reason, func(t *testing.T) {
@@ -97,6 +117,20 @@ func TestHostErrorMapping(t *testing.T) {
 			t.Fatalf("input = %#v", invalid)
 		}
 	})
+	for _, pointer := range []string{"/id", "/", "/items/0/a~1b~0c"} {
+		t.Run("input pointer"+pointer, func(t *testing.T) {
+			err := detailedError(t, connect.CodeInvalidArgument,
+				&errdetails.ErrorInfo{Reason: "SOURCE_INPUT_REFUSED", Domain: "saas.accounts.v1"},
+				&errdetails.BadRequest{FieldViolations: []*errdetails.BadRequest_FieldViolation{{
+					Field: pointer, Description: "input does not satisfy the declaration",
+				}}})
+			var invalid *InputError
+			if !errors.As(mapHostError(err, true, now), &invalid) || invalid.Pointer != pointer ||
+				invalid.Error() != err.Error() || !errors.Is(invalid, err) {
+				t.Fatalf("input = %#v, want pointer %q with unchanged cause", invalid, pointer)
+			}
+		})
+	}
 	for _, code := range []connect.Code{connect.CodeUnknown, connect.CodeUnauthenticated, connect.CodeAlreadyExists,
 		connect.CodeAborted, connect.CodeOutOfRange, connect.CodeUnimplemented, connect.CodeInternal,
 		connect.CodeDataLoss, connect.CodeResourceExhausted} {

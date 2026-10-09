@@ -85,9 +85,11 @@ The SDK surfaces are:
   stored effect binding. These two arguments cannot select or override lookup
   authority. A lookup miss returns `ErrEffectNotFound` and a receipt carrying
   the same ID with status `NOT_ATTEMPTED`; an explicit reinvoke with that ID is
-  safe, and the SDK never invokes automatically. At the recorded host ref,
-  NotFound can also mean the declaration disappeared after an attempt; it is
-  not proof the provider never acted. Keep the original ID in either case.
+  safe, and the SDK never invokes automatically. The host documents
+  `source effect not found` as never attempted. Its implementation at the
+  recorded ref can also return NotFound when the declaration disappeared
+  after an attempt; a lookup miss is not proof the provider never acted.
+  Keep the original ID in either case.
   An unknown receipt is returned alongside
   `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
   not evidence of failure or permission to repeat an effect.** Invoke also
@@ -137,20 +139,22 @@ The SDK surfaces are:
   | PermissionDenied | `ErrNotPermitted` (`errors.Is`) |
   | Invoke NotFound | `ErrUnknownOperation` (`errors.Is`) |
   | Lookup NotFound | receipt plus `ErrEffectNotFound` (`errors.Is`); keep the ID for an explicit reinvoke |
-  | InvalidArgument | `*InputError`; `Pointer` is empty at the recorded host ref |
+  | InvalidArgument | `*InputError`, with `Pointer` from the first `BadRequest.FieldViolation.field` |
   | ResourceExhausted + DATASOURCE_RATE_LIMITED | `*RateLimited`, with `ResetAt` from `reset_at` or `RetryInfo` |
   | FailedPrecondition + SOURCE_OPERATION_OUTCOME_UNKNOWN | receipt plus `ErrOutcomeUnknown` (`errors.Is`); the mutation may have happened |
-  | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused` |
+  | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused`, with `Status` from `ErrorInfo.metadata["provider_status"]` when known |
   | FailedPrecondition + SOURCE_EFFECT_REUSED | `ErrEffectReused` (`errors.Is`) |
   | Other FailedPrecondition | `*OperationRefused`, with the structured `Reason` or an empty string |
   | Non-Connect HTTP error after Invoke/Lookup dispatch (4xx or 5xx) | receipt plus `ErrOutcomeUnknown`; retain the original ID |
   | Ambiguous Invoke / unknown receipt | receipt plus `ErrOutcomeUnknown` (`errors.Is`) |
 
-  The recorded host ref does not emit `BadRequest.FieldViolation` or provider
-  status metadata on errors: `InputError.Pointer` is empty and
-  `ProviderRefused.Status` stays zero. Those details belong to the host's
-  [#1049 contract](https://github.com/codefly-dev/module-saas-starter/issues/1049).
-  Its receipt guard also emits detail-free precondition refusals, represented
+  The recorded host ref emits structured input pointers and provider HTTP
+  statuses. `InputError.Pointer` is empty when no field violation is supplied;
+  otherwise the JSON Pointer is preserved verbatim. `ProviderRefused.Status`
+  is zero when metadata is missing or is not a three-digit ASCII decimal HTTP
+  status from 100–599. Status metadata is read only for `SOURCE_PROVIDER_REFUSED`;
+  it cannot turn an unknown outcome into a provider refusal.
+  The host's receipt guard also emits detail-free precondition refusals, represented
   as `OperationRefused` with an empty reason. A precondition refusal does not
   establish the outcome of an earlier attempt under that ID.
 
@@ -167,6 +171,9 @@ The SDK surfaces are:
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
   `SOURCE.txt` records its exact development PR head. It is not a release tag:
   release waits for the host tag and regeneration from the tagged commit.
+  The host's runtime-scheduled `PruneSourceOperationReceipts` and
+  `LookupPruneSourceOperationReceipts` are included in the generated bindings
+  only; this caller facade does not expose receipt retention operations.
 - **`moduleauthority/`** — the module-principal side of installed operation
   authority. A long-running module supplies its Codefly-projected registration
   credential once; the client mints and refreshes the module's short-lived Work
