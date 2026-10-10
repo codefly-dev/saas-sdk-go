@@ -39,4 +39,8 @@
 // DatasourceError retains a valid COMMITTED receipt when either output JSON
 // field is malformed. Receipt.Output uses receipt.output_json; Result.Output
 // uses top-level output_json. Bad output never authorizes repeating a commit.
+// Unsupported HTTP response encodings return DatasourceError on Declare/List
+// before inferring a status; Invoke/Lookup retain OutcomeUnknown and the ID.
+// ListOperations rejects an unspecified effect with InputError and an unknown
+// future effect enum with DatasourceError, without returning a partial list.
 package datasource

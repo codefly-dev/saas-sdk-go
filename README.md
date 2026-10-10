@@ -151,7 +151,11 @@ The SDK surfaces are:
   ```
 
   `ListOperations` includes each operation's description and host-computed
-  `Digest`; declarations ignore a caller-supplied digest. The host admits the
+  `Digest`; declarations ignore a caller-supplied digest. An absent or
+  `EFFECT_UNSPECIFIED` host effect returns `*InputError` with an empty pointer
+  and the message `host returned an unspecified effect`; an unknown future
+  numeric effect returns `*DatasourceError` with no receipt. Neither returns
+  a partial list. The host admits the
   schemas, route, effect and output cap. Invocation never
   accepts a provider URL or credential. The gateway's HTTP client carries
   the person's Work Context unchanged; this facade adds only
@@ -178,14 +182,20 @@ The SDK surfaces are:
   Lookup. On Declare/List it is `OperationRefused` carrying that reason.
   Null, unknown or undecodable protobuf error details are skipped; valid
   neighboring details still determine the outcome. For Declare/List,
-  non-Connect HTTP 403 maps to `ErrNotPermitted` through Connect's HTTP fallback;
+  non-Connect HTTP 403 with a supported encoding maps to `ErrNotPermitted`
+  through Connect's HTTP fallback;
   on Invoke/Lookup the same non-Connect response remains unknown.
 
   Connect JSON errors accept a case-insensitive UTF-8 charset parameter,
   case-insensitive gzip encoding and a leading UTF-8 BOM. A response adapter
   normalizes those encodings before Connect decodes the envelope; it forwards
-  the request unchanged through the gateway's existing HTTP client. Other
-  charsets and media types remain non-Connect. Timestamp strings follow the
+  the request unchanged through the gateway's existing HTTP client. Empty,
+  identity and gzip encodings are accepted case-insensitively. Unsupported
+  encodings such as `br` are rejected before reading the body or inferring an
+  HTTP status: Declare/List return `*DatasourceError` with no receipt, while
+  Invoke/Lookup return `ErrOutcomeUnknown` with the original effect ID. The
+  diagnostic cause is retained and no retry occurs. Other charsets and media
+  types remain non-Connect. Timestamp strings follow the
   protobuf JSON profile (years 0001–9999, at most nine fractional digits).
 
   The recorded host ref emits structured input pointers and provider HTTP

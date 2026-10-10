@@ -2,6 +2,11 @@
 
 ## Unreleased — callable sources (awaits host tag)
 
+- Reject unsupported HTTP response encodings before reading the body or
+  inferring an HTTP status: Declare/List return `DatasourceError` with no
+  receipt; Invoke/Lookup keep `OutcomeUnknown` and the original effect ID.
+  List returns `InputError` for an absent/unspecified host effect and
+  `DatasourceError` for an unknown future effect enum, with no partial list.
 - Fix cross-language parity at the error/receipt boundary: skip null and unknown
   details without losing effect IDs; scope `SOURCE_OPERATION_OUTCOME_UNKNOWN`
   to Invoke/Lookup; normalize UTF-8 charset, gzip case and BOM on Connect JSON

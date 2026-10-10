@@ -25,9 +25,10 @@ var (
 	ErrOutcomeUnknown = errors.New("datasource: outcome unknown; look up the effect")
 )
 
-// DatasourceError reports invalid output accompanying a valid committed receipt.
-// Receipt preserves the commit evidence and any valid receipt output. This is
-// not an unknown effect or permission to retry it, especially under a fresh ID.
+// DatasourceError reports an invalid or unsupported host response. Receipt is
+// zero when no effect evidence exists. For invalid output on a valid COMMITTED
+// receipt it preserves the commit evidence and any valid receipt output; the
+// error never authorizes repeating that effect, especially under a fresh ID.
 type DatasourceError struct {
 	Receipt Receipt
 	cause   error
@@ -35,7 +36,7 @@ type DatasourceError struct {
 
 func (e *DatasourceError) Error() string {
 	if e.cause == nil {
-		return "datasource: invalid committed output"
+		return "datasource: invalid host response"
 	}
 	return e.cause.Error()
 }
@@ -43,6 +44,7 @@ func (e *DatasourceError) Unwrap() error { return e.cause }
 
 // InputError reports a rejected input. Pointer is the host's JSON Pointer from
 // BadRequest.FieldViolation.Field, or empty when no structured pointer is supplied.
+// ListOperations also uses it when the host returns an unspecified effect.
 type InputError struct {
 	Pointer string
 	cause   error
@@ -167,6 +169,10 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 	// for example, a proxy's plain 429 and 500 otherwise produce different codes.
 	if effectOutcome && !connect.IsWireError(err) {
 		return &OutcomeUnknown{cause: err}
+	}
+	var encodingError *unsupportedResponseEncoding
+	if errors.As(err, &encodingError) {
+		return &DatasourceError{cause: err}
 	}
 	var ce *connect.Error
 	if !errors.As(err, &ce) {

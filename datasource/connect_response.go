@@ -5,11 +5,20 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"strings"
+
+	"connectrpc.com/connect"
 )
+
+type unsupportedResponseEncoding struct{ encoding string }
+
+func (e *unsupportedResponseEncoding) Error() string {
+	return fmt.Sprintf("datasource: unsupported response encoding %q", e.encoding)
+}
 
 // connectResponseClient normalizes the shared SDK's accepted HTTP encodings
 // before Connect decodes an error. It delegates the original request unchanged
@@ -18,17 +27,23 @@ type connectResponseClient struct{ client *http.Client }
 
 func (c connectResponseClient) Do(request *http.Request) (*http.Response, error) {
 	response, err := c.client.Do(request)
-	if err != nil || response.StatusCode == http.StatusOK ||
+	if err != nil ||
 		strings.HasPrefix(request.Header.Get("Content-Type"), "application/grpc") {
 		return response, err
+	}
+	encoding := strings.ToLower(response.Header.Get("Content-Encoding"))
+	if encoding != "" && encoding != "identity" && encoding != "gzip" {
+		// No body or HTTP status can establish an RPC outcome when its encoding
+		// is unsupported. Close here because Connect receives an error, not a body.
+		_ = response.Body.Close()
+		return nil, connect.NewError(connect.CodeInternal, &unsupportedResponseEncoding{encoding: response.Header.Get("Content-Encoding")})
+	}
+	if response.StatusCode == http.StatusOK {
+		return response, nil
 	}
 	mediaType, params, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" || len(params) > 1 ||
 		(len(params) == 1 && !strings.EqualFold(params["charset"], "utf-8")) {
-		return response, nil
-	}
-	encoding := strings.ToLower(response.Header.Get("Content-Encoding"))
-	if encoding != "" && encoding != "identity" && encoding != "gzip" {
 		return response, nil
 	}
 	// Clone the response metadata, never the gateway's client/transport/request.

@@ -183,6 +183,8 @@ func (c *Client) DeclareOperations(ctx context.Context, orgID, sourceID string, 
 }
 
 // ListOperations reads the host's admitted set without retaining a local copy.
+// An unspecified host effect returns InputError; an unrecognized effect enum
+// returns DatasourceError. Neither returns a partial list.
 func (c *Client) ListOperations(ctx context.Context, orgID, sourceID string) ([]Operation, error) {
 	response, err := c.inner.ListSourceOperations(ctx, connect.NewRequest(&v1.ListSourceOperationsRequest{
 		OrgId: orgID, SourceId: sourceID,
@@ -206,8 +208,10 @@ func (c *Client) ListOperations(ctx context.Context, orgID, sourceID string) ([]
 			effect = EffectReadOnly
 		case v1.SourceOperation_EFFECT_MUTATION:
 			effect = EffectMutation
+		case v1.SourceOperation_EFFECT_UNSPECIFIED:
+			return nil, &InputError{cause: errors.New("host returned an unspecified effect")}
 		default:
-			return nil, fmt.Errorf("datasource: unsupported host operation effect %v", value.GetEffect())
+			return nil, &DatasourceError{cause: fmt.Errorf("datasource: unsupported host operation effect %v", value.GetEffect())}
 		}
 		operations = append(operations, Operation{
 			Name: value.GetName(), Description: value.GetDescription(), Digest: value.GetDigest(),

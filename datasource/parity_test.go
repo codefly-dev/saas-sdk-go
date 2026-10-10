@@ -183,6 +183,48 @@ func TestNonWireForbiddenHasMethodSpecificMapping(t *testing.T) {
 	}
 }
 
+func TestUnsupportedResponseEncodingIsTypedBeforeHTTPFallback(t *testing.T) {
+	for _, encoding := range []string{"br", "BR", "deflate", "gzip, br"} {
+		for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+			for _, contentType := range []string{"application/json", "text/plain"} {
+				for _, method := range []string{"invoke", "lookup", "declare", "list"} {
+					t.Run(fmt.Sprintf("%s/%s/%s/%d", method, encoding, contentType, status), func(t *testing.T) {
+						var calls atomic.Int32
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							calls.Add(1)
+							w.Header().Set("Content-Type", contentType)
+							w.Header().Set("Content-Encoding", encoding)
+							w.WriteHeader(status)
+							fmt.Fprint(w, `{"code":"permission_denied","message":"not authoritative under unsupported encoding"}`)
+						}))
+						defer server.Close()
+						receipt, err := parityCall(datasource.New(gw{base: server.URL, client: server.Client()}), method)
+						var transport *connect.Error
+						if !errors.As(err, &transport) || transport.Code() != connect.CodeInternal || connect.IsWireError(err) ||
+							errors.Is(err, datasource.ErrNotPermitted) || calls.Load() != 1 {
+							t.Fatalf("unsupported encoding inferred an outcome or retried: %v, calls %d", err, calls.Load())
+						}
+						var responseErr *datasource.DatasourceError
+						if method == "declare" || method == "list" {
+							if !errors.As(err, &responseErr) || responseErr.Unwrap() != transport ||
+								receipt != nil || !reflect.DeepEqual(responseErr.Receipt, datasource.Receipt{}) {
+								t.Fatalf("management encoding error = %T %v, receipt %+v", err, err, receipt)
+							}
+						} else {
+							var unknown *datasource.OutcomeUnknown
+							if !errors.As(err, &unknown) || errors.As(err, &responseErr) ||
+								receipt == nil || receipt.EffectID == "" || receipt.Status != datasource.ReceiptStatusUnknown ||
+								unknown.Receipt.EffectID != receipt.EffectID || unknown.Unwrap() != transport {
+								t.Fatalf("encoding error lost effect evidence: %+v, %v", receipt, err)
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
 func TestCommittedOutputFieldsRetainTheirOwnEvidence(t *testing.T) {
 	for _, tt := range []struct {
 		name, top, nested string
@@ -311,5 +353,65 @@ func TestMissingSchemasRefuseDeclareAndNormalizeList(t *testing.T) {
 	}
 	if err := c.DeclareOperations(context.Background(), "org", "source", operations); err != nil || declares.Load() != 1 {
 		t.Fatalf("explicit empty schemas did not redeclare: %v", err)
+	}
+}
+
+func checkInvalidListedEffect(t *testing.T, operations []datasource.Operation, err error, unspecified bool, calls int32) {
+	t.Helper()
+	if operations != nil || calls != 1 {
+		t.Fatalf("invalid listed effect returned partial data or retried: %+v, %v, calls %d", operations, err, calls)
+	}
+	var inputErr *datasource.InputError
+	var responseErr *datasource.DatasourceError
+	if unspecified {
+		if !errors.As(err, &inputErr) || inputErr.Pointer != "" || inputErr.Error() != "host returned an unspecified effect" ||
+			inputErr.Unwrap() == nil || errors.As(err, &responseErr) {
+			t.Fatalf("unspecified listed effect = %T %v", err, err)
+		}
+	} else if !errors.As(err, &responseErr) || responseErr.Unwrap() == nil ||
+		!reflect.DeepEqual(responseErr.Receipt, datasource.Receipt{}) || errors.As(err, &inputErr) {
+		t.Fatalf("unrecognized listed effect = %T %v", err, err)
+	}
+}
+
+func TestInvalidListedEffectIsTyped(t *testing.T) {
+	for _, jsonCodec := range []bool{false, true} {
+		for _, effect := range []v1.SourceOperation_Effect{v1.SourceOperation_EFFECT_UNSPECIFIED, 42} {
+			t.Run(fmt.Sprintf("json=%t/effect=%d", jsonCodec, effect), func(t *testing.T) {
+				var calls atomic.Int32
+				var opts []connect.ClientOption
+				if jsonCodec {
+					opts = append(opts, connect.WithProtoJSON())
+				}
+				c := newOperationsClient(t, &operationsHandler{
+					list: func(context.Context, *connect.Request[v1.ListSourceOperationsRequest]) (*connect.Response[v1.ListSourceOperationsResponse], error) {
+						calls.Add(1)
+						return connect.NewResponse(&v1.ListSourceOperationsResponse{Operations: []*v1.SourceOperation{
+							{Name: "valid", Effect: v1.SourceOperation_EFFECT_READ_ONLY},
+							{Name: "invalid", Effect: effect},
+						}}), nil
+					},
+				}, opts...)
+				operations, err := c.ListOperations(context.Background(), "org", "source")
+				checkInvalidListedEffect(t, operations, err, effect == v1.SourceOperation_EFFECT_UNSPECIFIED, calls.Load())
+			})
+		}
+	}
+}
+
+func TestUnspecifiedListedEffectJSONRepresentations(t *testing.T) {
+	for _, operation := range []string{`{}`, `{"effect":0}`, `{"effect":"EFFECT_UNSPECIFIED"}`} {
+		t.Run(operation, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"operations":[%s]}`, operation)
+			}))
+			defer server.Close()
+			c := datasource.New(gw{base: server.URL, client: server.Client()}, connect.WithProtoJSON())
+			operations, err := c.ListOperations(context.Background(), "org", "source")
+			checkInvalidListedEffect(t, operations, err, true, calls.Load())
+		})
 	}
 }
