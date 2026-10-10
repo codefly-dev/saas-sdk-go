@@ -2,6 +2,7 @@ package moduleauthority
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -77,5 +78,99 @@ func TestAuditInvalidIntentDoesNotReachHost(t *testing.T) {
 	}
 	if len(h.authority.snapshot()) != 0 {
 		t.Fatal("invalid intent reached host")
+	}
+}
+
+// Recovery state belongs to the producer. Recreating an SDK client must not
+// replace its persisted key, invent a new event, or replay an uncertain emit.
+func TestAuditEmissionPreservesIntentAcrossClientRestart(t *testing.T) {
+	h := newHost(t)
+	event := AuditEvent{Tenant: testTenant, EventType: "example.changed", Actor: testOwner,
+		Solution: "example", EntryID: "entry", Fields: map[string]any{"count": float64(3)}, IdempotencyKey: "unavailable"}
+	for range 2 {
+		client := h.client(t, moduleCredentials)
+		if err := client.EmitAuditEvent(t.Context(), event); connect.CodeOf(err) != connect.CodeUnavailable {
+			t.Fatalf("uncertain emit: %v", err)
+		}
+		if err := client.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := h.authority.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("got %d attempts for two explicit emits; uncertain effects must not be retried", len(calls))
+	}
+	for _, call := range calls {
+		if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent" ||
+			call.audit.GetTenant() != event.Tenant || call.audit.GetEventType() != event.EventType ||
+			call.audit.GetActor() != event.Actor || call.audit.GetSolution() != event.Solution ||
+			call.audit.GetEntryId() != event.EntryID || call.audit.GetIdempotencyKey() != event.IdempotencyKey ||
+			!reflect.DeepEqual(call.audit.GetFields().AsMap(), event.Fields) {
+			t.Fatal("restarting the client changed the caller's audit intent")
+		}
+	}
+	h.assertNoStrayPaths(t)
+}
+
+func TestAuditEmissionRefreshesOnlyRejectedModuleAuthentication(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		rejectAll bool
+		badToken  bool
+		wantCode  connect.Code
+		wantCalls int
+	}{
+		{name: "expired capability", wantCalls: 2},
+		{name: "revoked module", rejectAll: true, wantCode: connect.CodeUnauthenticated, wantCalls: 2},
+		{name: "invalid perimeter", badToken: true, wantCode: connect.CodePermissionDenied, wantCalls: 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			h := newHost(t)
+			client := h.client(t, moduleCredentials)
+			if _, err := client.ModuleWorkContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			h.gateway.revoke("module.token1")
+			h.gateway.mu.Lock()
+			h.gateway.rejectAll = scenario.rejectAll
+			h.gateway.mu.Unlock()
+			if scenario.badToken {
+				client.authority.token = "invalid-perimeter-token"
+			}
+			event := AuditEvent{Tenant: testTenant, EventType: "example.changed", Actor: testOwner,
+				Solution: "example", IdempotencyKey: "stable-key"}
+			err := client.EmitAuditEvent(t.Context(), event)
+			if scenario.wantCode == 0 && err != nil || scenario.wantCode != 0 && connect.CodeOf(err) != scenario.wantCode {
+				t.Fatalf("emit error = %v, want code %v", err, scenario.wantCode)
+			}
+			calls := h.authority.snapshot()
+			if len(calls) != scenario.wantCalls {
+				t.Fatalf("got %d calls, want %d", len(calls), scenario.wantCalls)
+			}
+			for i, call := range calls {
+				if len(call.workContext) != 1 || call.workContext[0] != fmt.Sprintf("module.token%d", i+1) || call.audit.GetIdempotencyKey() != event.IdempotencyKey {
+					t.Fatal("authentication refresh changed the intent or reused the rejected credential")
+				}
+			}
+			h.assertNoStrayPaths(t)
+		})
+	}
+}
+
+func TestAuditEmissionWithoutAuthorityDoesNotMint(t *testing.T) {
+	h := newHost(t)
+	seams := h.seams()
+	seams.Authority = Authority{}
+	client, err := New(seams, moduleCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	err = client.EmitAuditEvent(t.Context(), AuditEvent{EventType: "example.changed", Actor: testOwner, Solution: "example"})
+	if !errors.Is(err, ErrNoAuthority) {
+		t.Fatalf("got %v, want ErrNoAuthority", err)
+	}
+	if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 0 || len(h.authority.snapshot()) != 0 {
+		t.Fatal("missing authority seam still contacted the host")
 	}
 }

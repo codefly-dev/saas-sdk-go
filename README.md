@@ -196,8 +196,9 @@ the correct module path. **Never hand-edit `gen/` or sed the module path** — t
 protobuf file descriptors embed length-prefixed package strings and a text
 rewrite corrupts them (panics at `init()`). Always regenerate.
 
-> Wiring this regen into module-saas-starter's release (so a saas tag publishes a
-> matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).
+Regeneration and matching SDK releases are owned by `module-saas-starter` and
+this repository. Until release automation covers both, follow the
+`refresh-generated-api` procedure in `.claude/skills/`.
 
 ## Consuming
 
