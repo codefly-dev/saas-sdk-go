@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
@@ -249,6 +250,7 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
+	audit          *v1.ModuleEmitAuditEventRequest
 	installation   *v1.ModuleCurrentInstallationRequest
 	authorization  []string
 	artifact       *v1.ModuleExecutableArtifactRequest
@@ -264,6 +266,7 @@ type authorityCall struct {
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
 	accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:             true,
 	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
 	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
@@ -309,6 +312,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:
+		call.audit = &v1.ModuleEmitAuditEventRequest{}
+		recvErr = stream.RecvMsg(call.audit)
 	case accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
 		call.installation = &v1.ModuleCurrentInstallationRequest{}
 		recvErr = stream.RecvMsg(call.installation)
@@ -347,6 +353,19 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.audit != nil {
+		switch call.audit.GetIdempotencyKey() {
+		case "actor-unresolved":
+			return status.Error(codes.FailedPrecondition, "audit actor unresolved")
+		case "unavailable":
+			return status.Error(codes.Unavailable, "audit storage unavailable")
+		case "deadline":
+			return status.Error(codes.DeadlineExceeded, "audit deadline exceeded")
+		case "internal":
+			return status.Error(codes.Internal, "audit commit failed")
+		}
+		return stream.SendMsg(&emptypb.Empty{})
 	}
 	if call.installation != nil {
 		if call.installation.ParentWorkContextToken == "denied.token" {

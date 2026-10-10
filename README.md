@@ -111,6 +111,40 @@ The SDK surfaces are:
   op, err := authority.MintModuleOperationContext(ctx, installedBindingID)
   // op.Token goes in x-codefly-work-context on the call to op.Audience.
   ```
+  `EmitAuditEvent(ctx, AuditEvent)` sends a registered event through the same
+  module-authenticated authority seam. The host checks the module's grant,
+  tenant, actor, solution and registered field schema. The event's actor may be
+  the module's own principal or a `system:<process>` label; a subject actor must
+  belong to the tenant. An empty tenant requires the host's cross-tenant grant.
+
+  ```go
+  // Persist the complete event and key in the producer's outbox before sending.
+  event := moduleauthority.AuditEvent{
+      Tenant: tenantID, EventType: "example.changed", Actor: "system:worker",
+      Solution: "example", EntryID: entryID, IdempotencyKey: outboxEventID,
+      Fields: map[string]any{"count": float64(3)},
+  }
+  if err := authority.EmitAuditEvent(ctx, event); err != nil {
+      return err // Keep the outbox entry and its original key for recovery.
+  }
+  // The host acknowledged the event; the producer may now settle its outbox row.
+  ```
+
+  The host deduplicates by `(tenant, event_type, idempotency_key)`. Persist and
+  reuse the **complete original event and key** across retries and restarts;
+  never reuse a key for another intent. The contract in `SOURCE.txt` acknowledges
+  a duplicate key without comparing its payload. An empty key disables
+  deduplication, and some registered types require a key. Field values use the
+  protobuf Struct representation, so numbers are represented as doubles.
+
+  A nil error acknowledges the host's durable audit write or an existing key,
+  not completion of outbound webhook delivery. After a timeout or transport
+  error the write may already have committed. The SDK does not own an outbox,
+  store receipts, or automatically retry an uncertain effect; only rejected
+  module authentication is refreshed and retried once. Host error codes remain
+  available through `connect.CodeOf(err)`. Receipt lookup and runtime-boundary
+  attestation await an integrated host contract and are not exposed here.
+
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
 
@@ -202,8 +236,9 @@ the correct module path. **Never hand-edit `gen/` or sed the module path** — t
 protobuf file descriptors embed length-prefixed package strings and a text
 rewrite corrupts them (panics at `init()`). Always regenerate.
 
-> Wiring this regen into module-saas-starter's release (so a saas tag publishes a
-> matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).
+Regeneration and matching SDK releases are owned by `module-saas-starter` and
+this repository. Until release automation covers both, follow the
+`refresh-generated-api` procedure in `.claude/skills/`.
 
 ## Consuming
 
