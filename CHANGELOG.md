@@ -1,20 +1,32 @@
 # Changelog
 
-## Unreleased — audit effect receipts
+## Unreleased — module audit emission
 
-- Added `moduleauthority.Client.EmitAuditEvent` and `LookupAuditEvent` with
-  complete intent, current module authority and preserved host error codes.
-- Empty receipts remain inconclusive; no automatic effect retry.
-- Regenerated from the exact local host commit in `SOURCE.txt`. Module version
-  remains 0.1.0; these contracts are not a published release.
+- Added `moduleauthority.Client.EmitAuditEvent`, preserving the complete event,
+  caller-selected idempotency key and host error codes through the existing
+  authenticated authority transport. Uncertain effects are not retried.
+- Kept main's complete generated contract and existing artifact, installation
+  and delegation APIs. Receipt lookup and runtime-boundary attestation remain
+  deferred until their host contract is integrated. Module version stays 0.1.0.
+- Updated the API boundary importer for Go 1.27.2 export data.
+
+## Unreleased — current installation identity
+
+- Added `moduleauthority.Client.GetCurrentInstallation` with independent module
+  credentials and parent proof, exact installation selector and an identity-only
+  active/non-revoked response. Denials do not fall back to viewer credentials.
+- Regenerated the complete API from host `21f139ee4`, retaining delegation-reference
+  exchange and executable-artifact approval. The source also adds the current
+  platform catalogue read; no generated files were selected or discarded.
 
 
-## Unreleased — runtime boundary attestation
+## Unreleased — exact executable artifact consent
 
-- Added `moduleauthority.Client.VerifyWorkContextRuntimeBoundary`, preserving the
-  forwarded capability and independently authenticating the consuming module.
-- Regenerated the complete API from the local host experiment recorded in
-  `SOURCE.txt`; module version remains 0.1.0. This is not a published release.
+### Added
+- Module authority methods for explicit approval, live exact authorization and
+  terminal revocation, with canonical subject bytes and exact int64 revisions.
+- Regenerated the complete API from host da6d1b2, including current installation,
+  organization, invitation and datasource contracts. No generated file was curated.
 
 
 ## Unreleased (targets 0.1.0)
@@ -32,6 +44,20 @@ version and to signal the breaking removal below.
   notice through their category policy; the result is whether it was delivered
   (false when an optional category was switched off). A notice without a
   tenant, recipient, title or category is `ErrInvalidNotice` before any call.
+
+### Added (moduleauthority, delegation-reference exchange)
+
+- `ExchangeRequest.DelegationID` presents a host-owned, revocable source
+  delegation instead of a parent capability, on the arm
+  `ExchangeDelegatedOperationAudience` already serves. Nothing long-lived is
+  minted: the reference is an identifier, the host re-checks the delegation on
+  every call and mints a fresh short child, and the caller's own module Work
+  Context still authenticates the request. Because no capability is presented,
+  the arm is not bounded by any token's remaining life and may be called again
+  after the previous child has expired — which is how work longer than a Work
+  Context renews. `ExchangeRequest` now requires exactly one of `Parent` and
+  `DelegationID`; both, or neither, is `ErrInvalidExchange` before anything is
+  sent, matching the host's message-level rule.
 
 ### Added (moduleauthority, mint-only clients)
 

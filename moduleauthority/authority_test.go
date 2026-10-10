@@ -150,3 +150,115 @@ func TestExchangeOperationSurfacesABrokerRefusal(t *testing.T) {
 		t.Fatalf("no module Work Context, yet the authority endpoint was called %d times", len(calls))
 	}
 }
+
+// TestExchangeOperationPresentsADelegationReferenceAndNoParent is the arm that
+// carries long-running delegated work. It presents no capability at all, so the
+// request must reach the host with the reference set and the parent field
+// empty — a parent left in beside it would be a second authority the host is
+// required to refuse.
+func TestExchangeOperationPresentsADelegationReferenceAndNoParent(t *testing.T) {
+	h := newHost(t)
+	client := h.client(t, moduleCredentials)
+
+	issued, err := client.ExchangeOperation(t.Context(), ExchangeRequest{
+		BindingID:    "binding-1",
+		DelegationID: "6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issued.Encoded() != "child.token" {
+		t.Fatalf("issued token = %q", issued.Encoded())
+	}
+
+	calls := h.authority.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("authority calls = %d, want 1", len(calls))
+	}
+	call := calls[0]
+	if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/ExchangeDelegatedOperationAudience" {
+		t.Fatalf("method = %q", call.method)
+	}
+	// The caller's own module Work Context still authenticates the call: a
+	// reference is an identifier, and on its own it authorizes nothing.
+	if len(call.workContext) != 1 || call.workContext[0] != "module.token1" {
+		t.Fatalf("x-codefly-work-context = %v", call.workContext)
+	}
+	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken {
+		t.Fatalf("x-codefly-internal-token = %v", call.internalToken)
+	}
+	if call.request.GetDelegationId() != "6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f" {
+		t.Fatalf("delegation_id = %q", call.request.GetDelegationId())
+	}
+	if call.request.GetParentWorkContextToken() != "" {
+		t.Fatalf("parent_work_context_token = %q, want empty on the reference arm", call.request.GetParentWorkContextToken())
+	}
+	h.assertNoStrayPaths(t)
+}
+
+// TestExchangeOperationRequiresExactlyOneAuthority: both arms and neither are
+// refused here rather than at the host, and nothing is sent. The host enforces
+// the same rule, so a request that cannot be authorized should not reach it.
+func TestExchangeOperationRequiresExactlyOneAuthority(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		request ExchangeRequest
+	}{
+		{"neither", ExchangeRequest{BindingID: "binding-1"}},
+		{"both", ExchangeRequest{
+			BindingID:    "binding-1",
+			Parent:       token(t, "parent.token"),
+			DelegationID: "6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+		}},
+		{"no binding, with a reference", ExchangeRequest{
+			DelegationID: "6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHost(t)
+			if _, err := h.client(t, moduleCredentials).ExchangeOperation(t.Context(), c.request); !errors.Is(err, ErrInvalidExchange) {
+				t.Fatalf("err = %v, want ErrInvalidExchange", err)
+			}
+			if calls := h.authority.snapshot(); len(calls) != 0 {
+				t.Fatalf("authority calls = %d, want none", len(calls))
+			}
+			// Not even the module capability is minted: nothing left the process.
+			if brokerCalls, _, _, _ := h.gateway.snapshot(); len(brokerCalls) != 0 {
+				t.Fatalf("broker calls = %v, want none", brokerCalls)
+			}
+		})
+	}
+}
+
+// TestExchangeOperationRefreshesAModuleWorkContextOnTheReferenceArmToo: the
+// retry resends the same request, so a reference must survive it. A retry that
+// rebuilt the request from the parent field would silently send an empty
+// authority on the second attempt and read as a host refusal.
+func TestExchangeOperationRefreshesAModuleWorkContextOnTheReferenceArmToo(t *testing.T) {
+	h := newHost(t)
+	client := h.client(t, moduleCredentials)
+	if _, err := client.ModuleWorkContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.gateway.revoke("module.token1")
+
+	issued, err := client.ExchangeOperation(t.Context(), ExchangeRequest{
+		BindingID:    "binding-1",
+		DelegationID: "6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issued.Encoded() != "child.token" {
+		t.Fatalf("issued token = %q", issued.Encoded())
+	}
+	calls := h.authority.snapshot()
+	if len(calls) != 2 || calls[0].workContext[0] != "module.token1" || calls[1].workContext[0] != "module.token2" {
+		t.Fatalf("authority calls = %+v, want token1 rejected then token2", calls)
+	}
+	for i, call := range calls {
+		if call.request.GetDelegationId() != "6f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f" || call.request.GetParentWorkContextToken() != "" {
+			t.Fatalf("attempt %d lost the reference: %+v", i, call.request)
+		}
+	}
+}

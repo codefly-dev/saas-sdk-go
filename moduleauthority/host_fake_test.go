@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -249,23 +250,27 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
-	audit         *v1.ModuleEmitAuditEventRequest
-	boundary      *v1.VerifyWorkContextRuntimeBoundaryRequest
-	authorization []string
-	method        string
-	internalToken []string
-	workContext   []string
-	request       *v1.ModuleExchangeDelegatedOperationAudienceRequest
-	notice        *v1.ModuleNotifyOrgAdminsRequest
-	userNotice    *v1.ModuleNotifyUserRequest
+	audit          *v1.ModuleEmitAuditEventRequest
+	installation   *v1.ModuleCurrentInstallationRequest
+	authorization  []string
+	artifact       *v1.ModuleExecutableArtifactRequest
+	revokeArtifact *v1.ModuleRevokeExecutableArtifactRequest
+	method         string
+	internalToken  []string
+	workContext    []string
+	request        *v1.ModuleExchangeDelegatedOperationAudienceRequest
+	notice         *v1.ModuleNotifyOrgAdminsRequest
+	userNotice     *v1.ModuleNotifyUserRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
-	accountsv1connect.ModuleCapabilitiesServiceLookupAuditEventProcedure:                   true,
-	accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:   true,
+	accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:             true,
+	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
+	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
+	accountsv1connect.ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:           true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure: true,
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
@@ -301,18 +306,24 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{method: method, authorization: md.Get("authorization"), internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
-	case accountsv1connect.ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:
-		call.boundary = &v1.VerifyWorkContextRuntimeBoundaryRequest{}
-		recvErr = stream.RecvMsg(call.boundary)
-	case accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure, accountsv1connect.ModuleCapabilitiesServiceLookupAuditEventProcedure:
+	case accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:
 		call.audit = &v1.ModuleEmitAuditEventRequest{}
 		recvErr = stream.RecvMsg(call.audit)
+	case accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
+		call.installation = &v1.ModuleCurrentInstallationRequest{}
+		recvErr = stream.RecvMsg(call.installation)
+	case accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure, accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:
+		call.artifact = &v1.ModuleExecutableArtifactRequest{}
+		recvErr = stream.RecvMsg(call.artifact)
+	case accountsv1connect.ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:
+		call.revokeArtifact = &v1.ModuleRevokeExecutableArtifactRequest{}
+		recvErr = stream.RecvMsg(call.revokeArtifact)
 	case accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:
 		call.notice = &v1.ModuleNotifyOrgAdminsRequest{}
 		recvErr = stream.RecvMsg(call.notice)
@@ -343,32 +354,46 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
 	}
-	if call.boundary != nil {
-		switch call.boundary.ForwardedWorkContextToken {
-		case "denied.token":
-			return status.Error(codes.PermissionDenied, "boundary refused")
-		case "missing-tenant.token":
-			return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{BoundaryId: exampleSource})
-		case "missing-boundary.token":
-			return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{TenantId: testTenant})
-		}
-		return stream.SendMsg(&v1.VerifyWorkContextRuntimeBoundaryResponse{TenantId: testTenant, BoundaryId: exampleSource})
-	}
 	if call.audit != nil {
 		switch call.audit.GetIdempotencyKey() {
-		case "conflict":
-			return status.Error(codes.FailedPrecondition, "audit intent conflict")
+		case "actor-unresolved":
+			return status.Error(codes.FailedPrecondition, "audit actor unresolved")
 		case "unavailable":
 			return status.Error(codes.Unavailable, "audit storage unavailable")
+		case "deadline":
+			return status.Error(codes.DeadlineExceeded, "audit deadline exceeded")
+		case "internal":
+			return status.Error(codes.Internal, "audit commit failed")
 		}
-		if method == accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure {
-			return stream.SendMsg(&emptypb.Empty{})
+		return stream.SendMsg(&emptypb.Empty{})
+	}
+	if call.installation != nil {
+		if call.installation.ParentWorkContextToken == "denied.token" {
+			return status.Error(codes.PermissionDenied, "current authority denied")
 		}
-		eventID := "event-1"
-		if call.audit.GetIdempotencyKey() == "missing" {
-			eventID = ""
+		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, SolutionIdentifier: "acme/example"}
+		switch call.installation.ParentWorkContextToken {
+		case "wrong-id.token":
+			out.InstallationId = testOwner
+		case "missing-tenant.token":
+			out.TenantId = ""
+		case "empty-source.token":
+			out.SolutionIdentifier = ""
 		}
-		return stream.SendMsg(&v1.ModuleLookupAuditEventResponse{EventId: eventID})
+		return stream.SendMsg(out)
+	}
+	if call.artifact != nil {
+		if call.artifact.PolicyId == "denied" {
+			return status.Error(codes.PermissionDenied, "exact artifact approval required")
+		}
+		revision := call.artifact.Identity.ExpectedRevision
+		if call.artifact.PolicyId == "mismatched-receipt" {
+			revision--
+		}
+		return stream.SendMsg(&v1.ModuleExecutableArtifactResponse{SchemaVersion: "host.executable-artifact/v1", QualifiedName: "host/approved-artifacts/11111111-1111-4111-8111-111111111111", Digest: "sha256:" + strings.Repeat("a", 64), ExpectedRevision: revision})
+	}
+	if call.revokeArtifact != nil {
+		return stream.SendMsg(&v1.ModuleExecutableArtifactResponse{SchemaVersion: "host.executable-artifact/v1", QualifiedName: "host/approved-artifacts/" + call.revokeArtifact.ApprovalId, Digest: "sha256:" + strings.Repeat("a", 64), ExpectedRevision: 0})
 	}
 	if call.notice != nil {
 		// ModuleNotifyOrgAdmins: the host resolves the administrators and
@@ -396,8 +421,12 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		}
 		return stream.SendMsg(&v1.ModuleNotifyUserResponse{NotificationId: "n-1", Delivered: n.GetCategory() != "marketing"})
 	}
-	if request.GetBindingId() == "" || request.GetParentWorkContextToken() == "" {
-		return status.Error(codes.InvalidArgument, "binding and parent required")
+	// The host's own message-level rule: a binding, and exactly one of the two
+	// authority arms. Stated here so a client that sent both, or neither, is
+	// caught by the fake the way the real surface would catch it.
+	if request.GetBindingId() == "" ||
+		(request.GetParentWorkContextToken() == "") == (request.GetDelegationId() == "") {
+		return status.Error(codes.InvalidArgument, "binding and exactly one of parent or delegation required")
 	}
 	return stream.SendMsg(&v1.IssuedWorkContext{Token: "child.token"})
 }

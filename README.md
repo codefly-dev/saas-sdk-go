@@ -79,6 +79,29 @@ The SDK surfaces are:
   `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
   binding's audience, scopes, lifetime, verification, and audit record.
 
+  `ExchangeRequest` presents authority one of two ways, and exactly one — both,
+  or neither, is `ErrInvalidExchange` before anything is sent. `Parent` is a live
+  capability the caller holds; the child is attenuated against it and expires
+  with it, so **work that outlives the parent cannot be authorized this way at
+  all**. `DelegationID` is a reference to a host-owned, revocable source
+  delegation, as `MintSourceOperationContext` reported it:
+
+  ```go
+  child, err := authority.ExchangeOperation(ctx, moduleauthority.ExchangeRequest{
+      BindingID:    installedBindingID,
+      DelegationID: delegationID, // no parent, and none needs to still be valid
+  })
+  ```
+
+  No capability is presented on that arm and none is held. The host re-checks
+  that the delegation is live, the source exists, the person still holds the
+  role and the binding is unchanged, then mints that call's child. So it is not
+  bounded by any token's remaining life and may be called again *after* the
+  previous child has expired — which is the whole of the renewal path for work
+  longer than a Work Context. A revocation takes effect on the next exchange.
+  The reference is an identifier, never a credential: on its own it authorizes
+  nothing, and the caller's own module Work Context still authenticates the call.
+
   Background work with no person present mints its own operation context
   instead. It carries exactly the binding's `headless_scopes`; a binding that
   declares none is refused with `ErrPermissionDenied`. It lives about a minute
@@ -88,22 +111,39 @@ The SDK surfaces are:
   op, err := authority.MintModuleOperationContext(ctx, installedBindingID)
   // op.Token goes in x-codefly-work-context on the call to op.Audience.
   ```
-  `VerifyWorkContextRuntimeBoundary(ctx, forwarded)` uses the same independent
-  module authentication to attest an original viewer capability. Its result
-  (`TenantID`, `BoundaryID`) is a current observation, never a grant or a cached
-  proof: the consumer must compare both to its independently verified context
-  and enforce the context's scopes. The host requires an active registration
-  with both halves live and compatible. This method requires the unreleased
-  host contract recorded in `SOURCE.txt`.
+  `EmitAuditEvent(ctx, AuditEvent)` sends a registered event through the same
+  module-authenticated authority seam. The host checks the module's grant,
+  tenant, actor, solution and registered field schema. The event's actor may be
+  the module's own principal or a `system:<process>` label; a subject actor must
+  belong to the tenant. An empty tenant requires the host's cross-tenant grant.
 
-  `EmitAuditEvent(ctx, AuditEvent)` and `LookupAuditEvent(ctx, AuditEvent)` use
-  that authority seam for registered audit effects. Keep the complete event and
-  its stable key for recovery. A lookup returns `AuditReceipt.EventID` only for
-  matching intent under current host authority. An empty ID is inconclusive;
-  neither method automatically retries an uncertain effect. Host error codes
-  remain available through `connect.CodeOf(err)`, including failed preconditions
-  for changed intent or historical keys without a verifiable receipt. These
-  methods require the same unreleased host contract in `SOURCE.txt`.
+  ```go
+  // Persist the complete event and key in the producer's outbox before sending.
+  event := moduleauthority.AuditEvent{
+      Tenant: tenantID, EventType: "example.changed", Actor: "system:worker",
+      Solution: "example", EntryID: entryID, IdempotencyKey: outboxEventID,
+      Fields: map[string]any{"count": float64(3)},
+  }
+  if err := authority.EmitAuditEvent(ctx, event); err != nil {
+      return err // Keep the outbox entry and its original key for recovery.
+  }
+  // The host acknowledged the event; the producer may now settle its outbox row.
+  ```
+
+  The host deduplicates by `(tenant, event_type, idempotency_key)`. Persist and
+  reuse the **complete original event and key** across retries and restarts;
+  never reuse a key for another intent. The contract in `SOURCE.txt` acknowledges
+  a duplicate key without comparing its payload. An empty key disables
+  deduplication, and some registered types require a key. Field values use the
+  protobuf Struct representation, so numbers are represented as doubles.
+
+  A nil error acknowledges the host's durable audit write or an existing key,
+  not completion of outbound webhook delivery. After a timeout or transport
+  error the write may already have committed. The SDK does not own an outbox,
+  store receipts, or automatically retry an uncertain effect; only rejected
+  module authentication is refreshed and retried once. Host error codes remain
+  available through `connect.CodeOf(err)`. Receipt lookup and runtime-boundary
+  attestation await an integrated host contract and are not exposed here.
 
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
@@ -208,3 +248,50 @@ import (
     v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 )
 ```
+
+
+### Exact executable artifact consent
+
+`moduleauthority.Client` exposes `ApproveExecutableArtifact`,
+`AuthorizeExecutableArtifact`, and `RevokeExecutableArtifact` on the resolved
+accounts authority endpoint, using the ordinary cached module credential plus
+an independently signed human parent. The first is an explicit administrator
+activation action; the second only checks existing exact consent. Never approve
+as a fallback on a refused run. Neither operation dispatches work or moves an
+active pointer.
+
+`ArtifactRequest` names the installation, installed policy ID and
+`ArtifactIdentity`: its schema, source, complete canonical subject bytes,
+ordered exact contract references and an int64 expected revision. The host
+validates its installed `MODULE_PRINCIPALS[<module>].artifact_policies` ceiling.
+The SDK preserves subject bytes and int64 values exactly, bounds the request,
+and refuses mismatched or malformed authorization receipts. The module owns
+canonical identity extraction, including every script/runtime and content pin;
+the host does not interpret configuration or fabricate publisher attestation.
+
+Consent belongs to the tenant and survives administrator turnover. The host
+rechecks current caller authority, installation, source, policy and explicit
+revocation on each run. Revocation addresses the approval UUID from the returned
+`host/approved-artifacts/<uuid>` Ref, even if the policy was disabled. Revoked
+exact identities are terminal; a newly selected content version or activation
+revision needs explicit new consent. These Refs are not tool or artifact-access
+credentials.
+
+### Current installation identity
+
+`moduleauthority.Client.GetCurrentInstallation(ctx, CurrentInstallationRequest)`
+reads the host's current active, non-revoked installation identity. Supply the
+original verified parent token and `InstallationID`. The client presents its own
+module Work Context independently on the resolved authority endpoint. It never
+forwards a viewer bearer, selects a tenant/source, or mints broader parent scopes.
+
+The result is `CurrentInstallation{InstallationID, TenantID, SolutionIdentifier}`.
+The SDK requires the exact requested ID and a nonempty, well-formed result;
+the consumer must compare `TenantID` to its independently verified request tenant
+and apply its own source naming rules. A successful observation is not executable
+consent, a grant or durable liveness proof. Re-read for each new request.
+
+The host preserves its organization-member metadata-read rule: no new permission
+or binding is required. It checks current parent authority and delegation,
+authenticated module/audience/tenant alignment, current membership, and exact
+active record identity. A refusal never invokes a bearer-based fallback.

@@ -35,15 +35,24 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// ModuleCapabilitiesServiceGetCurrentInstallationProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's GetCurrentInstallation RPC.
+	ModuleCapabilitiesServiceGetCurrentInstallationProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/GetCurrentInstallation"
+	// ModuleCapabilitiesServiceApproveExecutableArtifactProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's ApproveExecutableArtifact RPC.
+	ModuleCapabilitiesServiceApproveExecutableArtifactProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/ApproveExecutableArtifact"
+	// ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's AuthorizeExecutableArtifact RPC.
+	ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/AuthorizeExecutableArtifact"
+	// ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure is the fully-qualified name of the
+	// ModuleCapabilitiesService's RevokeExecutableArtifact RPC.
+	ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/RevokeExecutableArtifact"
 	// ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure is the fully-qualified name of
 	// the ModuleCapabilitiesService's ExchangeDelegatedReadAudience RPC.
 	ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/ExchangeDelegatedReadAudience"
 	// ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure is the fully-qualified name
 	// of the ModuleCapabilitiesService's ExchangeDelegatedOperationAudience RPC.
 	ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/ExchangeDelegatedOperationAudience"
-	// ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure is the fully-qualified name of
-	// the ModuleCapabilitiesService's VerifyWorkContextRuntimeBoundary RPC.
-	ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/VerifyWorkContextRuntimeBoundary"
 	// ModuleCapabilitiesServiceCheckWorkContextRecordAccessProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's CheckWorkContextRecordAccess RPC.
 	ModuleCapabilitiesServiceCheckWorkContextRecordAccessProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/CheckWorkContextRecordAccess"
@@ -86,9 +95,6 @@ const (
 	// ModuleCapabilitiesServiceEmitAuditEventProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's EmitAuditEvent RPC.
 	ModuleCapabilitiesServiceEmitAuditEventProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent"
-	// ModuleCapabilitiesServiceLookupAuditEventProcedure is the fully-qualified name of the
-	// ModuleCapabilitiesService's LookupAuditEvent RPC.
-	ModuleCapabilitiesServiceLookupAuditEventProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/LookupAuditEvent"
 	// ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure is the fully-qualified name of the
 	// ModuleCapabilitiesService's DeclareAuditEventTypes RPC.
 	ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/DeclareAuditEventTypes"
@@ -136,6 +142,15 @@ const (
 // ModuleCapabilitiesServiceClient is a client for the saas.accounts.v1.ModuleCapabilitiesService
 // service.
 type ModuleCapabilitiesServiceClient interface {
+	// Organization-member metadata read, not executable consent or a durable
+	// liveness proof. Returns only a currently active, non-revoked installation.
+	GetCurrentInstallation(context.Context, *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error)
+	// Explicit current-admin consent, never inferred from an execution request.
+	ApproveExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
+	// Read existing exact approval; check live authority and revocation each time.
+	AuthorizeExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
+	// Terminal revocation of the exact approved identity.
+	RevokeExecutableArtifact(context.Context, *connect.Request[v1.ModuleRevokeExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
 	// ExchangeDelegatedReadAudience authenticates the module independently of a
 	// current parent context and exchanges only its installed read-only binding.
 	ExchangeDelegatedReadAudience(context.Context, *connect.Request[v1.ModuleExchangeDelegatedReadAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error)
@@ -143,9 +158,6 @@ type ModuleCapabilitiesServiceClient interface {
 	// of a current parent context and exchanges only an installed operation's
 	// invoke scopes, or its read-only receipt-lookup subset.
 	ExchangeDelegatedOperationAudience(context.Context, *connect.Request[v1.ModuleExchangeDelegatedOperationAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error)
-	// Attests a current capability under an active host-owned solution boundary.
-	// This read grants no authority and does not expose the registration seed.
-	VerifyWorkContextRuntimeBoundary(context.Context, *connect.Request[v1.VerifyWorkContextRuntimeBoundaryRequest]) (*connect.Response[v1.VerifyWorkContextRuntimeBoundaryResponse], error)
 	// Checks current owner and every delegated actor against true record placement,
 	// intersected with the verified capability's attenuated resource/action scope.
 	CheckWorkContextRecordAccess(context.Context, *connect.Request[v1.CheckWorkContextRecordAccessRequest]) (*connect.Response[v1.CheckWorkContextRecordAccessResponse], error)
@@ -181,10 +193,6 @@ type ModuleCapabilitiesServiceClient interface {
 	CancelApproval(context.Context, *connect.Request[v1.ModuleCancelApprovalRequest]) (*connect.Response[emptypb.Empty], error)
 	// EmitAuditEvent records a registered audit event on the tenant's spine.
 	EmitAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[emptypb.Empty], error)
-	// Read-only recovery for the complete original intent. Requires a nonempty
-	// idempotency_key; same authority as EmitAuditEvent. No retry authorization is
-	// implied by an absent receipt. Old unbound keys return FAILED_PRECONDITION.
-	LookupAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[v1.ModuleLookupAuditEventResponse], error)
 	// DeclareAuditEventTypes admits the audit event types a composed module owns,
 	// into the namespaces the operator bound to it; see the request.
 	DeclareAuditEventTypes(context.Context, *connect.Request[v1.ModuleDeclareAuditEventTypesRequest]) (*connect.Response[v1.ModuleDeclareAuditEventTypesResponse], error)
@@ -263,6 +271,30 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 	baseURL = strings.TrimRight(baseURL, "/")
 	moduleCapabilitiesServiceMethods := v1.File_saas_accounts_v1_module_capabilities_proto.Services().ByName("ModuleCapabilitiesService").Methods()
 	return &moduleCapabilitiesServiceClient{
+		getCurrentInstallation: connect.NewClient[v1.ModuleCurrentInstallationRequest, v1.ModuleCurrentInstallationResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceGetCurrentInstallationProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("GetCurrentInstallation")),
+			connect.WithClientOptions(opts...),
+		),
+		approveExecutableArtifact: connect.NewClient[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceApproveExecutableArtifactProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("ApproveExecutableArtifact")),
+			connect.WithClientOptions(opts...),
+		),
+		authorizeExecutableArtifact: connect.NewClient[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("AuthorizeExecutableArtifact")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeExecutableArtifact: connect.NewClient[v1.ModuleRevokeExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse](
+			httpClient,
+			baseURL+ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure,
+			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("RevokeExecutableArtifact")),
+			connect.WithClientOptions(opts...),
+		),
 		exchangeDelegatedReadAudience: connect.NewClient[v1.ModuleExchangeDelegatedReadAudienceRequest, v1.IssuedWorkContext](
 			httpClient,
 			baseURL+ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure,
@@ -273,12 +305,6 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 			httpClient,
 			baseURL+ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure,
 			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("ExchangeDelegatedOperationAudience")),
-			connect.WithClientOptions(opts...),
-		),
-		verifyWorkContextRuntimeBoundary: connect.NewClient[v1.VerifyWorkContextRuntimeBoundaryRequest, v1.VerifyWorkContextRuntimeBoundaryResponse](
-			httpClient,
-			baseURL+ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure,
-			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("VerifyWorkContextRuntimeBoundary")),
 			connect.WithClientOptions(opts...),
 		),
 		checkWorkContextRecordAccess: connect.NewClient[v1.CheckWorkContextRecordAccessRequest, v1.CheckWorkContextRecordAccessResponse](
@@ -363,12 +389,6 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 			httpClient,
 			baseURL+ModuleCapabilitiesServiceEmitAuditEventProcedure,
 			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("EmitAuditEvent")),
-			connect.WithClientOptions(opts...),
-		),
-		lookupAuditEvent: connect.NewClient[v1.ModuleEmitAuditEventRequest, v1.ModuleLookupAuditEventResponse](
-			httpClient,
-			baseURL+ModuleCapabilitiesServiceLookupAuditEventProcedure,
-			connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("LookupAuditEvent")),
 			connect.WithClientOptions(opts...),
 		),
 		declareAuditEventTypes: connect.NewClient[v1.ModuleDeclareAuditEventTypesRequest, v1.ModuleDeclareAuditEventTypesResponse](
@@ -460,9 +480,12 @@ func NewModuleCapabilitiesServiceClient(httpClient connect.HTTPClient, baseURL s
 
 // moduleCapabilitiesServiceClient implements ModuleCapabilitiesServiceClient.
 type moduleCapabilitiesServiceClient struct {
+	getCurrentInstallation             *connect.Client[v1.ModuleCurrentInstallationRequest, v1.ModuleCurrentInstallationResponse]
+	approveExecutableArtifact          *connect.Client[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse]
+	authorizeExecutableArtifact        *connect.Client[v1.ModuleExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse]
+	revokeExecutableArtifact           *connect.Client[v1.ModuleRevokeExecutableArtifactRequest, v1.ModuleExecutableArtifactResponse]
 	exchangeDelegatedReadAudience      *connect.Client[v1.ModuleExchangeDelegatedReadAudienceRequest, v1.IssuedWorkContext]
 	exchangeDelegatedOperationAudience *connect.Client[v1.ModuleExchangeDelegatedOperationAudienceRequest, v1.IssuedWorkContext]
-	verifyWorkContextRuntimeBoundary   *connect.Client[v1.VerifyWorkContextRuntimeBoundaryRequest, v1.VerifyWorkContextRuntimeBoundaryResponse]
 	checkWorkContextRecordAccess       *connect.Client[v1.CheckWorkContextRecordAccessRequest, v1.CheckWorkContextRecordAccessResponse]
 	listReadableSourceCollections      *connect.Client[v1.ListReadableSourceCollectionsRequest, v1.ListReadableSourceCollectionsResponse]
 	placeRecord                        *connect.Client[v1.ModulePlaceRecordRequest, v1.ModulePlaceRecordResponse]
@@ -477,7 +500,6 @@ type moduleCapabilitiesServiceClient struct {
 	getApproval                        *connect.Client[v1.ModuleGetApprovalRequest, v1.ModuleApproval]
 	cancelApproval                     *connect.Client[v1.ModuleCancelApprovalRequest, emptypb.Empty]
 	emitAuditEvent                     *connect.Client[v1.ModuleEmitAuditEventRequest, emptypb.Empty]
-	lookupAuditEvent                   *connect.Client[v1.ModuleEmitAuditEventRequest, v1.ModuleLookupAuditEventResponse]
 	declareAuditEventTypes             *connect.Client[v1.ModuleDeclareAuditEventTypesRequest, v1.ModuleDeclareAuditEventTypesResponse]
 	listSubjectVisibility              *connect.Client[v1.ModuleListSubjectVisibilityRequest, v1.ModuleListSubjectVisibilityResponse]
 	fetchDatasourceBlob                *connect.Client[v1.FetchDatasourceBlobRequest, v1.FetchDatasourceBlobChunk]
@@ -494,6 +516,29 @@ type moduleCapabilitiesServiceClient struct {
 	replayEvents                       *connect.Client[v1.ModuleReplayEventsRequest, v1.ModuleReplayEventsResponse]
 }
 
+// GetCurrentInstallation calls saas.accounts.v1.ModuleCapabilitiesService.GetCurrentInstallation.
+func (c *moduleCapabilitiesServiceClient) GetCurrentInstallation(ctx context.Context, req *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error) {
+	return c.getCurrentInstallation.CallUnary(ctx, req)
+}
+
+// ApproveExecutableArtifact calls
+// saas.accounts.v1.ModuleCapabilitiesService.ApproveExecutableArtifact.
+func (c *moduleCapabilitiesServiceClient) ApproveExecutableArtifact(ctx context.Context, req *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
+	return c.approveExecutableArtifact.CallUnary(ctx, req)
+}
+
+// AuthorizeExecutableArtifact calls
+// saas.accounts.v1.ModuleCapabilitiesService.AuthorizeExecutableArtifact.
+func (c *moduleCapabilitiesServiceClient) AuthorizeExecutableArtifact(ctx context.Context, req *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
+	return c.authorizeExecutableArtifact.CallUnary(ctx, req)
+}
+
+// RevokeExecutableArtifact calls
+// saas.accounts.v1.ModuleCapabilitiesService.RevokeExecutableArtifact.
+func (c *moduleCapabilitiesServiceClient) RevokeExecutableArtifact(ctx context.Context, req *connect.Request[v1.ModuleRevokeExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
+	return c.revokeExecutableArtifact.CallUnary(ctx, req)
+}
+
 // ExchangeDelegatedReadAudience calls
 // saas.accounts.v1.ModuleCapabilitiesService.ExchangeDelegatedReadAudience.
 func (c *moduleCapabilitiesServiceClient) ExchangeDelegatedReadAudience(ctx context.Context, req *connect.Request[v1.ModuleExchangeDelegatedReadAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
@@ -504,12 +549,6 @@ func (c *moduleCapabilitiesServiceClient) ExchangeDelegatedReadAudience(ctx cont
 // saas.accounts.v1.ModuleCapabilitiesService.ExchangeDelegatedOperationAudience.
 func (c *moduleCapabilitiesServiceClient) ExchangeDelegatedOperationAudience(ctx context.Context, req *connect.Request[v1.ModuleExchangeDelegatedOperationAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 	return c.exchangeDelegatedOperationAudience.CallUnary(ctx, req)
-}
-
-// VerifyWorkContextRuntimeBoundary calls
-// saas.accounts.v1.ModuleCapabilitiesService.VerifyWorkContextRuntimeBoundary.
-func (c *moduleCapabilitiesServiceClient) VerifyWorkContextRuntimeBoundary(ctx context.Context, req *connect.Request[v1.VerifyWorkContextRuntimeBoundaryRequest]) (*connect.Response[v1.VerifyWorkContextRuntimeBoundaryResponse], error) {
-	return c.verifyWorkContextRuntimeBoundary.CallUnary(ctx, req)
 }
 
 // CheckWorkContextRecordAccess calls
@@ -582,11 +621,6 @@ func (c *moduleCapabilitiesServiceClient) CancelApproval(ctx context.Context, re
 // EmitAuditEvent calls saas.accounts.v1.ModuleCapabilitiesService.EmitAuditEvent.
 func (c *moduleCapabilitiesServiceClient) EmitAuditEvent(ctx context.Context, req *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.emitAuditEvent.CallUnary(ctx, req)
-}
-
-// LookupAuditEvent calls saas.accounts.v1.ModuleCapabilitiesService.LookupAuditEvent.
-func (c *moduleCapabilitiesServiceClient) LookupAuditEvent(ctx context.Context, req *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[v1.ModuleLookupAuditEventResponse], error) {
-	return c.lookupAuditEvent.CallUnary(ctx, req)
 }
 
 // DeclareAuditEventTypes calls saas.accounts.v1.ModuleCapabilitiesService.DeclareAuditEventTypes.
@@ -667,6 +701,15 @@ func (c *moduleCapabilitiesServiceClient) ReplayEvents(ctx context.Context, req 
 // ModuleCapabilitiesServiceHandler is an implementation of the
 // saas.accounts.v1.ModuleCapabilitiesService service.
 type ModuleCapabilitiesServiceHandler interface {
+	// Organization-member metadata read, not executable consent or a durable
+	// liveness proof. Returns only a currently active, non-revoked installation.
+	GetCurrentInstallation(context.Context, *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error)
+	// Explicit current-admin consent, never inferred from an execution request.
+	ApproveExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
+	// Read existing exact approval; check live authority and revocation each time.
+	AuthorizeExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
+	// Terminal revocation of the exact approved identity.
+	RevokeExecutableArtifact(context.Context, *connect.Request[v1.ModuleRevokeExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error)
 	// ExchangeDelegatedReadAudience authenticates the module independently of a
 	// current parent context and exchanges only its installed read-only binding.
 	ExchangeDelegatedReadAudience(context.Context, *connect.Request[v1.ModuleExchangeDelegatedReadAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error)
@@ -674,9 +717,6 @@ type ModuleCapabilitiesServiceHandler interface {
 	// of a current parent context and exchanges only an installed operation's
 	// invoke scopes, or its read-only receipt-lookup subset.
 	ExchangeDelegatedOperationAudience(context.Context, *connect.Request[v1.ModuleExchangeDelegatedOperationAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error)
-	// Attests a current capability under an active host-owned solution boundary.
-	// This read grants no authority and does not expose the registration seed.
-	VerifyWorkContextRuntimeBoundary(context.Context, *connect.Request[v1.VerifyWorkContextRuntimeBoundaryRequest]) (*connect.Response[v1.VerifyWorkContextRuntimeBoundaryResponse], error)
 	// Checks current owner and every delegated actor against true record placement,
 	// intersected with the verified capability's attenuated resource/action scope.
 	CheckWorkContextRecordAccess(context.Context, *connect.Request[v1.CheckWorkContextRecordAccessRequest]) (*connect.Response[v1.CheckWorkContextRecordAccessResponse], error)
@@ -712,10 +752,6 @@ type ModuleCapabilitiesServiceHandler interface {
 	CancelApproval(context.Context, *connect.Request[v1.ModuleCancelApprovalRequest]) (*connect.Response[emptypb.Empty], error)
 	// EmitAuditEvent records a registered audit event on the tenant's spine.
 	EmitAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[emptypb.Empty], error)
-	// Read-only recovery for the complete original intent. Requires a nonempty
-	// idempotency_key; same authority as EmitAuditEvent. No retry authorization is
-	// implied by an absent receipt. Old unbound keys return FAILED_PRECONDITION.
-	LookupAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[v1.ModuleLookupAuditEventResponse], error)
 	// DeclareAuditEventTypes admits the audit event types a composed module owns,
 	// into the namespaces the operator bound to it; see the request.
 	DeclareAuditEventTypes(context.Context, *connect.Request[v1.ModuleDeclareAuditEventTypesRequest]) (*connect.Response[v1.ModuleDeclareAuditEventTypesResponse], error)
@@ -790,6 +826,30 @@ type ModuleCapabilitiesServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	moduleCapabilitiesServiceMethods := v1.File_saas_accounts_v1_module_capabilities_proto.Services().ByName("ModuleCapabilitiesService").Methods()
+	moduleCapabilitiesServiceGetCurrentInstallationHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceGetCurrentInstallationProcedure,
+		svc.GetCurrentInstallation,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("GetCurrentInstallation")),
+		connect.WithHandlerOptions(opts...),
+	)
+	moduleCapabilitiesServiceApproveExecutableArtifactHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceApproveExecutableArtifactProcedure,
+		svc.ApproveExecutableArtifact,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("ApproveExecutableArtifact")),
+		connect.WithHandlerOptions(opts...),
+	)
+	moduleCapabilitiesServiceAuthorizeExecutableArtifactHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure,
+		svc.AuthorizeExecutableArtifact,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("AuthorizeExecutableArtifact")),
+		connect.WithHandlerOptions(opts...),
+	)
+	moduleCapabilitiesServiceRevokeExecutableArtifactHandler := connect.NewUnaryHandler(
+		ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure,
+		svc.RevokeExecutableArtifact,
+		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("RevokeExecutableArtifact")),
+		connect.WithHandlerOptions(opts...),
+	)
 	moduleCapabilitiesServiceExchangeDelegatedReadAudienceHandler := connect.NewUnaryHandler(
 		ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure,
 		svc.ExchangeDelegatedReadAudience,
@@ -800,12 +860,6 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 		ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure,
 		svc.ExchangeDelegatedOperationAudience,
 		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("ExchangeDelegatedOperationAudience")),
-		connect.WithHandlerOptions(opts...),
-	)
-	moduleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryHandler := connect.NewUnaryHandler(
-		ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure,
-		svc.VerifyWorkContextRuntimeBoundary,
-		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("VerifyWorkContextRuntimeBoundary")),
 		connect.WithHandlerOptions(opts...),
 	)
 	moduleCapabilitiesServiceCheckWorkContextRecordAccessHandler := connect.NewUnaryHandler(
@@ -890,12 +944,6 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 		ModuleCapabilitiesServiceEmitAuditEventProcedure,
 		svc.EmitAuditEvent,
 		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("EmitAuditEvent")),
-		connect.WithHandlerOptions(opts...),
-	)
-	moduleCapabilitiesServiceLookupAuditEventHandler := connect.NewUnaryHandler(
-		ModuleCapabilitiesServiceLookupAuditEventProcedure,
-		svc.LookupAuditEvent,
-		connect.WithSchema(moduleCapabilitiesServiceMethods.ByName("LookupAuditEvent")),
 		connect.WithHandlerOptions(opts...),
 	)
 	moduleCapabilitiesServiceDeclareAuditEventTypesHandler := connect.NewUnaryHandler(
@@ -984,12 +1032,18 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 	)
 	return "/saas.accounts.v1.ModuleCapabilitiesService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
+			moduleCapabilitiesServiceGetCurrentInstallationHandler.ServeHTTP(w, r)
+		case ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:
+			moduleCapabilitiesServiceApproveExecutableArtifactHandler.ServeHTTP(w, r)
+		case ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:
+			moduleCapabilitiesServiceAuthorizeExecutableArtifactHandler.ServeHTTP(w, r)
+		case ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:
+			moduleCapabilitiesServiceRevokeExecutableArtifactHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:
 			moduleCapabilitiesServiceExchangeDelegatedReadAudienceHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceExchangeDelegatedOperationAudienceProcedure:
 			moduleCapabilitiesServiceExchangeDelegatedOperationAudienceHandler.ServeHTTP(w, r)
-		case ModuleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryProcedure:
-			moduleCapabilitiesServiceVerifyWorkContextRuntimeBoundaryHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceCheckWorkContextRecordAccessProcedure:
 			moduleCapabilitiesServiceCheckWorkContextRecordAccessHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceListReadableSourceCollectionsProcedure:
@@ -1018,8 +1072,6 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 			moduleCapabilitiesServiceCancelApprovalHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceEmitAuditEventProcedure:
 			moduleCapabilitiesServiceEmitAuditEventHandler.ServeHTTP(w, r)
-		case ModuleCapabilitiesServiceLookupAuditEventProcedure:
-			moduleCapabilitiesServiceLookupAuditEventHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:
 			moduleCapabilitiesServiceDeclareAuditEventTypesHandler.ServeHTTP(w, r)
 		case ModuleCapabilitiesServiceListSubjectVisibilityProcedure:
@@ -1057,16 +1109,28 @@ func NewModuleCapabilitiesServiceHandler(svc ModuleCapabilitiesServiceHandler, o
 // UnimplementedModuleCapabilitiesServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedModuleCapabilitiesServiceHandler struct{}
 
+func (UnimplementedModuleCapabilitiesServiceHandler) GetCurrentInstallation(context.Context, *connect.Request[v1.ModuleCurrentInstallationRequest]) (*connect.Response[v1.ModuleCurrentInstallationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.GetCurrentInstallation is not implemented"))
+}
+
+func (UnimplementedModuleCapabilitiesServiceHandler) ApproveExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.ApproveExecutableArtifact is not implemented"))
+}
+
+func (UnimplementedModuleCapabilitiesServiceHandler) AuthorizeExecutableArtifact(context.Context, *connect.Request[v1.ModuleExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.AuthorizeExecutableArtifact is not implemented"))
+}
+
+func (UnimplementedModuleCapabilitiesServiceHandler) RevokeExecutableArtifact(context.Context, *connect.Request[v1.ModuleRevokeExecutableArtifactRequest]) (*connect.Response[v1.ModuleExecutableArtifactResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.RevokeExecutableArtifact is not implemented"))
+}
+
 func (UnimplementedModuleCapabilitiesServiceHandler) ExchangeDelegatedReadAudience(context.Context, *connect.Request[v1.ModuleExchangeDelegatedReadAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.ExchangeDelegatedReadAudience is not implemented"))
 }
 
 func (UnimplementedModuleCapabilitiesServiceHandler) ExchangeDelegatedOperationAudience(context.Context, *connect.Request[v1.ModuleExchangeDelegatedOperationAudienceRequest]) (*connect.Response[v1.IssuedWorkContext], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.ExchangeDelegatedOperationAudience is not implemented"))
-}
-
-func (UnimplementedModuleCapabilitiesServiceHandler) VerifyWorkContextRuntimeBoundary(context.Context, *connect.Request[v1.VerifyWorkContextRuntimeBoundaryRequest]) (*connect.Response[v1.VerifyWorkContextRuntimeBoundaryResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.VerifyWorkContextRuntimeBoundary is not implemented"))
 }
 
 func (UnimplementedModuleCapabilitiesServiceHandler) CheckWorkContextRecordAccess(context.Context, *connect.Request[v1.CheckWorkContextRecordAccessRequest]) (*connect.Response[v1.CheckWorkContextRecordAccessResponse], error) {
@@ -1123,10 +1187,6 @@ func (UnimplementedModuleCapabilitiesServiceHandler) CancelApproval(context.Cont
 
 func (UnimplementedModuleCapabilitiesServiceHandler) EmitAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.EmitAuditEvent is not implemented"))
-}
-
-func (UnimplementedModuleCapabilitiesServiceHandler) LookupAuditEvent(context.Context, *connect.Request[v1.ModuleEmitAuditEventRequest]) (*connect.Response[v1.ModuleLookupAuditEventResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.ModuleCapabilitiesService.LookupAuditEvent is not implemented"))
 }
 
 func (UnimplementedModuleCapabilitiesServiceHandler) DeclareAuditEventTypes(context.Context, *connect.Request[v1.ModuleDeclareAuditEventTypesRequest]) (*connect.Response[v1.ModuleDeclareAuditEventTypesResponse], error) {

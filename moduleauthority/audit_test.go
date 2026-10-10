@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 )
 
-func TestAuditEmissionAndReceiptUseModuleAuthority(t *testing.T) {
+func TestAuditEmissionUsesModuleAuthority(t *testing.T) {
 	h := newHost(t)
 	client := h.client(t, moduleCredentials)
 	event := AuditEvent{Tenant: testTenant, EventType: "example.changed", Actor: testOwner,
@@ -17,45 +17,31 @@ func TestAuditEmissionAndReceiptUseModuleAuthority(t *testing.T) {
 	if err := client.EmitAuditEvent(t.Context(), event); err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := client.LookupAuditEvent(t.Context(), event)
-	if err != nil || receipt.EventID != "event-1" {
-		t.Fatalf("receipt=%+v err=%v", receipt, err)
-	}
 	calls := h.authority.snapshot()
-	if len(calls) != 2 {
+	if len(calls) != 1 {
 		t.Fatalf("calls=%d", len(calls))
 	}
-	for i, method := range []string{"EmitAuditEvent", "LookupAuditEvent"} {
-		call := calls[i]
-		if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/"+method {
-			t.Fatal(call.method)
-		}
-		if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken || len(call.workContext) != 1 || call.workContext[0] != "module.token1" || len(call.authorization) != 0 {
-			t.Fatal("wrong authority carriers")
-		}
-		e := call.audit
-		if e.GetTenant() != event.Tenant || e.GetActor() != event.Actor || e.GetEventType() != event.EventType || e.GetSolution() != event.Solution || e.GetEntryId() != event.EntryID || e.GetIdempotencyKey() != event.IdempotencyKey || !reflect.DeepEqual(e.GetFields().AsMap(), event.Fields) {
-			t.Fatal("audit intent changed in transport")
-		}
+	call := calls[0]
+	if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent" {
+		t.Fatal(call.method)
 	}
-	event.IdempotencyKey = "missing"
-	receipt, err = client.LookupAuditEvent(t.Context(), event)
-	if err != nil || receipt.EventID != "" {
-		t.Fatal("missing receipt invented an outcome", receipt, err)
+	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken || len(call.workContext) != 1 || call.workContext[0] != "module.token1" || len(call.authorization) != 0 {
+		t.Fatal("wrong authority carriers")
+	}
+	e := call.audit
+	if e.GetTenant() != event.Tenant || e.GetActor() != event.Actor || e.GetEventType() != event.EventType || e.GetSolution() != event.Solution || e.GetEntryId() != event.EntryID || e.GetIdempotencyKey() != event.IdempotencyKey || !reflect.DeepEqual(e.GetFields().AsMap(), event.Fields) {
+		t.Fatal("audit intent changed in transport")
 	}
 	for _, attempt := range []struct {
 		key  string
 		code connect.Code
-	}{{"conflict", connect.CodeFailedPrecondition}, {"unavailable", connect.CodeUnavailable}} {
+	}{{"actor-unresolved", connect.CodeFailedPrecondition}, {"unavailable", connect.CodeUnavailable}, {"deadline", connect.CodeDeadlineExceeded}, {"internal", connect.CodeInternal}} {
 		event.IdempotencyKey = attempt.key
 		before := len(h.authority.snapshot())
 		if err := client.EmitAuditEvent(t.Context(), event); connect.CodeOf(err) != attempt.code {
 			t.Fatal(err)
 		}
-		if _, err := client.LookupAuditEvent(t.Context(), event); connect.CodeOf(err) != attempt.code {
-			t.Fatal(err)
-		}
-		if len(h.authority.snapshot()) != before+2 {
+		if len(h.authority.snapshot()) != before+1 {
 			t.Fatal("effect error was retried")
 		}
 	}
@@ -72,9 +58,6 @@ func TestAuditInvalidIntentDoesNotReachHost(t *testing.T) {
 		if err := client.EmitAuditEvent(t.Context(), event); !errors.Is(err, ErrInvalidAuditEvent) {
 			t.Fatal(err)
 		}
-	}
-	if _, err := client.LookupAuditEvent(t.Context(), AuditEvent{EventType: "example.changed", Actor: testOwner, Solution: "example"}); !errors.Is(err, ErrInvalidAuditEvent) {
-		t.Fatal(err)
 	}
 	if len(h.authority.snapshot()) != 0 {
 		t.Fatal("invalid intent reached host")

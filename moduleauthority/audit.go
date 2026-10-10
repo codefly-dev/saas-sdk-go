@@ -18,18 +18,15 @@ var ErrInvalidAuditEvent = errors.New("module authority: incomplete or invalid a
 type AuditEvent struct {
 	Tenant, EventType, Actor, Solution, EntryID string
 	Fields                                      map[string]any
-	// Retain the same key and complete intent after an uncertain acknowledgement.
-	// Lookup requires a key; an unkeyed emission cannot be recovered this way.
+	// A durable relay must persist this key and complete event before sending,
+	// and reuse them after a restart or uncertain acknowledgement. The host
+	// deduplicates by (tenant, event type, key), not by comparing intent. Never
+	// reuse a key for a different event. Empty disables deduplication.
 	IdempotencyKey string
 }
 
-// AuditReceipt identifies a committed event for the requested intent. An empty
-// EventID is inconclusive, not proof that no effect happened or permission to
-// repeat it. The host rechecks current emission authority on every lookup.
-type AuditReceipt struct{ EventID string }
-
-func auditRequest(event AuditEvent, lookup bool) (*v1.ModuleEmitAuditEventRequest, error) {
-	if event.EventType == "" || event.Actor == "" || event.Solution == "" || (lookup && event.IdempotencyKey == "") {
+func auditRequest(event AuditEvent) (*v1.ModuleEmitAuditEventRequest, error) {
+	if event.EventType == "" || event.Actor == "" || event.Solution == "" {
 		return nil, ErrInvalidAuditEvent
 	}
 	fields, err := structpb.NewStruct(event.Fields)
@@ -41,11 +38,13 @@ func auditRequest(event AuditEvent, lookup bool) (*v1.ModuleEmitAuditEventReques
 		Fields: fields, IdempotencyKey: event.IdempotencyKey}, nil
 }
 
-// EmitAuditEvent commits a registered event as this module. Errors retain their
-// host codes, including FailedPrecondition for conflicting or unverifiable keys.
-// Only rejected authentication is refreshed once; effect failures are not retried.
+// EmitAuditEvent asks the host to commit a registered event as this module.
+// A nil error acknowledges the host's durable write or a previously used key;
+// it does not mean that downstream webhook delivery has completed. Host error
+// codes are preserved. Only rejected authentication is refreshed once; other
+// errors leave the outcome uncertain and are never automatically retried.
 func (c *Client) EmitAuditEvent(ctx context.Context, event AuditEvent) error {
-	request, err := auditRequest(event, false)
+	request, err := auditRequest(event)
 	if err != nil {
 		return err
 	}
@@ -54,18 +53,4 @@ func (c *Client) EmitAuditEvent(ctx context.Context, event AuditEvent) error {
 		return fmt.Errorf("module authority: emit audit event: %w", err)
 	}
 	return nil
-}
-
-// LookupAuditEvent is read-only and requires the complete original event intent.
-// It neither emits an event nor turns a missing receipt into a retry decision.
-func (c *Client) LookupAuditEvent(ctx context.Context, event AuditEvent) (AuditReceipt, error) {
-	request, err := auditRequest(event, true)
-	if err != nil {
-		return AuditReceipt{}, err
-	}
-	response, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.LookupAuditEvent, request)
-	if err != nil {
-		return AuditReceipt{}, fmt.Errorf("module authority: lookup audit event: %w", err)
-	}
-	return AuditReceipt{EventID: response.GetEventId()}, nil
 }

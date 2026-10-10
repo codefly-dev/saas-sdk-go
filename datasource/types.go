@@ -10,6 +10,7 @@ import v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 // itself: a consumer who can hold the value but cannot name the type of one of
 // its fields is still forced to import the generated tree.
 type (
+	// DatasourceLiveDelivery describes the configured live-delivery path.
 	DatasourceLiveDelivery = v1.DatasourceLiveDelivery
 	// Datasource is the non-secret projection of a connected source.
 	Datasource = v1.Datasource
@@ -36,6 +37,10 @@ type (
 // the enum values need their own re-export: without them a consumer can read
 // src.Status and still has no way to compare it.
 const (
+	DatasourceLiveDeliveryUnspecified   = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_UNSPECIFIED
+	DatasourceLiveDeliveryNone          = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_NONE
+	DatasourceLiveDeliverySourceWebhook = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_SOURCE_WEBHOOK
+	DatasourceLiveDeliveryAppWebhook    = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_APP_WEBHOOK
 	// DatasourceStatusUnspecified is the zero value; the server has not set a
 	// status.
 	DatasourceStatusUnspecified = v1.DatasourceStatus_DATASOURCE_STATUS_UNSPECIFIED
@@ -68,11 +73,3 @@ const (
 	ApiCredentialKindQuery       = v1.ApiCredentialKind_API_CREDENTIAL_KIND_QUERY
 	ApiCredentialKindOAuth2      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_OAUTH2
 )
-
-const (
-	DatasourceLiveDeliveryUnspecified   = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_UNSPECIFIED
-	DatasourceLiveDeliveryNone          = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_NONE
-	DatasourceLiveDeliverySourceWebhook = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_SOURCE_WEBHOOK
-)
-
-const DatasourceLiveDeliveryAppWebhook = v1.DatasourceLiveDelivery_DATASOURCE_LIVE_DELIVERY_APP_WEBHOOK
