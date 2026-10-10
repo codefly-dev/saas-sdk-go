@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
@@ -251,6 +252,7 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 type authorityCall struct {
 	declaration    *v1.ModuleDeclareAuditEventTypesRequest
 	moduleSecret   []string
+	audit          *v1.ModuleEmitAuditEventRequest
 	installation   *v1.ModuleCurrentInstallationRequest
 	authorization  []string
 	artifact       *v1.ModuleExecutableArtifactRequest
@@ -267,6 +269,7 @@ type authorityCall struct {
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:             true,
+	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
 	accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:             true,
 	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
 	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
@@ -280,7 +283,7 @@ var servedOnAuthority = map[string]bool{
 type fakeAuthority struct {
 	gateway *fakeGateway
 	address string
-	// declarationError is the host's admission verdict, configured before a call.
+	// declarationError is the host admission verdict, configured before a call.
 	declarationError error
 
 	mu    sync.Mutex
@@ -308,7 +311,7 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{authorization: md.Get("authorization"), moduleSecret: md.Get("x-codefly-module-secret"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{moduleSecret: md.Get("x-codefly-module-secret"), authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
@@ -317,6 +320,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	case accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:
 		call.declaration = &v1.ModuleDeclareAuditEventTypesRequest{}
 		recvErr = stream.RecvMsg(call.declaration)
+	case accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:
+		call.audit = &v1.ModuleEmitAuditEventRequest{}
+		recvErr = stream.RecvMsg(call.audit)
 	case accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
 		call.installation = &v1.ModuleCurrentInstallationRequest{}
 		recvErr = stream.RecvMsg(call.installation)
@@ -361,6 +367,19 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 			return a.declarationError
 		}
 		return stream.SendMsg(&v1.ModuleDeclareAuditEventTypesResponse{})
+	}
+	if call.audit != nil {
+		switch call.audit.GetIdempotencyKey() {
+		case "actor-unresolved":
+			return status.Error(codes.FailedPrecondition, "audit actor unresolved")
+		case "unavailable":
+			return status.Error(codes.Unavailable, "audit storage unavailable")
+		case "deadline":
+			return status.Error(codes.DeadlineExceeded, "audit deadline exceeded")
+		case "internal":
+			return status.Error(codes.Internal, "audit commit failed")
+		}
+		return stream.SendMsg(&emptypb.Empty{})
 	}
 	if call.installation != nil {
 		if call.installation.ParentWorkContextToken == "denied.token" {

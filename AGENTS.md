@@ -71,10 +71,10 @@ gofmt -l . | grep -v '^gen/'     # expect no output
 
 `go test ./...` is load-bearing beyond the unit tests: `internal/apiboundary`
 type-checks the entire public surface against the boundary rule below, and
-`internal/agentcontext` checks these context files. There is no lint config —
+`internal/agentcontext` checks these context files. Keep `golang.org/x/tools`
+compatible with the active Go toolchain: its importer must understand Go's
+export data for the boundary gate to run. There is no lint config —
 `golangci-lint` being installed on your machine does not make it a gate here.
-Keep `golang.org/x/tools` at v0.50.0 or newer: earlier export readers cannot
-load the Go 1.27.2 export-data format used by the API-boundary gate.
 
 The same workflow's `gen-drift` job regenerates `gen/` from the ref in
 `SOURCE.txt` with this repo's `buf.gen.yaml` (buf itself pinned in the

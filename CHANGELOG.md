@@ -7,8 +7,16 @@
   re-exported from `moduleauthority`. Host admission rules remain authoritative.
 - Added explicit `NewGatewayAuthority` for hosts serving the binary-protobuf
   Connect bridge. Existing direct and mint-only clients retain their behavior.
-- Updated `golang.org/x/tools` to v0.50.0 so the public-API boundary gate can
-  read Go 1.27.2 export data, without weakening its checks or fixtures.
+
+## Unreleased — module audit emission
+
+- Added `moduleauthority.Client.EmitAuditEvent`, preserving the complete event,
+  caller-selected idempotency key and host error codes through the existing
+  authenticated authority transport. Uncertain effects are not retried.
+- Kept main's complete generated contract and existing artifact, installation
+  and delegation APIs. Receipt lookup and runtime-boundary attestation remain
+  deferred until their host contract is integrated. Module version stays 0.1.0.
+- Updated the API boundary importer for Go 1.27.2 export data.
 
 ## Unreleased — current installation identity
 

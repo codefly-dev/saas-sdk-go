@@ -1,220 +1,146 @@
 package moduleauthority
 
 import (
-	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
+	"reflect"
 	"testing"
 
 	"connectrpc.com/connect"
-	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
-const auditDeclarationProcedure = "/saas.accounts.v1.ModuleCapabilitiesService/DeclareAuditEventTypes"
+func TestAuditEmissionUsesModuleAuthority(t *testing.T) {
+	h := newHost(t)
+	client := h.client(t, moduleCredentials)
+	event := AuditEvent{Tenant: testTenant, EventType: "example.changed", Actor: testOwner,
+		Solution: "example", EntryID: "entry", Fields: map[string]any{"count": float64(3)}, IdempotencyKey: "effect-1"}
+	if err := client.EmitAuditEvent(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	calls := h.authority.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("calls=%d", len(calls))
+	}
+	call := calls[0]
+	if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent" {
+		t.Fatal(call.method)
+	}
+	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken || len(call.workContext) != 1 || call.workContext[0] != "module.token1" || len(call.authorization) != 0 {
+		t.Fatal("wrong authority carriers")
+	}
+	e := call.audit
+	if e.GetTenant() != event.Tenant || e.GetActor() != event.Actor || e.GetEventType() != event.EventType || e.GetSolution() != event.Solution || e.GetEntryId() != event.EntryID || e.GetIdempotencyKey() != event.IdempotencyKey || !reflect.DeepEqual(e.GetFields().AsMap(), event.Fields) {
+		t.Fatal("audit intent changed in transport")
+	}
+	for _, attempt := range []struct {
+		key  string
+		code connect.Code
+	}{{"actor-unresolved", connect.CodeFailedPrecondition}, {"unavailable", connect.CodeUnavailable}, {"deadline", connect.CodeDeadlineExceeded}, {"internal", connect.CodeInternal}} {
+		event.IdempotencyKey = attempt.key
+		before := len(h.authority.snapshot())
+		if err := client.EmitAuditEvent(t.Context(), event); connect.CodeOf(err) != attempt.code {
+			t.Fatal(err)
+		}
+		if len(h.authority.snapshot()) != before+1 {
+			t.Fatal("effect error was retried")
+		}
+	}
+	h.assertNoStrayPaths(t)
+}
 
-// Exercise real gRPC and binary-protobuf Connect. This bridge fixture models
-// an explicitly selected host serving declarations, not every deployed host.
-func forAuditTransports(t *testing.T, test func(*testing.T, host, *Client)) {
-	t.Helper()
-	for _, transport := range []string{"direct", "gateway"} {
-		t.Run(transport, func(t *testing.T) {
+func TestAuditInvalidIntentDoesNotReachHost(t *testing.T) {
+	h := newHost(t)
+	client := h.client(t, moduleCredentials)
+	for _, event := range []AuditEvent{
+		{}, {EventType: "example.changed", Solution: "example"},
+		{EventType: "example.changed", Actor: testOwner, Solution: "example", Fields: map[string]any{"bad": make(chan int)}},
+	} {
+		if err := client.EmitAuditEvent(t.Context(), event); !errors.Is(err, ErrInvalidAuditEvent) {
+			t.Fatal(err)
+		}
+	}
+	if len(h.authority.snapshot()) != 0 {
+		t.Fatal("invalid intent reached host")
+	}
+}
+
+// Recovery state belongs to the producer. Recreating an SDK client must not
+// replace its persisted key, invent a new event, or replay an uncertain emit.
+func TestAuditEmissionPreservesIntentAcrossClientRestart(t *testing.T) {
+	h := newHost(t)
+	event := AuditEvent{Tenant: testTenant, EventType: "example.changed", Actor: testOwner,
+		Solution: "example", EntryID: "entry", Fields: map[string]any{"count": float64(3)}, IdempotencyKey: "unavailable"}
+	for range 2 {
+		client := h.client(t, moduleCredentials)
+		if err := client.EmitAuditEvent(t.Context(), event); connect.CodeOf(err) != connect.CodeUnavailable {
+			t.Fatalf("uncertain emit: %v", err)
+		}
+		if err := client.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := h.authority.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("got %d attempts for two explicit emits; uncertain effects must not be retried", len(calls))
+	}
+	for _, call := range calls {
+		if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent" ||
+			call.audit.GetTenant() != event.Tenant || call.audit.GetEventType() != event.EventType ||
+			call.audit.GetActor() != event.Actor || call.audit.GetSolution() != event.Solution ||
+			call.audit.GetEntryId() != event.EntryID || call.audit.GetIdempotencyKey() != event.IdempotencyKey ||
+			!reflect.DeepEqual(call.audit.GetFields().AsMap(), event.Fields) {
+			t.Fatal("restarting the client changed the caller's audit intent")
+		}
+	}
+	h.assertNoStrayPaths(t)
+}
+
+func TestAuditEmissionRefreshesOnlyRejectedModuleAuthentication(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		rejectAll bool
+		badToken  bool
+		wantCode  connect.Code
+		wantCalls int
+	}{
+		{name: "expired capability", wantCalls: 2},
+		{name: "revoked module", rejectAll: true, wantCode: connect.CodeUnauthenticated, wantCalls: 2},
+		{name: "invalid perimeter", badToken: true, wantCode: connect.CodePermissionDenied, wantCalls: 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			h := newHost(t)
-			if transport == "direct" {
-				test(t, h, h.client(t, moduleCredentials))
-				return
-			}
-			procedure := "/modules/_authority" + auditDeclarationProcedure
-			mux := http.NewServeMux()
-			mux.Handle(procedure, connect.NewUnaryHandler(procedure, func(_ context.Context, req *connect.Request[v1.ModuleDeclareAuditEventTypesRequest]) (*connect.Response[v1.ModuleDeclareAuditEventTypesResponse], error) {
-				call := authorityCall{
-					method: auditDeclarationProcedure, declaration: req.Msg,
-					internalToken: req.Header().Values("X-Codefly-Internal-Token"),
-					workContext:   req.Header().Values(codefly.WorkContextHeaderName),
-					authorization: req.Header().Values("Authorization"),
-					moduleSecret:  req.Header().Values("X-Codefly-Module-Secret"),
-				}
-				h.authority.mu.Lock()
-				h.authority.calls = append(h.authority.calls, call)
-				h.authority.mu.Unlock()
-				if req.Header().Get("Content-Type") != "application/proto" {
-					return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("binary protobuf required"))
-				}
-				if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken {
-					return nil, connect.NewError(connect.CodePermissionDenied, errors.New("internal credential required"))
-				}
-				if len(call.workContext) != 1 || !h.gateway.accepts(call.workContext[0]) {
-					return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("module capability rejected"))
-				}
-				if err := h.authority.declarationError; err != nil {
-					verdict := status.Convert(err)
-					refusal := connect.NewError(connect.Code(verdict.Code()), errors.New(verdict.Message()))
-					for _, detail := range verdict.Proto().Details {
-						wireDetail, err := connect.NewErrorDetail(detail)
-						if err != nil {
-							return nil, err
-						}
-						refusal.AddDetail(wireDetail)
-					}
-					return nil, refusal
-				}
-				return connect.NewResponse(&v1.ModuleDeclareAuditEventTypesResponse{}), nil
-			}))
-			mux.HandleFunc("/", h.gateway.serve)
-			// Resolved gateway URLs can include a path and a trailing slash.
-			server := httptest.NewServer(http.StripPrefix("/host", mux))
-			t.Cleanup(server.Close)
-			client, err := NewGatewayAuthority(Seams{
-				Gateway:       staticGateway{url: server.URL + "/host/", client: server.Client()},
-				InternalToken: testInternalToken,
-			}, moduleCredentials)
-			if err != nil {
+			client := h.client(t, moduleCredentials)
+			if _, err := client.ModuleWorkContext(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = client.Close() })
-			test(t, h, client)
+			h.gateway.revoke("module.token1")
+			h.gateway.mu.Lock()
+			h.gateway.rejectAll = scenario.rejectAll
+			h.gateway.mu.Unlock()
+			if scenario.badToken {
+				client.authority.token = "invalid-perimeter-token"
+			}
+			event := AuditEvent{Tenant: testTenant, EventType: "example.changed", Actor: testOwner,
+				Solution: "example", IdempotencyKey: "stable-key"}
+			err := client.EmitAuditEvent(t.Context(), event)
+			if scenario.wantCode == 0 && err != nil || scenario.wantCode != 0 && connect.CodeOf(err) != scenario.wantCode {
+				t.Fatalf("emit error = %v, want code %v", err, scenario.wantCode)
+			}
+			calls := h.authority.snapshot()
+			if len(calls) != scenario.wantCalls {
+				t.Fatalf("got %d calls, want %d", len(calls), scenario.wantCalls)
+			}
+			for i, call := range calls {
+				if len(call.workContext) != 1 || call.workContext[0] != fmt.Sprintf("module.token%d", i+1) || call.audit.GetIdempotencyKey() != event.IdempotencyKey {
+					t.Fatal("authentication refresh changed the intent or reused the rejected credential")
+				}
+			}
+			h.assertNoStrayPaths(t)
 		})
 	}
 }
 
-func auditDeclarations() []*ModuleAuditEventTypeDeclaration {
-	return []*ModuleAuditEventTypeDeclaration{
-		{
-			Type: "example.item.changed", Description: "An item changed",
-			Visibility: ModuleAuditEventVisibility_MODULE_AUDIT_EVENT_VISIBILITY_TENANT,
-			Fields: []*ModuleAuditFieldDeclaration{
-				{Name: "item_id", Kind: ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_UUID},
-				{Name: "state", Kind: ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_ENUM, Values: []string{"created", "updated"}},
-				{Name: "contact", Kind: ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_STRING, Pii: true},
-			},
-		},
-		{
-			Type: "example.item.removed", Description: "An item was removed",
-			Visibility: ModuleAuditEventVisibility_MODULE_AUDIT_EVENT_VISIBILITY_EXTERNAL,
-			Fields:     []*ModuleAuditFieldDeclaration{{Name: "item_id", Kind: ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_UUID}},
-		},
-	}
-}
-
-func assertAuditCall(t *testing.T, call authorityCall, want *v1.ModuleDeclareAuditEventTypesRequest, moduleToken string) {
-	t.Helper()
-	if call.method != auditDeclarationProcedure || !proto.Equal(call.declaration, want) {
-		t.Fatalf("declaration changed: method=%q, got=%v, want=%v", call.method, call.declaration, want)
-	}
-	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken || len(call.workContext) != 1 || call.workContext[0] != moduleToken || len(call.authorization) != 0 || len(call.moduleSecret) != 0 {
-		t.Fatal("declaration must carry only the perimeter token and current module capability")
-	}
-}
-
-func TestAuditDeclarationPreservesSchemaAndCachesModuleProof(t *testing.T) {
-	forAuditTransports(t, func(t *testing.T, h host, client *Client) {
-		input := &v1.ModuleDeclareAuditEventTypesRequest{Prefix: moduleCredentials.Prefix, Types: auditDeclarations()}
-		want := proto.Clone(input).(*v1.ModuleDeclareAuditEventTypesRequest)
-		for range 2 {
-			if err := client.DeclareAuditEventTypes(t.Context(), input.Types); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if !proto.Equal(input, want) {
-			t.Fatal("declaration mutated the caller's schema")
-		}
-		calls := h.authority.snapshot()
-		if len(calls) != 2 {
-			t.Fatalf("authority calls=%d, want 2", len(calls))
-		}
-		for _, call := range calls {
-			assertAuditCall(t, call, want, "module.token1")
-		}
-		if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 1 || calls[0] != hostWorkContextPath {
-			t.Fatalf("broker calls=%v, want one cached module mint", calls)
-		}
-		h.assertNoStrayPaths(t)
-	})
-}
-
-func TestAuditDeclarationRefreshPreservesSchema(t *testing.T) {
-	forAuditTransports(t, func(t *testing.T, h host, client *Client) {
-		if _, err := client.ModuleWorkContext(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		h.gateway.revoke("module.token1")
-		input := &v1.ModuleDeclareAuditEventTypesRequest{Prefix: moduleCredentials.Prefix, Types: auditDeclarations()}
-		want := proto.Clone(input).(*v1.ModuleDeclareAuditEventTypesRequest)
-		if err := client.DeclareAuditEventTypes(t.Context(), input.Types); err != nil {
-			t.Fatal(err)
-		}
-		calls := h.authority.snapshot()
-		if len(calls) != 2 {
-			t.Fatalf("authority calls=%d, want one rejection and one retry", len(calls))
-		}
-		assertAuditCall(t, calls[0], want, "module.token1")
-		assertAuditCall(t, calls[1], want, "module.token2")
-		if !proto.Equal(input, want) {
-			t.Fatal("refresh mutated the caller's schema")
-		}
-		if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 2 {
-			t.Fatalf("broker calls=%v, want initial mint and one refresh", calls)
-		}
-		h.assertNoStrayPaths(t)
-	})
-}
-
-func TestAuditDeclarationPreservesHostRefusals(t *testing.T) {
-	for _, code := range []codes.Code{codes.PermissionDenied, codes.InvalidArgument, codes.FailedPrecondition, codes.Unavailable, codes.Unauthenticated} {
-		t.Run(code.String(), func(t *testing.T) {
-			forAuditTransports(t, func(t *testing.T, h host, client *Client) {
-				detail := &errdetails.ErrorInfo{Reason: "DECLARATION_REFUSED", Domain: "audit.example", Metadata: map[string]string{"type": "example.item.changed"}}
-				verdict, err := status.New(code, "host declaration refusal").WithDetails(detail)
-				if err != nil {
-					t.Fatal(err)
-				}
-				h.authority.declarationError = verdict.Err()
-				err = client.DeclareAuditEventTypes(t.Context(), auditDeclarations())
-				var got *connect.Error
-				if !errors.As(err, &got) || got.Code() != connect.Code(code) || got.Message() != verdict.Message() || len(got.Details()) != 1 {
-					t.Fatalf("lost host refusal: %v", err)
-				}
-				gotDetail, err := got.Details()[0].Value()
-				if err != nil || !proto.Equal(gotDetail, detail) {
-					t.Fatalf("lost host error detail: %v, %v", gotDetail, err)
-				}
-				wantCalls := 1
-				if code == codes.Unauthenticated {
-					wantCalls = 2 // one refresh, then surface the repeated rejection
-				}
-				if calls := h.authority.snapshot(); len(calls) != wantCalls {
-					t.Fatalf("authority calls=%d, want %d", len(calls), wantCalls)
-				}
-				if calls, _, _, _ := h.gateway.snapshot(); len(calls) != wantCalls {
-					t.Fatalf("broker calls=%v, want %d", calls, wantCalls)
-				}
-				h.assertNoStrayPaths(t)
-			})
-		})
-	}
-}
-
-func TestAuditDeclarationStopsAtBrokerRefusal(t *testing.T) {
-	forAuditTransports(t, func(t *testing.T, h host, client *Client) {
-		h.gateway.refuse[hostWorkContextPath] = refusal{http.StatusUnauthorized, "module identity refused"}
-		err := client.DeclareAuditEventTypes(t.Context(), auditDeclarations())
-		var brokerError *BrokerError
-		if !errors.Is(err, ErrInvalidCredentials) || !errors.As(err, &brokerError) || brokerError.StatusCode != http.StatusUnauthorized || brokerError.Path != hostWorkContextPath {
-			t.Fatalf("lost broker refusal: %v", err)
-		}
-		if len(h.authority.snapshot()) != 0 {
-			t.Fatal("declaration reached authority without a module capability")
-		}
-		h.assertNoStrayPaths(t)
-	})
-}
-
-func TestAuditDeclarationNeedsAuthorityBeforeMinting(t *testing.T) {
+func TestAuditEmissionWithoutAuthorityDoesNotMint(t *testing.T) {
 	h := newHost(t)
 	seams := h.seams()
 	seams.Authority = Authority{}
@@ -223,27 +149,11 @@ func TestAuditDeclarationNeedsAuthorityBeforeMinting(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	if err := client.DeclareAuditEventTypes(t.Context(), auditDeclarations()); !errors.Is(err, ErrNoAuthority) {
-		t.Fatalf("error=%v, want ErrNoAuthority", err)
+	err = client.EmitAuditEvent(t.Context(), AuditEvent{EventType: "example.changed", Actor: testOwner, Solution: "example"})
+	if !errors.Is(err, ErrNoAuthority) {
+		t.Fatalf("got %v, want ErrNoAuthority", err)
 	}
 	if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 0 || len(h.authority.snapshot()) != 0 {
-		t.Fatal("mint-only declaration must fail before any host request")
-	}
-	h.assertNoStrayPaths(t)
-}
-
-func TestAuditDeclarationDoesNotFallBackWhenBridgeIsAbsent(t *testing.T) {
-	gateway := newFakeGateway(t) // broker routes only; authority bridge returns 404
-	client, err := NewGatewayAuthority(Seams{Gateway: gateway, InternalToken: testInternalToken}, moduleCredentials)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = client.Close() })
-	if err := client.DeclareAuditEventTypes(t.Context(), auditDeclarations()); connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Fatalf("missing bridge error=%v, want unimplemented", err)
-	}
-	calls, stray, _, _ := gateway.snapshot()
-	if len(calls) != 1 || calls[0] != hostWorkContextPath || len(stray) != 1 || stray[0] != "/modules/_authority"+auditDeclarationProcedure {
-		t.Fatalf("unexpected retry or fallback: broker=%v, other=%v", calls, stray)
+		t.Fatal("missing authority seam still contacted the host")
 	}
 }
