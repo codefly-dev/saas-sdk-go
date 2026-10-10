@@ -250,6 +250,7 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
 	declaration    *v1.ModuleDeclareAuditEventTypesRequest
+	moduleSecret   []string
 	installation   *v1.ModuleCurrentInstallationRequest
 	authorization  []string
 	artifact       *v1.ModuleExecutableArtifactRequest
@@ -279,6 +280,8 @@ var servedOnAuthority = map[string]bool{
 type fakeAuthority struct {
 	gateway *fakeGateway
 	address string
+	// declarationError is the host's admission verdict, configured before a call.
+	declarationError error
 
 	mu    sync.Mutex
 	calls []authorityCall
@@ -305,7 +308,7 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{authorization: md.Get("authorization"), moduleSecret: md.Get("x-codefly-module-secret"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
@@ -354,6 +357,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
 	}
 	if call.declaration != nil {
+		if a.declarationError != nil {
+			return a.declarationError
+		}
 		return stream.SendMsg(&v1.ModuleDeclareAuditEventTypesResponse{})
 	}
 	if call.installation != nil {

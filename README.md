@@ -73,9 +73,10 @@ The SDK surfaces are:
   })
   ```
 
-  `New` refuses a missing internal token, gateway base URL or authority
-  address, and refuses to send the internal token or the module secret in
-  plaintext to anything but `localhost` or a loopback IP unless
+  `New` refuses a missing internal token, gateway base URL or an incomplete
+  authority seam. Leaving `Authority` zero builds a mint-only client; authority
+  calls then return `ErrNoAuthority`. It refuses to send the internal token or
+  the module secret in plaintext to anything but `localhost` or a loopback IP unless
   `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
   binding's audience, scopes, lifetime, verification, and audit record.
 
@@ -264,12 +265,49 @@ active record identity. A refusal never invokes a bearer-based fallback.
 ### Gateway authority transport and audit declarations
 
 `moduleauthority.NewGatewayAuthority(seams, credentials)` explicitly selects
-the host's binary-protobuf Connect authority bridge on the gateway base URL.
-It refuses a simultaneous direct Authority address and does not fall back to
-Accounts. The selected host must serve this bridge; a generated client alone
-does not establish that a deployed host supports it. The existing `New`
-constructor retains the direct authority transport.
+the host's binary-protobuf Connect authority bridge at
+`<gateway BaseURL>/modules/_authority`. Leave `Seams.Authority` zero when using
+this constructor. It refuses any simultaneous direct Authority configuration,
+applies the same credential and TLS/mesh checks as `New`, blocks redirects,
+and does not fall back to Accounts. The selected host must serve this bridge;
+a generated client alone
+does not establish that a deployed host supports it or any particular procedure.
+The existing `New` constructor retains the direct authority transport and its
+mint-only mode. Audit declarations work with the existing direct authority
+endpoint; they do not require the gateway bridge.
 
 `Client.DeclareAuditEventTypes` presents the module's event schemas through the
 selected authority seam. Ownership and compatibility remain host decisions.
 Public declaration types and enum constants are re-exported by moduleauthority.
+The SDK supplies `Credentials.Prefix`, uses the same cached module Work Context
+as other authority calls, and preserves every field, enum value, visibility and
+PII flag. It does not create a second registry or infer a namespace from a prefix.
+
+After constructing `authority` with the resolved seams and projected credentials
+as above, declare schemas during startup and propagate any refusal:
+
+```go
+err = authority.DeclareAuditEventTypes(ctx, []*moduleauthority.ModuleAuditEventTypeDeclaration{
+    {
+        Type:        "example.item.changed", // namespace bound to this module by the operator
+        Description: "An item changed",
+        Visibility:  moduleauthority.ModuleAuditEventVisibility_MODULE_AUDIT_EVENT_VISIBILITY_TENANT,
+        Fields: []*moduleauthority.ModuleAuditFieldDeclaration{
+            {Name: "item_id", Kind: moduleauthority.ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_UUID},
+            {Name: "contact", Kind: moduleauthority.ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_STRING, Pii: true},
+        },
+    },
+})
+if err != nil {
+    return err
+}
+```
+
+The host admits only operator-bound namespaces. Re-declaring the identical schema
+is idempotent; fields and enum values may grow, while removal, retyping and changes
+to visibility are refused. A rejected module capability (`Unauthenticated`) is
+refreshed and retried once. Other authority refusals retain their Connect codes
+and details (`connect.CodeOf(err)` / `errors.As`) and are not retried. Broker
+failures retain `*moduleauthority.BrokerError` and their existing sentinels. A
+mint-only client's declaration fails with `ErrNoAuthority` before any network
+request. A missing bridge fails without switching transports.

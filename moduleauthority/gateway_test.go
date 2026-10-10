@@ -59,9 +59,15 @@ func TestGatewayAuthorityExchangesThroughOnlyTheGateway(t *testing.T) {
 }
 
 func TestGatewayAuthorityRejectsAmbiguousTransport(t *testing.T) {
-	_, err := NewGatewayAuthority(Seams{Authority: Authority{Address: "direct.invalid:443"}}, moduleCredentials)
+	// Every seam is otherwise valid: a missing token or gateway must not make
+	// this test pass when the explicit transport-selection guard is removed.
+	h := newHost(t)
+	_, err := NewGatewayAuthority(h.seams(), moduleCredentials)
 	if !errors.Is(err, ErrInvalidSeams) {
 		t.Fatalf("got %v, want invalid seams", err)
+	}
+	if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 0 || len(h.authority.snapshot()) != 0 {
+		t.Fatal("ambiguous transport must fail before any request")
 	}
 }
 

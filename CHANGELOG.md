@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — module audit declarations and gateway authority
+
+- Added `Client.DeclareAuditEventTypes` over the existing module-authority
+  credential cache and refresh path, with declaration types and enum constants
+  re-exported from `moduleauthority`. Host admission rules remain authoritative.
+- Added explicit `NewGatewayAuthority` for hosts serving the binary-protobuf
+  Connect bridge. Existing direct and mint-only clients retain their behavior.
+- Updated `golang.org/x/tools` to v0.50.0 so the public-API boundary gate can
+  read Go 1.27.2 export data, without weakening its checks or fixtures.
+
 ## Unreleased — current installation identity
 
 - Added `moduleauthority.Client.GetCurrentInstallation` with independent module
