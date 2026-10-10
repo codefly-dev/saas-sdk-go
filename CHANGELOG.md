@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — module audit declarations and gateway authority
+
+- Added `Client.DeclareAuditEventTypes` over the existing module-authority
+  credential cache and refresh path, with declaration types and enum constants
+  re-exported from `moduleauthority`. Host admission rules remain authoritative.
+- Added explicit `NewGatewayAuthority` for hosts serving the binary-protobuf
+  Connect bridge. Existing direct and mint-only clients retain their behavior.
+
 ## Unreleased — module audit emission
 
 - Added `moduleauthority.Client.EmitAuditEvent`, preserving the complete event,
