@@ -1,5 +1,98 @@
 # Changelog
 
+## Unreleased — callable sources (awaits host tag)
+
+- Reject unsupported HTTP response encodings before reading the body or
+  inferring an HTTP status: Declare/List return `DatasourceError` with no
+  receipt; Invoke/Lookup keep `OutcomeUnknown` and the original effect ID.
+  List returns `InputError` for an absent/unspecified host effect and
+  `DatasourceError` for an unknown future effect enum, with no partial list.
+- Fix cross-language parity at the error/receipt boundary: skip null and unknown
+  details without losing effect IDs; scope `SOURCE_OPERATION_OUTCOME_UNKNOWN`
+  to Invoke/Lookup; normalize UTF-8 charset, gzip case and BOM on Connect JSON
+  errors while retaining the gateway client and Connect decoder.
+- Add `DatasourceError{Receipt}` for invalid output on a valid COMMITTED receipt.
+  Receipt output comes from `receipt.output_json`; result output comes from the
+  top-level field. Both validate without discarding known commitment. Unknown
+  receipts ignore output; invalid receipt identity/status/time stays unknown.
+- Normalize absent listed schemas to `{}`; declaration still requires both
+  schemas before dispatch. Use the protobuf Timestamp JSON profile for receipt
+  times and rate-limit resets, rejecting year zero and excess fractional digits.
+- Add `datasource.Client.Invoke`, `Lookup`, `DeclareOperations` and
+  `ListOperations` on the existing gateway-bound Connect client, matching the
+  Python facade. Add operations, JSON output, receipts, UUIDv7 effect IDs and
+  per-call deadlines; the host alone owns replay and provider dispatch.
+- Add `ErrNotPermitted`, `ErrUnknownOperation`, `InputError`, `RateLimited`,
+  `ProviderRefused`, `OperationRefused`, `ErrEffectReused`, `ErrEffectNotFound`
+  and `ErrOutcomeUnknown`. The host's `SOURCE_OPERATION_OUTCOME_UNKNOWN`
+  reason retains the effect ID. `*OutcomeUnknown` wraps the original error for
+  `errors.Is`/`errors.As` and Connect diagnostics; callers must check
+  `ErrOutcomeUnknown` before applying transport retry rules. The SDK never retries.
+  Only `SOURCE_PROVIDER_REFUSED` maps to a provider refusal; its status comes
+  from the host's `provider_status` metadata (canonical HTTP 100–599, zero
+  when absent or invalid). `InputError.Pointer` preserves the host's first
+  `BadRequest.FieldViolation.field`. Host messages remain unchanged.
+- Add `OperationDeclarationRemoved` / `ErrOperationDeclarationRemoved` for
+  `SOURCE_OPERATION_DECLARATION_REMOVED`. It preserves the original effect ID
+  and `receipt_status` as `ReceiptStatus` and `Receipt.Status` (COMMITTED or
+  UNKNOWN; absent/unrecognized metadata becomes UNKNOWN). Recover with Lookup,
+  never with a fresh ID; the SDK never retries or invents receipt output.
+- Remove the old Lookup caveat: the host now recovers saved receipts after
+  declaration removal/replacement, under current source read authority.
+  Committed receipts survive; unresolved/expired stays unknown. Lookup NotFound
+  means no attempt marker exists.
+- Lookup misses return the original ID with `NOT_ATTEMPTED`; callers may
+  explicitly reinvoke with the same ID. Committed receipts include `Output`,
+  so recovery can retrieve output without another invoke. Receipt statuses are
+  `COMMITTED`, `UNKNOWN` and `NOT_ATTEMPTED`.
+- Every non-Connect HTTP failure after Invoke/Lookup dispatch, including 4xx,
+  429 and 500, returns `ErrOutcomeUnknown` with the original effect ID and
+  diagnostic cause. Decoded RPC errors retain their existing typed mappings.
+- Validate effect IDs and reject an expired deadline before dispatch with
+  `InputError`, no result and zero RPC calls. Explicit cancellation returns
+  `context.Canceled` with no result. Add operation descriptions and host-computed
+  digests to declaration/list round-tripping.
+- Document the call and retry contracts in `README.md` and package examples.
+- Invoke payloads use `input_json` / `output_json` strings containing exactly
+  one JSON object, preserving numeric precision. Declaration schemas retain
+  the host's `Struct` representation. Lookup sends only the effect ID; its
+  existing org/source arguments cannot override the host's derived authority.
+- Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
+  data; the gate and its fixtures are unchanged.
+- Regenerate the full host API from PR #1052 head
+  `2a16c688c61d66645e1063c495fa38eaf2fa52de`, recorded in `SOURCE.txt` with module
+  version `0.1.0`. This is a development PR head, not a release tag. Release
+  waits for the host tag and regeneration from its commit.
+- Include the runtime-facing `PruneSourceOperationReceipts` and
+  `LookupPruneSourceOperationReceipts` RPCs in generated bindings only;
+  no receipt retention methods are exposed by the caller facade.
+- Re-export the OAuth2 grant type/constants reachable from source reads. The
+  generation template emits all host-owned `saas/` schemas and imports Core's
+  Runnable descriptors from Core v0.3.41, which supplies the required package
+  while preserving consumer compatibility; plugin versions are unchanged.
+
+### Removed / changed (breaking, inherited host contract)
+
+- `moduleauthority.CurrentInstallation.SolutionIdentifier` is replaced by
+  `TargetID` and `BindingID`, reflecting the host's immutable authority
+  identities. The SDK validates the target UUID and nonempty binding.
+- Generated `Installation.SolutionIdentifier`,
+  `InstallSolutionRequest.SolutionIdentifier` and
+  `ModuleCurrentInstallationResponse.SolutionIdentifier` are removed in favor
+  of target/binding identity fields. Their `GetSolutionIdentifier` methods
+  disappear too.
+- Generated `PutSolutionRegistration` / `DeleteSolutionRegistration` RPCs,
+  procedure constants and request types (including the Put request's oneof
+  wrappers), `SolutionFrontendRegistration` and `SolutionBackendRegistration`
+  are removed. The host reconciles delivered presence; there is no writer RPC
+  replacement. Read contracts and new entitlement/target contracts are retained.
+- Generated `SolutionFrontendBinding.LeaseExpiresAt`,
+  `SolutionBackendBinding.LeaseExpiresAt`, `SolutionRegistration.RuntimeBoundary`
+  and their getters, and the
+  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_EXPIRED` constant
+  are removed by the same delivered-presence contract. No generated output was
+  edited or restored to retain the older API.
+
 ## Unreleased — current installation identity
 
 - Added `moduleauthority.Client.GetCurrentInstallation` with independent module

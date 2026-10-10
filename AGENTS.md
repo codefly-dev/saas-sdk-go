@@ -101,6 +101,8 @@ examples. Read it rather than re-deriving the API from the tree.
 - **Never hand-edit `gen/`, and never rewrite the module path with `sed`.** The
   file descriptors embed length-prefixed package strings; a text rewrite
   corrupts them and panics at `init()`. Regenerate (skill below).
+  Generate the host-owned `saas/` tree; Core's vendored Runnable imports resolve
+  to Core's Go dependency, never a second descriptor copy in this SDK.
 - **Every generated type reachable from a facade needs an alias in that
   package's `types.go`** — and a generated enum needs its constants
   re-exported too, because an alias carries the type and not the constants.

@@ -1,5 +1,11 @@
 version: v2
 clean: true
+inputs:
+  - directory: .
+    # Core's vendored import closure is compiled, but its Go bindings belong
+    # to the Core dependency. Generate every host-owned public schema.
+    paths:
+      - saas
 managed:
   enabled: true
   disable:
@@ -10,6 +16,9 @@ managed:
   override:
     - file_option: go_package_prefix
       value: github.com/codefly-dev/saas-sdk-go/gen
+    - file_option: go_package_prefix
+      path: codefly
+      value: github.com/codefly-dev/core/generated/go
 plugins:
   - local: [go, run, google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11]
     out: gen

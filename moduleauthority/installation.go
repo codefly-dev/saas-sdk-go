@@ -24,9 +24,10 @@ type CurrentInstallationRequest struct {
 // CurrentInstallation is a current active, non-revoked identity observation.
 // It is not executable approval, a grant, or a durable proof of liveness.
 type CurrentInstallation struct {
-	InstallationID     string
-	TenantID           string
-	SolutionIdentifier string
+	InstallationID string
+	TenantID       string
+	TargetID       string
+	BindingID      string
 }
 
 // GetCurrentInstallation preserves the host's organization-member metadata read.
@@ -40,8 +41,8 @@ func (c *Client) GetCurrentInstallation(ctx context.Context, req CurrentInstalla
 	if err != nil {
 		return CurrentInstallation{}, fmt.Errorf("module authority: current installation: %w", err)
 	}
-	if out == nil || out.InstallationId != req.InstallationID || !artifactUUID.MatchString(out.TenantId) || strings.TrimSpace(out.SolutionIdentifier) == "" || !utf8.ValidString(out.SolutionIdentifier) {
+	if out == nil || out.InstallationId != req.InstallationID || !artifactUUID.MatchString(out.TenantId) || !artifactUUID.MatchString(out.TargetId) || strings.TrimSpace(out.BindingId) == "" || !utf8.ValidString(out.BindingId) {
 		return CurrentInstallation{}, ErrInvalidInstallation
 	}
-	return CurrentInstallation{InstallationID: out.InstallationId, TenantID: out.TenantId, SolutionIdentifier: out.SolutionIdentifier}, nil
+	return CurrentInstallation{InstallationID: out.InstallationId, TenantID: out.TenantId, TargetID: out.TargetId, BindingID: out.BindingId}, nil
 }

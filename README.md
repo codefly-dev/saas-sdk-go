@@ -34,6 +34,196 @@ The SDK surfaces are:
   })
   _, err = ds.Sync(ctx, org, src.GetId())
   ```
+
+  The **call** half uses that same gateway and client to invoke a declared
+  operation of a connected API as the signed-in person:
+
+  ```go
+  result, err := ds.Invoke(ctx, orgID, sourceID, "list_invoices",
+      map[string]any{"limit": 20}, datasource.WithDeadline(time.Now().Add(10*time.Second)))
+  if errors.Is(err, datasource.ErrOutcomeUnknown) {
+      // Preserve result.Receipt.EffectID. Use Lookup with a live context;
+      // an unknown outcome does not mean the effect failed.
+      return err
+  }
+  if err != nil {
+      return err
+  }
+  output := result.Output // json.RawMessage
+  receipt := result.Receipt
+  ```
+
+  `Invoke` marshals a JSON object (a map, struct with JSON tags, or
+  `json.RawMessage`) to the host's `input_json` string. The response's
+  `output_json` is validated as one JSON object and returned as
+  `json.RawMessage`, preserving its number precision and text. Invocation
+  payloads never pass through protobuf `Struct`; declaration schemas still
+  use the host's `Struct` fields. `WithDeadline(time.Time)` bounds
+  only this call; an earlier context deadline still wins. `WithEffectID(id)`
+  supplies an effect ID of 1–128 UTF-8 bytes without control bytes or surrounding
+  spaces (which HTTP would trim); interior spaces and Unicode are supported;
+  when omitted, the SDK mints a UUIDv7. Invalid IDs return `*InputError` before
+  dispatch. A deadline already expired before dispatch (including an earlier
+  parent deadline) returns `*InputError` with no `Result` and zero RPC calls.
+  An explicitly canceled context returns `context.Canceled` with no result.
+  Once a call is attempted, even an error
+  returns a non-nil `Result` containing that
+  ID in `Receipt.EffectID`. Persist a caller-owned ID **before** invoking a
+  mutation if it must survive a process crash.
+
+  Repeating the same effect ID and **byte-identical `input_json`** asks the
+  **host** to replay its receipt. Persist the encoded input with the ID and
+  reuse it as `json.RawMessage`: rebuilding an equivalent object with a
+  different field order can be refused. Every valid explicit
+  `Invoke` reaches the host: the SDK has no retry loop, deduplication or
+  receipt cache. Do not change the ID to recover an uncertain mutation.
+
+  `Lookup(ctx, orgID, sourceID, effectID)` returns the receipt and its committed
+  `Output` without invoking the provider. The shared SDK signature keeps `orgID` and
+  `sourceID`, but the wire request sends **only `effect_id`**: the host derives
+  the tenant from the gateway's Work Context and recovers the source from the
+  stored effect binding. These two arguments cannot select or override lookup
+  authority. A lookup miss returns `ErrEffectNotFound` and a receipt carrying
+  the same ID with status `NOT_ATTEMPTED`; an explicit reinvoke with that ID is
+  safe, and the SDK never invokes automatically. NotFound means the host has
+  no attempt marker. Once an attempt exists, Lookup recovers the saved receipt
+  independently of the current declaration: committed receipts survive its
+  removal or replacement, and unresolved or expired receipts remain unknown.
+  The caller's current source read authority still applies; revoked access refuses.
+
+  `Receipt.Output` always comes from the saved `receipt.output_json` evidence;
+  `Result.Output` comes from the top-level `output_json`. Both fields must contain
+  one JSON object on a committed response. If either is missing or malformed,
+  `*DatasourceError` retains the COMMITTED receipt, effect ID, commit time and
+  provider status (and any valid receipt output). Bad output does not erase a
+  commit or authorize another effect. Missing/mismatched receipt identity,
+  unsupported status or invalid commit time instead yields `ErrOutcomeUnknown`.
+  An UNKNOWN receipt does not require valid output.
+
+  Re-invoking a retained effect after its declaration is removed returns
+  `*OperationDeclarationRemoved` (`errors.Is(err, ErrOperationDeclarationRemoved)`).
+  Its `ReceiptStatus` and `Receipt.Status` carry the host's `receipt_status`:
+  exact `committed` becomes `COMMITTED`; `unknown`, missing or unrecognized
+  metadata becomes `UNKNOWN`. The outcome and `Result.Receipt` retain the
+  original effect ID. This is distinct from a refusal and from `OutcomeUnknown`,
+  even when its receipt status is unknown. No output, commit time or provider
+  status is inferred from the error. **Recover with Lookup, never with a fresh ID.**
+  A committed status here means the saved output must be retrieved through Lookup.
+
+  An unknown receipt is returned alongside
+  `ErrOutcomeUnknown`; check it with `errors.Is`. **Unknown is an outcome,
+  not evidence of failure or permission to repeat an effect.** Invoke also
+  reports transport loss or deadline expiry after dispatch conservatively as
+  unknown, since it cannot prove the operation was read-only. Every non-Connect
+  HTTP error after Invoke or Lookup dispatch, including 4xx, 429 and 500,
+  likewise returns `ErrOutcomeUnknown` with the original ID. The Connect
+  decoder identifies RPC errors; decoded errors retain their code/reason
+  mappings. Check
+  `errors.Is(err, datasource.ErrOutcomeUnknown)` and
+  `errors.Is(err, datasource.ErrOperationDeclarationRemoved)` **before** transport-code
+  retry logic: the wrapped Connect error remains available for diagnostics,
+  but its code does not establish whether the effect happened. An unavailable
+  lookup also returns an unknown receipt: it cannot establish what happened to the effect. Use a
+  fresh bounded context to look up an effect after the original context has
+  expired.
+
+  For logging and metrics, `errors.As` can inspect both
+  `*datasource.OutcomeUnknown` (including its receipt) and the wrapped
+  `*connect.Error`; `errors.Is` also preserves an underlying context error.
+  The SDK never retries either error.
+
+  `DeclareOperations(ctx, orgID, sourceID, []datasource.Operation)` replaces
+  the source's declaration set atomically under the host's administrator
+  check. Both schemas must be supplied as JSON objects; omitted schemas return
+  `InputError` before dispatch. Explicit `{}` is accepted for host admission.
+  `ListOperations(ctx, orgID, sourceID)` reads the set and represents absent
+  schemas as `{}`, so its operations can be re-declared. For example, an API
+  connected to `https://example.com` could declare:
+
+  ```go
+  err := ds.DeclareOperations(ctx, orgID, sourceID, []datasource.Operation{{
+      Name: "list_invoices", Method: "GET", Path: "/invoices", Query: []string{"limit"},
+      Description: "List available invoices",
+      Input: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}},"additionalProperties":false}`),
+      Output: json.RawMessage(`{"type":"object"}`),
+      Effect: datasource.EffectReadOnly, MaxOutputBytes: 65536,
+  }})
+  ```
+
+  `ListOperations` includes each operation's description and host-computed
+  `Digest`; declarations ignore a caller-supplied digest. An absent or
+  `EFFECT_UNSPECIFIED` host effect returns `*InputError` with an empty pointer
+  and the message `host returned an unspecified effect`; an unknown future
+  numeric effect returns `*DatasourceError` with no receipt. Neither returns
+  a partial list. The host admits the
+  schemas, route, effect and output cap. Invocation never
+  accepts a provider URL or credential. The gateway's HTTP client carries
+  the person's Work Context unchanged; this facade adds only
+  `x-codefly-effect-id` to the normal Connect request, matching the request's
+  effect ID. It never mints, replaces or sets a Work Context header.
+
+  | Host response | Go result |
+  | --- | --- |
+  | PermissionDenied | `ErrNotPermitted` (`errors.Is`) |
+  | Invoke NotFound | `ErrUnknownOperation` (`errors.Is`) |
+  | Lookup NotFound | receipt plus `ErrEffectNotFound` (`errors.Is`); keep the ID for an explicit reinvoke |
+  | InvalidArgument | `*InputError`, with `Pointer` from the first `BadRequest.FieldViolation.field` |
+  | ResourceExhausted + DATASOURCE_RATE_LIMITED | `*RateLimited`, with `ResetAt` from `reset_at` or `RetryInfo` |
+  | FailedPrecondition + SOURCE_OPERATION_OUTCOME_UNKNOWN | receipt plus `ErrOutcomeUnknown` (`errors.Is`); the mutation may have happened |
+  | FailedPrecondition + SOURCE_OPERATION_DECLARATION_REMOVED | receipt plus `*OperationDeclarationRemoved` / `ErrOperationDeclarationRemoved`; recover the original ID with Lookup |
+  | FailedPrecondition + SOURCE_PROVIDER_REFUSED | `*ProviderRefused`, with `Status` from `ErrorInfo.metadata["provider_status"]` when known |
+  | FailedPrecondition + SOURCE_EFFECT_REUSED | `ErrEffectReused` (`errors.Is`) |
+  | Other FailedPrecondition | `*OperationRefused`, with the structured `Reason` or an empty string |
+  | Non-Connect HTTP error after Invoke/Lookup dispatch (4xx or 5xx) | receipt plus `ErrOutcomeUnknown`; retain the original ID |
+  | Ambiguous Invoke / unknown receipt | receipt plus `ErrOutcomeUnknown` (`errors.Is`) |
+  | Valid COMMITTED receipt with invalid output JSON | receipt plus `*DatasourceError`; commit evidence is retained |
+
+  `SOURCE_OPERATION_OUTCOME_UNKNOWN` is an effect outcome only on Invoke and
+  Lookup. On Declare/List it is `OperationRefused` carrying that reason.
+  Null, unknown or undecodable protobuf error details are skipped; valid
+  neighboring details still determine the outcome. For Declare/List,
+  non-Connect HTTP 403 with a supported encoding maps to `ErrNotPermitted`
+  through Connect's HTTP fallback;
+  on Invoke/Lookup the same non-Connect response remains unknown.
+
+  Connect JSON errors accept a case-insensitive UTF-8 charset parameter,
+  case-insensitive gzip encoding and a leading UTF-8 BOM. A response adapter
+  normalizes those encodings before Connect decodes the envelope; it forwards
+  the request unchanged through the gateway's existing HTTP client. Empty,
+  identity and gzip encodings are accepted case-insensitively. Unsupported
+  encodings such as `br` are rejected before reading the body or inferring an
+  HTTP status: Declare/List return `*DatasourceError` with no receipt, while
+  Invoke/Lookup return `ErrOutcomeUnknown` with the original effect ID. The
+  diagnostic cause is retained and no retry occurs. Other charsets and media
+  types remain non-Connect. Timestamp strings follow the
+  protobuf JSON profile (years 0001–9999, at most nine fractional digits).
+
+  The recorded host ref emits structured input pointers and provider HTTP
+  statuses. `InputError.Pointer` is empty when no field violation is supplied;
+  otherwise the JSON Pointer is preserved verbatim. `ProviderRefused.Status`
+  is zero when metadata is missing or is not a three-digit ASCII decimal HTTP
+  status from 100–599. Status metadata is read only for `SOURCE_PROVIDER_REFUSED`;
+  it cannot turn an unknown outcome into a provider refusal.
+  The host's receipt guard also emits detail-free precondition refusals, represented
+  as `OperationRefused` with an empty reason. A precondition refusal does not
+  establish the outcome of an earlier attempt under that ID.
+
+  Other errors retain their Connect identity. Host diagnostic messages are
+  preserved, including credential-looking text: **the host is the disclosure
+  guard**. The SDK neither redacts messages nor treats their prose as status
+  metadata. These names mirror the Python facade's `invoke`, `lookup`,
+  `declare_operations`, `list_operations`, `Operation`, `Result`, `Receipt`,
+  `NotPermitted`, `UnknownOperation`, `EffectNotFound`, `EffectReused`,
+  `DatasourceError`, `InputError`, `RateLimited`, `ProviderRefused`, `OperationRefused`, `OperationDeclarationRemoved` and
+  `OutcomeUnknown`.
+
+  This call surface uses the four host RPCs from
+  [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
+  `SOURCE.txt` records its exact development PR head. It is not a release tag:
+  release waits for the host tag and regeneration from the tagged commit.
+  The host's runtime-scheduled `PruneSourceOperationReceipts` and
+  `LookupPruneSourceOperationReceipts` are included in the generated bindings
+  only; this caller facade does not expose receipt retention operations.
 - **`moduleauthority/`** — the module-principal side of installed operation
   authority. A long-running module supplies its Codefly-projected registration
   credential once; the client mints and refreshes the module's short-lived Work
@@ -202,6 +392,15 @@ the correct module path. **Never hand-edit `gen/` or sed the module path** — t
 protobuf file descriptors embed length-prefixed package strings and a text
 rewrite corrupts them (panics at `init()`). Always regenerate.
 
+The template generates the complete host-owned `saas/` schema tree. Its
+vendored `codefly/` import closure is compiled for Runnable annotations, with
+imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
+those Go descriptors. Emitting a second copy in this SDK would conflict at
+protobuf initialization. Core v0.3.41 supplies the required Runnable package;
+the SDK need not adopt the host's entire dependency generation. Verify the
+compatible dependency floor with SDK and consumer builds when refreshing it.
+The generation plugin versions remain pinned.
+
 > Wiring this regen into module-saas-starter's release (so a saas tag publishes a
 > matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).
 
@@ -250,10 +449,13 @@ original verified parent token and `InstallationID`. The client presents its own
 module Work Context independently on the resolved authority endpoint. It never
 forwards a viewer bearer, selects a tenant/source, or mints broader parent scopes.
 
-The result is `CurrentInstallation{InstallationID, TenantID, SolutionIdentifier}`.
-The SDK requires the exact requested ID and a nonempty, well-formed result;
-the consumer must compare `TenantID` to its independently verified request tenant
-and apply its own source naming rules. A successful observation is not executable
+The result is `CurrentInstallation{InstallationID, TenantID, TargetID, BindingID}`.
+The SDK requires the exact requested ID, valid tenant/target UUIDs and a
+nonempty binding identity. This replaces the removed `SolutionIdentifier`
+field: the host returns the immutable target and its delivered binding,
+rather than a reusable route alias. The consumer must compare `TenantID`
+to its independently verified request tenant and use the target/binding
+identities for authority decisions. A successful observation is not executable
 consent, a grant or durable liveness proof. Re-read for each new request.
 
 The host preserves its organization-member metadata-read rule: no new permission

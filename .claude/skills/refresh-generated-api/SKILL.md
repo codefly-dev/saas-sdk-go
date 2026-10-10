@@ -41,7 +41,15 @@ which is what makes the descriptors carry this module's path. `out: gen` in the
 template is relative to `-o`, so `-o "$repo"` writes `$repo/gen`. Takes about a
 second.
 
-Two properties of that template matter:
+Three properties of that template matter:
+
+- **The inputs select the complete host-owned `saas/` schema tree.** The
+  vendored `codefly/` closure is import-only: its `go_package_prefix` resolves
+  to `github.com/codefly-dev/core/generated/go`. Require a compatible Core
+  version that provides those packages; validate the dependency floor against
+  SDK and consumer builds instead of copying the host's dependency generation.
+  Generating another copy of Core's descriptors here creates duplicate protobuf
+  registrations at initialization.
 
 - **`clean: true` wipes `gen/` first.** So a proto deleted upstream disappears
   here rather than lingering — which is how `AuditExportService` left in 0.1.0.

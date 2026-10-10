@@ -48,6 +48,7 @@ const (
 	testTenant        = "11111111-1111-4111-8111-111111111111"
 	testPrincipal     = "00000000-0000-4000-8000-00000000beef"
 	testOwner         = "44444444-4444-4444-8444-444444444444"
+	testBindingID     = "binding-example-1"
 	testDelegation    = "33333333-3333-4333-8333-333333333333"
 	exampleSource     = "55555555-5555-4555-8555-555555555555"
 )
@@ -352,14 +353,20 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		if call.installation.ParentWorkContextToken == "denied.token" {
 			return status.Error(codes.PermissionDenied, "current authority denied")
 		}
-		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, SolutionIdentifier: "acme/example"}
+		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, TargetId: testOwner, BindingId: testBindingID}
 		switch call.installation.ParentWorkContextToken {
 		case "wrong-id.token":
 			out.InstallationId = testOwner
 		case "missing-tenant.token":
 			out.TenantId = ""
-		case "empty-source.token":
-			out.SolutionIdentifier = ""
+		case "empty-target.token":
+			out.TargetId = ""
+		case "invalid-target.token":
+			out.TargetId = "invalid"
+		case "empty-binding.token":
+			out.BindingId = ""
+		case "invalid-binding.token":
+			out.BindingId = "   "
 		}
 		return stream.SendMsg(out)
 	}
