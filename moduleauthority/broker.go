@@ -35,6 +35,26 @@ const (
 // answers are a handful of short strings.
 const maxBrokerResponse = 64 << 10
 
+// REST request bodies match gateway_modules.go at module-saas-starter v0.0.94
+// (lines 185–188, 273–277 and 427–431). Credentials travel only in headers.
+type workContextRequest struct {
+	Prefix         string `json:"prefix"`
+	OrganizationID string `json:"organization_id,omitempty"`
+}
+
+type operationContextRequest struct {
+	Prefix         string `json:"prefix"`
+	Binding        string `json:"binding"`
+	OrganizationID string `json:"organization_id,omitempty"`
+}
+
+type sourceOperationContextRequest struct {
+	// This facade selects the gateway's source_id arm; it never sends the
+	// mutually exclusive delegation_id or an organization selector.
+	Prefix   string `json:"prefix"`
+	SourceID string `json:"source_id"`
+}
+
 type broker struct {
 	baseURL string
 	client  *http.Client
@@ -63,7 +83,7 @@ func newBroker(seams Seams) (broker, error) {
 // post sends one broker request and decodes a 200 answer into out. Any other
 // status is a *BrokerError, classified without reading its body. Transport
 // and response read failures are *BrokerTransportError, without a cause.
-func (b broker) post(ctx context.Context, path, projectedToken string, body map[string]string, out any) error {
+func (b broker) post(ctx context.Context, path, projectedToken string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err

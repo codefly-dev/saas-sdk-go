@@ -74,9 +74,9 @@ func (c *Client) MintSourceOperationContext(ctx context.Context, sourceID string
 		return SourceOperationContext{}, err
 	}
 	var issued sourceOperationContextResponse
-	if err := c.broker.post(ctx, sourceOperationContextPath, projected, map[string]string{
-		"prefix":    c.credentials.Prefix,
-		"source_id": sourceID,
+	if err := c.broker.post(ctx, sourceOperationContextPath, projected, sourceOperationContextRequest{
+		Prefix:   c.credentials.Prefix,
+		SourceID: sourceID,
 	}, &issued); err != nil {
 		if refusal := delegationRefusal(err); refusal != nil {
 			return SourceOperationContext{}, fmt.Errorf("%w: %w", refusal, err)

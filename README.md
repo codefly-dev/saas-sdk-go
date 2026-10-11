@@ -225,9 +225,10 @@ The SDK surfaces are:
   `LookupPruneSourceOperationReceipts` are included in the generated bindings
   only; this caller facade does not expose receipt retention operations.
 - **`moduleauthority/`** — the module-principal side of installed operation
-  authority. A long-running module supplies its Codefly-projected registration
-  credential once; the client mints and refreshes the module's short-lived Work
-  Context, attaches it to the generic SaaS exchange, and returns the exchanged
+  authority. A long-running module supplies a source for its pod's projected
+  ServiceAccount token; the client rereads it before every mint and refreshes
+  the module's short-lived Work Context, attaches it to the generic SaaS
+  exchange, and returns the exchanged
   child as an opaque `sdk-go` token. The signed-in person's retained parent and
   the exchanged child remain request-local.
 
@@ -257,6 +258,8 @@ The SDK surfaces are:
       Prefix: modulePrefix,
       // Read before every mint: the kubelet rotates the projection.
       Token: moduleauthority.ProjectedTokenFile(projectedTokenPath),
+      // Required for a shared module; a tenant-pinned module may omit it.
+      OrganizationID: organizationID,
   })
   if err != nil {
       return err // ErrInvalidSeams / ErrInvalidCredentials: fail closed at startup
@@ -275,6 +278,33 @@ The SDK surfaces are:
   the projected token in plaintext to anything but `localhost` or a loopback IP unless
   `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
   binding's audience, scopes, lifetime, verification, and audit record.
+
+  `projectedTokenPath` is the token projection mount path supplied by the
+  consumer's deployment; there is no default path. The host requires audience
+  `accounts` and a token lifetime of at most 600 seconds, and verifies the pod,
+  workload and approved build. The SDK rereads the source for every actual mint
+  (including a module Work Context refresh), trims whitespace, and rejects an
+  empty token or one larger than 64 KiB with `ErrInvalidCredentials` before
+  sending. `ProjectedTokenFile` also bounds the file read to 64 KiB. Every mint
+  sends exactly one `Authorization: Bearer <token>` header alongside the
+  internal perimeter token; the removed module-secret credential has no fallback.
+
+  The REST bodies match [the v0.0.94 gateway](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/services/auth-gateway/code/gateway_modules.go):
+
+  | Mint path | JSON fields sent |
+  | --- | --- |
+  | `/modules/_work-context` | `prefix`, optional `organization_id` |
+  | `/modules/_operation-context` | `prefix`, `binding`, optional `organization_id` |
+  | `/modules/_source-operation-context` | `prefix`, `source_id` |
+
+  Set `Credentials.OrganizationID` for a shared module and use a separate client
+  per organization, since each client caches its own module Work Context. A
+  tenant-pinned module may omit the selector or name its own tenant. The host
+  checks the module envelope and live installation; selecting an organization
+  grants no authority. Source mints ignore this selector and derive their
+  organization from the source's delegation. Deployment and identity requirements
+  are in [MODULE_INSTALLATION.md](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/MODULE_INSTALLATION.md)
+  and [Establishing what a caller is running](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/services/accounts/AGENTS.md#establishing-what-a-caller-is-running).
 
   `ExchangeRequest` presents authority one of two ways, and exactly one — both,
   or neither, is `ErrInvalidExchange` before anything is sent. `Parent` is a live

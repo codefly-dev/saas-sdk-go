@@ -86,8 +86,9 @@
   and `ModuleMintSourceOperationContextRequest` lose `Secret`/`GetSecret` and
   gain `ServiceAccountToken`/`GetServiceAccountToken`. The first two requests
   also gain `OrganizationId` for shared-principal installation selection.
-  The gateway route-rejection fixture now uses the current request field;
-  the hand-written gateway broker transport is unchanged.
+  The gateway route-rejection fixture uses the current request field. The
+  hand-written broker sends the projected token as its sole Bearer credential,
+  and includes the organization selector on the first two REST mint bodies.
 - `moduleauthority.CurrentInstallation.SolutionIdentifier` is replaced by
   `TargetID` and `BindingID`, reflecting the host's immutable authority
   identities. The SDK validates the target UUID and nonempty binding.
@@ -124,21 +125,32 @@
 
 ## Unreleased — mint once: the projected ServiceAccount token replaces the module secret
 
-- **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token}`: `Token` is a
-  `ProjectedTokenSource` that reads the module pod's projected ServiceAccount
+- **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token, OrganizationID}`.
+  `Token` is a `ProjectedTokenSource` that reads the module pod's projected ServiceAccount
   token (audience `accounts`). `Secret` is deleted with the host's
   `MODULE_IDENTITY_SECRETS`. Every broker mint sends the token as
   `Authorization: Bearer`, read from its source before that mint (the kubelet
   rotates it); `X-Codefly-Module-Secret` is no longer sent.
+- `OrganizationID` selects the installation for module Work Context and
+  operation-context mints. Shared modules must supply it; tenant-pinned modules
+  may omit it or name their own tenant. Use a separate client per organization
+  so its cached module Work Context stays scoped. Source-context mints send only
+  `prefix` and `source_id`; their delegation determines the organization.
+- Every token source is trimmed and checked before dispatch: empty or oversized
+  (more than 64 KiB) tokens return `ErrInvalidCredentials` with zero broker calls.
+  The host requires audience `accounts` and lifetime at most 600 seconds. No
+  token path is defaulted. Tests cover file rotation and exact REST bodies on
+  all three mints; the host fake rejects missing, duplicate and non-Bearer
+  Authorization, and any legacy secret header as a regression guard.
 - Added `ProjectedTokenFile`, the file-backed source. Its method set is
   `sdk-go/workcontext`'s `ProjectedTokenSource`, so that implementation is
   accepted once this module moves off the pre-cutover `sdk-go/workcontext` pin.
 - Added `ErrExecutionUnestablished` for the broker's `503`: the host could not
   establish what the pod is running, nothing was decided, and a retry may
   succeed. `401` still maps to `ErrInvalidCredentials`.
-- `gen/` is unchanged: the broker client speaks the broker's REST contract, not
-  the generated request types, so the regeneration waits for the host change to
-  land and is its own refresh.
+- The broker client speaks the REST contract verified against
+  `gateway_modules.go` at released host tag `v0.0.94`; the generated request
+  types are consumed through the tagged API refresh above.
 
 ## Unreleased — module audit declarations and gateway authority
 
@@ -231,7 +243,7 @@ version and to signal the breaking removal below.
   - the three mints go to the gateway's module broker as JSON
     (`POST /modules/_work-context`, `/modules/_operation-context`,
     `/modules/_source-operation-context`) with `X-Codefly-Internal-Token` and
-    `X-Codefly-Module-Secret`;
+    `Authorization: Bearer <projected ServiceAccount token>`;
   - `ExchangeOperation` calls accounts' `authority` gRPC endpoint with the
     module Work Context in `x-codefly-work-context` and the internal token in
     `x-codefly-internal-token`, and still refreshes a rejected module Work
@@ -241,8 +253,8 @@ version and to signal the breaking removal below.
   token, gateway, gateway base URL or authority address, and on a plaintext
   seam to anything but `localhost` or a loopback IP unless the consumer sets
   `AllowInsecureHTTP` from its own mesh-protection assertion; and with
-  `ErrInvalidCredentials` on an empty prefix or secret. The broker client never
-  follows a redirect. The `connect.ClientOption` variadic is gone.
+  `ErrInvalidCredentials` on an empty prefix or missing token source. The broker
+  client never follows a redirect. The `connect.ClientOption` variadic is gone.
 
   Refusals change shape with the transport: a broker answer other than 200 is
   a `*BrokerError` (path, status, reason), wrapped with `ErrInvalidCredentials`

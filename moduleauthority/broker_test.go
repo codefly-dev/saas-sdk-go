@@ -237,7 +237,7 @@ func TestMintsRejectIncompleteInputWithoutNetwork(t *testing.T) {
 }
 
 func TestTheBrokerClientNeverFollowsARedirect(t *testing.T) {
-	// A redirect would replay the internal token and the module secret to an
+	// A redirect would replay the internal token and the projected token to an
 	// address the transport rule never judged.
 	h := newHost(t)
 	target := newFakeGateway(t)
