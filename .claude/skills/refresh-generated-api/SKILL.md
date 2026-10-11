@@ -85,7 +85,9 @@ does not carry:
 - **`SOURCE.txt`** — the release tag you checked out (or exact PR-head commit
   before a release), and the module version from upstream's
   `module/module.package.codefly.yaml`. CI resolves release pins through
-  `refs/tags/` so a same-named branch cannot select the source.
+  `refs/tags/` so a same-named branch cannot select the source. The same ref
+  is the gateway `conformance/hostgateway` mints through, at the
+  `(auth gateway: …)` path recorded there.
 - **`CHANGELOG.md`** — under the unreleased heading. `### Added` for new
   services, facades, and fields; `### Removed (breaking)` for anything the
   regeneration deleted, naming the symbols a consumer will fail to compile
@@ -108,6 +110,16 @@ directory and diff:
 buf generate --template "$repo/buf.gen.yaml" -o /tmp/regen-check
 diff -r /tmp/regen-check/gen "$repo/gen"
 ```
+
+Moving the ref also moves the broker contract `moduleauthority` is held to.
+Mint through the new ref's real gateway before the PR, not after CI says so
+(`conformance/hostgateway/AGENTS.md`):
+
+```bash
+conformance/hostgateway/run.sh "$host_checkout" -race
+```
+
+A red run there is the host's contract moving; fix the client, never the test.
 
 Silence is the proof. This also catches a stale `SOURCE.txt`: if the diff is
 non-empty for a ref you did not change, the recorded ref is not the one the

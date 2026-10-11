@@ -32,6 +32,7 @@ import (
 	"time"
 
 	codefly "github.com/codefly-dev/sdk-go/workcontext"
+	"github.com/google/uuid"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
@@ -40,12 +41,15 @@ import (
 const defaultRefreshSkew = 30 * time.Second
 
 var (
-	// ErrInvalidCredentials: the module's credentials are missing or its
-	// projected token could not be read, is empty or exceeds 64 KiB, or the
-	// broker refused to prove the module (HTTP 401 — a token the host refused,
-	// another workload's token, a pod running a build the host does not approve,
-	// or a wrong internal token;
-	// the host does not say which).
+	// ErrInvalidCredentials: the module's credentials are missing, its
+	// OrganizationID is not a canonical UUID, or its projected token could not
+	// be read, is empty or exceeds 64 KiB; or the broker refused to prove the
+	// module (HTTP 401 — a token the host refused, another workload's token, a
+	// pod running a build the host does not approve, a wrong internal token, or,
+	// on the module Work Context mint, an organization the module may not mint
+	// for: a shared module that names none, or a tenant-pinned module that
+	// names another. The host does not say which). The operation mint refuses
+	// that organization case with ErrPermissionDenied (HTTP 403) instead.
 	ErrInvalidCredentials = errors.New("module authority: invalid module credentials")
 	// ErrExecutionUnestablished: the host could not establish what this pod is
 	// running (HTTP 503) — its API server unreachable, or no execution binding
@@ -122,9 +126,14 @@ type Credentials struct {
 	Prefix string
 	Token  ProjectedTokenSource
 	// OrganizationID selects the organization for module Work Context and
-	// operation-context mints. Required for a shared module; a tenant-pinned
-	// module may omit it or name its own tenant. The host checks the module's
-	// envelope and live installation; this selector grants no authority.
+	// operation-context mints, as a canonical (lowercase, hyphenated) UUID;
+	// New refuses any other form with ErrInvalidCredentials, as accounts would.
+	// Required for a shared module; a tenant-pinned module may omit it or name
+	// its own tenant. The host checks the module's envelope and live
+	// installation; this selector grants no authority. A missing or wrong
+	// organization is refused as unproven credentials: ErrInvalidCredentials
+	// (HTTP 401) on the module Work Context mint, ErrPermissionDenied (HTTP 403)
+	// on the operation mint.
 	// Use a separate Client for each organization: its cached module Work
 	// Context belongs to that organization. Source-context mints ignore this
 	// field because the source's delegation determines their organization.
@@ -247,11 +256,19 @@ type Client struct {
 // ErrInvalidSeams, on a missing gateway, gateway base URL or internal token,
 // on an authority seam that is set but has no address, and on any plaintext seam to a non-loopback address the
 // consumer has not asserted protected; and with ErrInvalidCredentials on an
-// empty prefix or no token source. It opens no connection and reads no token:
-// the token is read before each mint.
+// empty prefix, no token source, or an OrganizationID that is not a canonical
+// UUID. It opens no connection and reads no token: the token is read before
+// each mint.
 func New(seams Seams, credentials Credentials) (*Client, error) {
 	if credentials.Prefix == "" || credentials.Token == nil {
 		return nil, ErrInvalidCredentials
+	}
+	if org := credentials.OrganizationID; org != "" {
+		// accounts' own rule (module_identity.go, moduleMintOrganization): any
+		// other spelling of a UUID is an InvalidArgument at the first mint.
+		if id, err := uuid.Parse(org); err != nil || id.String() != org {
+			return nil, fmt.Errorf("%w: the organization ID must be a canonical UUID", ErrInvalidCredentials)
+		}
 	}
 	if seams.InternalToken == "" {
 		return nil, fmt.Errorf("%w: the internal token is required", ErrInvalidSeams)

@@ -46,7 +46,10 @@ func TestMintSourceOperationContextClassifiesByStatus(t *testing.T) {
 		refuse refusal
 		want   error
 	}{
-		{"missing", refusal{http.StatusPreconditionFailed, "DELEGATION_MISSING"}, nil},
+		{"missing", refusal{http.StatusPreconditionFailed, "DELEGATION_MISSING"}, ErrDelegationMissing},
+		// The status alone types it: the gateway answers 412 on this path
+		// only for DELEGATION_MISSING, and the body is never read.
+		{"412 with another body", refusal{http.StatusPreconditionFailed, "SOMETHING_ELSE"}, ErrDelegationMissing},
 		{"revoked", refusal{http.StatusForbidden, "DELEGATION_REVOKED"}, ErrDelegationInvalid},
 		{"invalid", refusal{http.StatusForbidden, "DELEGATION_INVALID"}, ErrDelegationInvalid},
 		// A host that names no reason in its 403 (the body before the
@@ -77,8 +80,7 @@ func TestMintSourceOperationContextClaimsNoDelegationRefusalItWasNotGiven(t *tes
 		{http.StatusUnauthorized, "unauthorized"},
 		{http.StatusBadGateway, "source operation context unavailable"},
 		{http.StatusBadRequest, "exactly one of delegation_id or source_id is required"},
-		{http.StatusPreconditionFailed, "SOMETHING_ELSE"},
-		{http.StatusPreconditionFailed, "DELEGATION_MISSING"},
+		{http.StatusServiceUnavailable, "DELEGATION_MISSING"},
 	} {
 		client := brokerErrorClient(t, rf.status, testProjectedToken, func(*http.Request) io.ReadCloser {
 			return io.NopCloser(strings.NewReader(rf.body))

@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — the broker contract, held against the host's real gateway
+
+- **Fix (moduleauthority).** A source mint's HTTP 412 returns
+  `ErrDelegationMissing` again, wrapping the same `*BrokerError`: the source
+  has no active delegation, and a person must reconnect it. It is decided by
+  status alone, as 403 → `ErrDelegationInvalid` is — the v0.0.94 gateway
+  answers 412 on that path only for `DELEGATION_MISSING` (any other
+  FailedPrecondition is a 502) — so no response body is read.
+  `ErrDelegationMissing` is no longer deprecated. `ErrDelegationRevoked`
+  stays deprecated: telling it apart would need the body.
+- **Behaviour change.** `moduleauthority.New` refuses an `OrganizationID` that
+  is not a canonical (lowercase, hyphenated) UUID with `ErrInvalidCredentials`.
+  It used to be accepted and fail at the first mint as an untyped HTTP 400,
+  since accounts applies the same rule. An uppercase, braced, `urn:uuid:` or
+  unhyphenated UUID is now refused at construction.
+- Documented: a missing or wrong organization (a shared module naming none, a
+  tenant-pinned module naming another) is refused as `ErrInvalidCredentials`
+  (HTTP 401) on the module Work Context mint and `ErrPermissionDenied`
+  (HTTP 403) on the operation mint (`ErrInvalidCredentials` doc, README).
+- **CI.** New `host-gateway-conformance` job: `conformance/hostgateway/run.sh`
+  mints with the SDK's real client through module-saas-starter's real
+  auth-gateway handlers at the `SOURCE.txt` ref, faking only accounts' gRPC
+  mints. The host checkout comes from a `host-source` composite action now
+  shared with `gen-drift`; `SOURCE.txt` records the gateway path beside the
+  proto path.
+- `moduleauthority`'s fake gateway follows the real one's prefix rule, check
+  order, and indifference to the legacy module-secret header; its remaining,
+  deliberate divergences are listed in `host_fake_test.go`.
+
 ## Unreleased — callable sources
 
 - Reject unsupported HTTP response encodings before reading the body or

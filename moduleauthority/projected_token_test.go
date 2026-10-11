@@ -146,7 +146,6 @@ func TestHostFakeRefusesRemovedOrMalformedCredentials(t *testing.T) {
 			{name: "whitespace", authorization: []string{"Bearer  \t"}},
 			{name: "oversized", authorization: []string{"Bearer " + strings.Repeat("x", 64*1024+1)}, acceptedToken: strings.Repeat("x", 64*1024+1)},
 			{name: "secret only", legacy: true},
-			{name: "dual header", authorization: []string{"Bearer " + testProjectedToken}, legacy: true, acceptedToken: testProjectedToken},
 		} {
 			t.Run(mint.path+"/"+tc.name, func(t *testing.T) {
 				g := newFakeGateway(t)
@@ -170,6 +169,43 @@ func TestHostFakeRefusesRemovedOrMalformedCredentials(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The fake answers these three as the v0.0.94 gateway does (D1, D3, D4 in
+// host_fake_test.go); conformance/hostgateway pins the same three answers on
+// the real handlers, so the two cannot drift apart unnoticed.
+func TestHostFakeFollowsTheRealGatewayOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path, body string
+		bearer     string
+		legacy     bool
+		want       int
+	}{
+		// D1: the legacy header beside a valid bearer is ignored, not refused.
+		{"legacy header ignored", hostWorkContextPath, `{"prefix":"documents"}`, testProjectedToken, true, http.StatusOK},
+		// D3: one DNS label — a trailing hyphen is not a prefix.
+		{"trailing hyphen prefix", hostWorkContextPath, `{"prefix":"documents-"}`, testProjectedToken, false, http.StatusBadRequest},
+		// D4: the binding is validated before accounts judges the token.
+		{"binding before token", hostOperationContextPath, `{"prefix":"documents","binding":""}`, "not-the-token", false, http.StatusBadRequest},
+		{"source before token", hostSourceOperationContextPath, `{"prefix":"documents"}`, "not-the-token", false, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newFakeGateway(t)
+			request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			request.Header.Set("X-Codefly-Internal-Token", testInternalToken)
+			request.Header.Set("Authorization", "Bearer "+tc.bearer)
+			if tc.legacy {
+				request.Header.Set("X-Codefly-Module-Secret", "removed-credential")
+			}
+			response := httptest.NewRecorder()
+			g.serve(response, request)
+			// A token verdict ahead of validation would answer 401 here.
+			if response.Code != tc.want {
+				t.Fatalf("status = %d, want %d", response.Code, tc.want)
+			}
+		})
 	}
 }
 

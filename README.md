@@ -301,7 +301,14 @@ The SDK surfaces are:
   per organization, since each client caches its own module Work Context. A
   tenant-pinned module may omit the selector or name its own tenant. The host
   checks the module envelope and live installation; selecting an organization
-  grants no authority. Source mints ignore this selector and derive their
+  grants no authority. The selector must be a canonical UUID (lowercase,
+  hyphenated), as accounts requires; `New` refuses any other form with
+  `ErrInvalidCredentials` rather than letting the first mint fail as an untyped
+  400. A missing or wrong organization — a shared module that names none, or a
+  tenant-pinned module that names another — is refused as unproven
+  credentials: `ErrInvalidCredentials` (HTTP 401) from `ModuleWorkContext`, and
+  `ErrPermissionDenied` (HTTP 403) from `MintModuleOperationContext`. The host
+  does not say that the organization was the cause. Source mints ignore this selector and derive their
   organization from the source's delegation. Deployment and identity requirements
   are in [MODULE_INSTALLATION.md](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/MODULE_INSTALLATION.md)
   and [Establishing what a caller is running](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/services/accounts/AGENTS.md#establishing-what-a-caller-is-running).
@@ -475,7 +482,10 @@ compatible dependency floor with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through
 `refs/tags/` and verifies that regeneration leaves no diff. Before a host
-release, an exact PR-head commit may be used for development.
+release, an exact PR-head commit may be used for development. The same ref is
+the host whose real auth-gateway handlers `moduleauthority` must mint through
+in CI (`conformance/hostgateway/run.sh <host checkout>`), so moving it moves
+the broker contract too.
 
 Regeneration and matching SDK releases are owned by `module-saas-starter` and
 this repository. Until release automation covers both, follow the
@@ -596,8 +606,12 @@ with `errors.As`. It contains only `StatusCode` and `Classification`
 and headers are excluded entirely; classification never depends on reading a
 body. The 401, 403 and 503 sentinels remain `ErrInvalidCredentials`,
 `ErrPermissionDenied` (or `ErrDelegationInvalid` for source mints), and
-`ErrExecutionUnestablished`. Body-based delegation distinctions are gone: source
-403s all return `ErrDelegationInvalid`; 412s carry only `BrokerError`.
+`ErrExecutionUnestablished`. A source mint's 412 is `ErrDelegationMissing`: the
+source has no active delegation to this module, and a person must connect or
+reconnect it — minting again will not help. The gateway answers 412 there only
+for a missing delegation, so the status alone decides it. Body-based delegation
+distinctions are gone: source 403s all return `ErrDelegationInvalid`, whether
+the delegation was revoked or is otherwise unusable.
 `BrokerError.Path` and `BrokerError.Reason` have been removed.
 
 Transport and response read failures return `*moduleauthority.BrokerTransportError`

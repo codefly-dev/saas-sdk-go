@@ -41,6 +41,34 @@ import (
 //     server: the module-exposure check of grpc_auth_interceptor.go (internal
 //     token, procedure served) and the module Work Context check of
 //     module_capabilities_server.go.
+//
+// fakeGateway is the edge-case double; the contract itself is held by
+// conformance/hostgateway, which mints through the host's REAL gateway
+// handlers at the tag in SOURCE.txt. The fake follows the real gateway's
+// perimeter, prefix rule and check order (internal token, then exactly one
+// Bearer, then body, prefix and binding/source validation, then accounts'
+// verdict). Where it still differs, it differs on purpose:
+//
+//   - D2: it decodes the body into map[string]string and records every key, so
+//     an extra or misnamed field is visible to an exact-body assertion; the
+//     real gateway decodes into a struct and drops unknown keys silently.
+//   - D5: a test may inject any refusal on any path. The real gateway never
+//     answers 403 (or 412) on /modules/_work-context — accounts'
+//     PermissionDenied is a 401 there — so no test here injects one.
+//   - D6: accounts' Unauthenticated and FailedPrecondition on the work-context
+//     mint (a 502 from the real gateway) are not modelled; only injected
+//     statuses are.
+//   - D7: it accepts one internal token; the real gateway also accepts the
+//     previous one during rotation.
+//   - D8: refusal bodies are whatever a test injects; the real gateway sends
+//     fixed strings and ErrorInfo reasons. The client never reads them.
+//
+// D1 (the legacy X-Codefly-Module-Secret header beside a valid bearer: the
+// fake used to refuse it, the real gateway ignores it), D3 (the prefix
+// pattern) and D4 (the token verdict before binding/source validation) are
+// aligned with the real gateway. That the client never sends the legacy header
+// is asserted on the request itself (assertProjectedBearer), not left to the
+// fake's verdict.
 
 const (
 	testInternalToken  = "internal-perimeter-token"
@@ -73,9 +101,13 @@ type failingToken struct{ err error }
 
 func (f failingToken) ProjectedToken() (string, error) { return "", f.err }
 
-// catalogIdentity mirrors the gateway's validCatalogIdentity closely enough
-// for a prefix: one lowercase DNS-ish segment.
-var catalogIdentity = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+// catalogIdentity is the gateway's validCatalogIdentity (routing_artifact.go
+// at v0.0.94): one DNS label, at most 63 characters.
+var catalogIdentity = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+
+func validCatalogIdentity(value string) bool {
+	return len(value) <= 63 && catalogIdentity.MatchString(value)
+}
 
 // refusal is a broker answer other than 200.
 type refusal struct {
@@ -168,12 +200,8 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	// The real gateway no longer reads the legacy header. Refuse even its
-	// presence here as a stricter regression guard against sending it again.
-	if len(r.Header.Values("X-Codefly-Module-Secret")) != 0 {
-		plainError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	// The real gateway reads no X-Codefly-Module-Secret header at all, so
+	// neither does this one: it is neither refused nor accepted on its own.
 	// Exactly one Bearer token, trimmed and bounded as gateway_modules.go
 	// lines 112–122 at v0.0.94 (the literal limit is independent of the SDK).
 	authorization := r.Header.Values("Authorization")
@@ -192,11 +220,27 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.bodies[r.URL.Path] = append(g.bodies[r.URL.Path], payload)
-	if !catalogIdentity.MatchString(payload["prefix"]) {
+	if !validCatalogIdentity(payload["prefix"]) {
 		plainError(w, http.StatusBadRequest, "invalid prefix")
 		return
 	}
-	// accounts' verdict on the token: the gateway maps it per path.
+	// The gateway validates each path's own fields before it calls accounts.
+	switch r.URL.Path {
+	case hostOperationContextPath:
+		if binding := payload["binding"]; binding == "" || len(binding) > 128 {
+			plainError(w, http.StatusBadRequest, "invalid binding")
+			return
+		}
+	case hostSourceOperationContextPath:
+		delegation, source := payload["delegation_id"], payload["source_id"]
+		if (delegation == "") == (source == "") || len(delegation) > 64 || len(source) > 64 {
+			plainError(w, http.StatusBadRequest, "exactly one of delegation_id or source_id is required")
+			return
+		}
+	}
+	// accounts' verdict on the token, which the gateway maps to 401 on every
+	// path (PermissionDenied on the work-context mint, Unauthenticated on the
+	// operation mints).
 	if payload["prefix"] != testPrefix || projected != g.projectedToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -214,10 +258,6 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		answer(w, map[string]string{"token": token, "expiresAt": expiresAt, "principalId": testPrincipal, "tenant": testTenant})
 	case hostOperationContextPath:
 		binding := payload["binding"]
-		if binding == "" || len(binding) > 128 {
-			plainError(w, http.StatusBadRequest, "invalid binding")
-			return
-		}
 		if rf, ok := g.refuse[hostOperationContextPath]; ok {
 			rf.write(w)
 			return
@@ -230,11 +270,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 			"tenant": testTenant, "audience": "modelservice", "binding": binding,
 		})
 	case hostSourceOperationContextPath:
-		delegation, source := payload["delegation_id"], payload["source_id"]
-		if (delegation == "") == (source == "") || len(delegation) > 64 || len(source) > 64 {
-			plainError(w, http.StatusBadRequest, "exactly one of delegation_id or source_id is required")
-			return
-		}
+		source := payload["source_id"]
 		if rf, ok := g.refuse[hostSourceOperationContextPath]; ok {
 			rf.write(w)
 			return

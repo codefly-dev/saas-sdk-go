@@ -101,3 +101,31 @@ func TestPlaintextSeamsNeedLoopbackOrAnAssertion(t *testing.T) {
 		t.Fatalf("TLS seams: %v", err)
 	}
 }
+
+// accounts refuses any organization selector that is not a canonical UUID
+// (InvalidArgument, an untyped 400 at the first mint); New refuses it before
+// anything is sent, on the same rule.
+func TestNewRefusesANonCanonicalOrganization(t *testing.T) {
+	const org = "6f1c3e2a-9b4d-4c8e-a1f0-2d3b4c5e6f7a"
+	h := newHost(t)
+	for _, org := range []string{
+		"ACME",
+		strings.ToUpper(org),
+		"{" + org + "}",
+		"urn:uuid:" + org,
+		strings.ReplaceAll(org, "-", ""),
+		" " + org,
+	} {
+		_, err := New(h.seams(), Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken), OrganizationID: org})
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("organization %q: error = %v, want %v", org, err, ErrInvalidCredentials)
+		}
+	}
+	client := h.client(t, Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken), OrganizationID: org})
+	if _, err := client.ModuleWorkContext(t.Context()); err != nil {
+		t.Fatalf("canonical organization: %v", err)
+	}
+	if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 1 {
+		t.Fatalf("broker calls = %v, want only the canonical client's mint", calls)
+	}
+}
