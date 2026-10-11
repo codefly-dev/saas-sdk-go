@@ -149,7 +149,7 @@ func (path ProjectedTokenFile) ProjectedToken() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("module authority: open projected token: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(file, maxProjectedToken+1))
 	if err != nil {
 		return "", fmt.Errorf("module authority: read projected token: %w", err)

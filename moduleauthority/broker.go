@@ -97,7 +97,7 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body map[
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBrokerResponse+1))
 	if err != nil {
 		return err
