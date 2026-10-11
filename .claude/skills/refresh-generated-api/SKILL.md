@@ -21,11 +21,14 @@ git clone --filter=blob:none --no-checkout \
     https://github.com/codefly-dev/module-saas-starter.git starter
 cd starter
 git sparse-checkout set --no-cone 'module/services/accounts/proto'
-git checkout <ref>          # a commit SHA, so the result is reproducible
+git fetch origin tag <tag>
+git checkout --detach <tag> # use the published release tag when available
 ```
 
 Put it outside this repo's tree — a scratch directory, not a sibling path a
 `./...` pattern can pick up.
+Verify an annotated tag's target with `git rev-parse '<tag>^{commit}'`.
+For development before a release, use an exact PR-head commit instead.
 
 ## 2. Generate
 
@@ -79,8 +82,10 @@ of the several green-making changes is the real fix.
 Three files move with the tree, and a tag that skips one claims a contract it
 does not carry:
 
-- **`SOURCE.txt`** — the ref you checked out, and the module version from
-  upstream's `module/module.package.codefly.yaml`.
+- **`SOURCE.txt`** — the release tag you checked out (or exact PR-head commit
+  before a release), and the module version from upstream's
+  `module/module.package.codefly.yaml`. CI resolves release pins through
+  `refs/tags/` so a same-named branch cannot select the source.
 - **`CHANGELOG.md`** — under the unreleased heading. `### Added` for new
   services, facades, and fields; `### Removed (breaking)` for anything the
   regeneration deleted, naming the symbols a consumer will fail to compile

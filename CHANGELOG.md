@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — callable sources (awaits host tag)
+## Unreleased — callable sources
 
 - Reject unsupported HTTP response encodings before reading the body or
   inferring an HTTP status: Declare/List return `DatasourceError` with no
@@ -59,10 +59,14 @@
   existing org/source arguments cannot override the host's derived authority.
 - Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
   data; the gate and its fixtures are unchanged.
-- Regenerate the full host API from PR #1052 head
-  `2a16c688c61d66645e1063c495fa38eaf2fa52de`, recorded in `SOURCE.txt` with module
-  version `0.1.0`. This is a development PR head, not a release tag. Release
-  waits for the host tag and regeneration from its commit.
+- Regenerate the full host API from released tag `v0.0.94`, recorded in
+  `SOURCE.txt` with module version `0.1.0`. The datasource bindings are unchanged
+  from the reviewed PR-head contract. This refresh creates no SDK release.
+  CI and the regeneration procedure now accept release-tag provenance.
+- Include the host's installation narrowing, organisation installation listing
+  and team grant/revoke RPCs, plus platform-admin module envelope reads/writes,
+  in the regenerated API. Module capability comments describe the host's
+  structured tenant-membership and idempotency refusals.
 - Include the runtime-facing `PruneSourceOperationReceipts` and
   `LookupPruneSourceOperationReceipts` RPCs in generated bindings only;
   no receipt retention methods are exposed by the caller facade.
@@ -73,6 +77,17 @@
 
 ### Removed / changed (breaking, inherited host contract)
 
+- Host `v0.0.94` removes `MintModuleRegistration` and `MintSolutionRegistration`
+  RPCs, their procedure constants, and `ModuleMintRegistrationRequest/Response`
+  and `SolutionMintRegistrationRequest/Response`. Work Context mints now prove
+  workload identity with projected ServiceAccount tokens; there is no replacement
+  registration-credential mint RPC.
+- Generated `ModuleMintWorkContextRequest`, `ModuleMintOperationContextRequest`
+  and `ModuleMintSourceOperationContextRequest` lose `Secret`/`GetSecret` and
+  gain `ServiceAccountToken`/`GetServiceAccountToken`. The first two requests
+  also gain `OrganizationId` for shared-principal installation selection.
+  The gateway route-rejection fixture now uses the current request field;
+  the hand-written gateway broker transport is unchanged.
 - `moduleauthority.CurrentInstallation.SolutionIdentifier` is replaced by
   `TargetID` and `BindingID`, reflecting the host's immutable authority
   identities. The SDK validates the target UUID and nonempty binding.

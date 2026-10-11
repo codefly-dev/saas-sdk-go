@@ -17,7 +17,7 @@ func TestTheGatewayFakeRefusesTheConnectPathTheOldClientUsed(t *testing.T) {
 	// way the real gateway does, or every other test here proves nothing.
 	h := newHost(t)
 	old := accountsv1connect.NewModuleCapabilitiesServiceClient(h.gateway.HTTPClient(), h.gateway.BaseURL())
-	_, err := old.MintModuleWorkContext(t.Context(), connect.NewRequest(&ModuleMintWorkContextRequest{Prefix: testPrefix, Secret: testSecret}))
+	_, err := old.MintModuleWorkContext(t.Context(), connect.NewRequest(&ModuleMintWorkContextRequest{Prefix: testPrefix, ServiceAccountToken: "projected-service-account-token"}))
 	if connect.CodeOf(err) != connect.CodeUnimplemented { // Connect's mapping of HTTP 404
 		t.Fatalf("a Connect call at the gateway: %v, want 404 (unimplemented)", err)
 	}

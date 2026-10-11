@@ -42,7 +42,7 @@ jobs:
   # gen/ must be exactly what buf.gen.yaml produces from the proto ref recorded
   # in SOURCE.txt. The recipe is the one in the refresh-generated-api skill:
   # this repo's buf.gen.yaml (plugin versions pinned there), run from
-  # module/services/accounts/proto of the source repo at the recorded commit.
+  # module/services/accounts/proto of the source repo at the recorded tag or commit.
   # clean: true in the template wipes gen/ first, so a stale, extra or edited
   # file all show up as a diff.
   gen-drift:
@@ -59,9 +59,9 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          line=$(grep -m1 -oE 'codefly-dev/module-saas-starter@[0-9a-f]{40}' sdk/SOURCE.txt || true)
+          line=$(grep -m1 -oE 'codefly-dev/module-saas-starter@(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$' sdk/SOURCE.txt || true)
           if [ -z "$line" ]; then
-            echo "::error file=SOURCE.txt::no 'codefly-dev/module-saas-starter@<40-hex sha>' ref found"
+            echo "::error file=SOURCE.txt::no 'codefly-dev/module-saas-starter@<release tag or 40-hex sha>' ref found"
             exit 1
           fi
           proto=$(grep -m1 -oE 'accounts public proto: [^)]+' sdk/SOURCE.txt | sed 's/^accounts public proto: //')
@@ -69,14 +69,18 @@ jobs:
             echo "::error file=SOURCE.txt::no '(accounts public proto: <path>)' line found"
             exit 1
           fi
-          echo "sha=${line#*@}" >> "$GITHUB_OUTPUT"
+          ref=${line#*@}
+          if [[ "$ref" == v* ]]; then
+            ref="refs/tags/$ref"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "proto=$proto" >> "$GITHUB_OUTPUT"
           echo "source: codefly-dev/module-saas-starter@${line#*@} ($proto)"
       # The source repo is public, so the default token is enough.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: codefly-dev/module-saas-starter
-          ref: ${{ steps.source.outputs.sha }}
+          ref: ${{ steps.source.outputs.ref }}
           path: source
           sparse-checkout: ${{ steps.source.outputs.proto }}
           sparse-checkout-cone-mode: false
@@ -100,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain)" ]; then
-            echo "gen/ reproduces byte-for-byte from $(grep -m1 -oE 'module-saas-starter@[0-9a-f]{40}' SOURCE.txt)"
+            echo "gen/ reproduces byte-for-byte from $(grep -m1 -oE 'module-saas-starter@(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$' SOURCE.txt)"
             exit 0
           fi
           echo "::error::gen/ does not match a regeneration from the ref in SOURCE.txt. Never hand-edit gen/: regenerate it (refresh-generated-api skill), or correct SOURCE.txt if it records the wrong ref."

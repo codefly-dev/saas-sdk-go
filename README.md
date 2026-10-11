@@ -219,8 +219,8 @@ The SDK surfaces are:
 
   This call surface uses the four host RPCs from
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
-  `SOURCE.txt` records its exact development PR head. It is not a release tag:
-  release waits for the host tag and regeneration from the tagged commit.
+  `SOURCE.txt` records the released host tag `v0.0.94` used to regenerate
+  the bindings. This regeneration does not publish an SDK release.
   The host's runtime-scheduled `PruneSourceOperationReceipts` and
   `LookupPruneSourceOperationReceipts` are included in the generated bindings
   only; this caller facade does not expose receipt retention operations.
@@ -379,9 +379,11 @@ proto ref `gen/` was generated from.
 ## Regenerating `gen/`
 
 The proto source of truth is `module-saas-starter/module/services/accounts/proto`.
-To refresh (from a checkout of that repo):
+To refresh from a released tag (in a checkout of that repo):
 
 ```bash
+git fetch origin tag v0.0.94
+git checkout --detach v0.0.94
 cd module/services/accounts/proto
 buf generate --template <this-repo>/buf.gen.yaml -o <this-repo>
 ```
@@ -400,6 +402,9 @@ protobuf initialization. Core v0.3.41 supplies the required Runnable package;
 the SDK need not adopt the host's entire dependency generation. Verify the
 compatible dependency floor with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
+Record the release tag in `SOURCE.txt`; CI checks out that tag through
+`refs/tags/` and verifies that regeneration leaves no diff. Before a host
+release, an exact PR-head commit may be used for development.
 
 > Wiring this regen into module-saas-starter's release (so a saas tag publishes a
 > matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).
