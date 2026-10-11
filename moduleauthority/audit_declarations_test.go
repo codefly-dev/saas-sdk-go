@@ -204,8 +204,12 @@ func TestAuditDeclarationStopsAtBrokerRefusal(t *testing.T) {
 		h.gateway.refuse[hostWorkContextPath] = refusal{http.StatusUnauthorized, "module identity refused"}
 		err := client.DeclareAuditEventTypes(t.Context(), auditDeclarations())
 		var brokerError *BrokerError
-		if !errors.Is(err, ErrInvalidCredentials) || !errors.As(err, &brokerError) || brokerError.StatusCode != http.StatusUnauthorized || brokerError.Path != hostWorkContextPath {
+		if !errors.Is(err, ErrInvalidCredentials) || !errors.As(err, &brokerError) || brokerError.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("lost broker refusal: %v", err)
+		}
+		assertBrokerError(t, err, http.StatusUnauthorized)
+		if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 1 || calls[0] != hostWorkContextPath {
+			t.Fatalf("broker calls = %v, want only the work-context mint", calls)
 		}
 		if len(h.authority.snapshot()) != 0 {
 			t.Fatal("declaration reached authority without a module capability")

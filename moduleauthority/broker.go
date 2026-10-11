@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	codefly "github.com/codefly-dev/sdk-go/workcontext"
@@ -36,23 +35,6 @@ const (
 // answers are a handful of short strings.
 const maxBrokerResponse = 64 << 10
 
-// BrokerError is a non-success answer from the gateway's module broker: the
-// HTTP status and the broker's plain-text reason. Every broker failure this
-// package returns wraps one, alongside a sentinel where the status has a
-// meaning (401 ErrInvalidCredentials; 403 ErrPermissionDenied or a delegation
-// refusal; 412 ErrDelegationMissing; 503 ErrExecutionUnestablished). 400 is a
-// request the broker would not accept; 502 means the broker could not reach
-// accounts and is worth retrying.
-type BrokerError struct {
-	Path       string
-	StatusCode int
-	Reason     string
-}
-
-func (e *BrokerError) Error() string {
-	return fmt.Sprintf("module broker %s: HTTP %d: %s", e.Path, e.StatusCode, e.Reason)
-}
-
 type broker struct {
 	baseURL string
 	client  *http.Client
@@ -79,7 +61,8 @@ func newBroker(seams Seams) (broker, error) {
 }
 
 // post sends one broker request and decodes a 200 answer into out. Any other
-// status is a *BrokerError.
+// status is a *BrokerError, classified without reading its body. Transport
+// and response read failures are *BrokerTransportError, without a cause.
 func (b broker) post(ctx context.Context, path, projectedToken string, body map[string]string, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -87,7 +70,7 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body map[
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return brokerTransportError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -95,18 +78,21 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body map[
 	req.Header.Set("Authorization", bearerScheme+projectedToken)
 	resp, err := b.client.Do(req)
 	if err != nil {
-		return err
+		return brokerTransportError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		// Exclude diagnostics entirely: a body, header or parser error can
+		// reflect any credential in forms a sanitizer cannot recognize.
+		return newBrokerError(resp.StatusCode)
+	}
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBrokerResponse+1))
 	if err != nil {
-		return err
+		return brokerTransportError(err)
 	}
 	if len(raw) > maxBrokerResponse {
 		return fmt.Errorf("module broker %s: response exceeds %d bytes", path, maxBrokerResponse)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return &BrokerError{Path: path, StatusCode: resp.StatusCode, Reason: strings.TrimSpace(string(raw))}
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: undecodable broker answer", ErrInvalidCapability)
