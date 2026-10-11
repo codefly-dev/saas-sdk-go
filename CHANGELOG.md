@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — mint once: the projected ServiceAccount token replaces the module secret
+
+- **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token}`: `Token` is a
+  `ProjectedTokenSource` that reads the module pod's projected ServiceAccount
+  token (audience `accounts`). `Secret` is deleted with the host's
+  `MODULE_IDENTITY_SECRETS`. Every broker mint sends the token as
+  `Authorization: Bearer`, read from its source before that mint (the kubelet
+  rotates it); `X-Codefly-Module-Secret` is no longer sent.
+- Added `ProjectedTokenFile`, the file-backed source. Its method set is
+  `sdk-go/workcontext`'s `ProjectedTokenSource`, so that implementation is
+  accepted once this module moves off the pre-cutover `sdk-go/workcontext` pin.
+- Added `ErrExecutionUnestablished` for the broker's `503`: the host could not
+  establish what the pod is running, nothing was decided, and a retry may
+  succeed. `401` still maps to `ErrInvalidCredentials`.
+- `gen/` is unchanged: the broker client speaks the broker's REST contract, not
+  the generated request types, so the regeneration waits for the host change to
+  land and is its own refresh.
+
 ## Unreleased — module audit declarations and gateway authority
 
 - Added `Client.DeclareAuditEventTypes` over the existing module-authority

@@ -32,7 +32,7 @@ func TestMintSourceOperationContextNamesOnlyTheSource(t *testing.T) {
 	if len(body) != 2 || body["prefix"] != testPrefix || body["source_id"] != exampleSource {
 		t.Fatalf("body = %v, want exactly prefix and source_id", body)
 	}
-	if headers[0].Get("X-Codefly-Module-Secret") != testSecret || headers[0].Get("X-Codefly-Internal-Token") != testInternalToken {
+	if headers[0].Get("Authorization") != "Bearer "+testProjectedToken || headers[0].Get("X-Codefly-Internal-Token") != testInternalToken {
 		t.Fatalf("headers = %v", headers[0])
 	}
 	h.assertNoStrayPaths(t)

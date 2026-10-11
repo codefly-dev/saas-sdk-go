@@ -3,6 +3,8 @@ package moduleauthority
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,7 +19,7 @@ func TestTheGatewayFakeRefusesTheConnectPathTheOldClientUsed(t *testing.T) {
 	// way the real gateway does, or every other test here proves nothing.
 	h := newHost(t)
 	old := accountsv1connect.NewModuleCapabilitiesServiceClient(h.gateway.HTTPClient(), h.gateway.BaseURL())
-	_, err := old.MintModuleWorkContext(t.Context(), connect.NewRequest(&ModuleMintWorkContextRequest{Prefix: testPrefix, Secret: testSecret}))
+	_, err := old.MintModuleWorkContext(t.Context(), connect.NewRequest(&ModuleMintWorkContextRequest{Prefix: testPrefix}))
 	if connect.CodeOf(err) != connect.CodeUnimplemented { // Connect's mapping of HTTP 404
 		t.Fatalf("a Connect call at the gateway: %v, want 404 (unimplemented)", err)
 	}
@@ -44,10 +46,11 @@ func TestModuleWorkContextIsMintedAtTheBrokerAndCached(t *testing.T) {
 		t.Fatalf("broker calls = %v, want one %s", calls, hostWorkContextPath)
 	}
 	if body := bodies[hostWorkContextPath][0]; len(body) != 1 || body["prefix"] != testPrefix {
-		t.Fatalf("body = %v, want only the prefix: the secret travels in its header", body)
+		t.Fatalf("body = %v, want only the prefix: the projected token travels as the bearer", body)
 	}
 	header := headers[0]
-	if header.Get("X-Codefly-Internal-Token") != testInternalToken || header.Get("X-Codefly-Module-Secret") != testSecret || header.Get("Content-Type") != "application/json" {
+	if header.Get("X-Codefly-Internal-Token") != testInternalToken || header.Get("Authorization") != "Bearer "+testProjectedToken ||
+		header.Get("X-Codefly-Module-Secret") != "" || header.Get("Content-Type") != "application/json" {
 		t.Fatalf("headers = %v", header)
 	}
 	h.assertNoStrayPaths(t)
@@ -97,7 +100,7 @@ func TestMintModuleOperationContextSendsOnlyTheBindingAndNeverCaches(t *testing.
 	if len(body) != 2 || body["prefix"] != testPrefix || body["binding"] != "model" {
 		t.Fatalf("body = %v", body)
 	}
-	if headers[1].Get("X-Codefly-Module-Secret") != testSecret || headers[1].Get("X-Codefly-Internal-Token") != testInternalToken {
+	if headers[1].Get("Authorization") != "Bearer "+testProjectedToken || headers[1].Get("X-Codefly-Internal-Token") != testInternalToken {
 		t.Fatalf("headers = %v", headers[1])
 	}
 	h.assertNoStrayPaths(t)
@@ -110,6 +113,7 @@ func TestMintModuleOperationContextTypesTheBrokerStatuses(t *testing.T) {
 	}{
 		{refusal{http.StatusUnauthorized, "unauthorized"}, ErrInvalidCredentials},
 		{refusal{http.StatusForbidden, "forbidden"}, ErrPermissionDenied},
+		{refusal{http.StatusServiceUnavailable, "operation context unavailable"}, ErrExecutionUnestablished},
 	} {
 		h := newHost(t)
 		h.gateway.refuse[hostOperationContextPath] = tc.refuse
@@ -144,10 +148,53 @@ func TestTheBrokerRefusesAWrongPerimeterCredential(t *testing.T) {
 	if _, err := client.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("wrong internal token: %v", err)
 	}
-	wrongSecret := h.client(t, Credentials{Prefix: testPrefix, Secret: "wrong"})
-	if _, err := wrongSecret.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("wrong secret: %v", err)
+	wrongToken := h.client(t, Credentials{Prefix: testPrefix, Token: staticToken("another-pods-token")})
+	if _, err := wrongToken.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("a token the host refuses: %v", err)
 	}
+}
+
+// The token is read from its source before EVERY mint, never once at New: the
+// kubelet rotates the projection under a running process, and the copy read
+// at boot expires long before the process does.
+func TestTheProjectedTokenIsReadBeforeEveryMint(t *testing.T) {
+	h := newHost(t)
+	reads := 0
+	source := countingToken{token: testProjectedToken, reads: &reads}
+	client := h.client(t, Credentials{Prefix: testPrefix, Token: source})
+	if reads != 0 {
+		t.Fatalf("New read the token %d times; it must read none", reads)
+	}
+	for range 2 {
+		if _, err := client.MintModuleOperationContext(t.Context(), "model"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reads != 2 {
+		t.Fatalf("token reads = %d, want one per mint", reads)
+	}
+}
+
+// A token source that cannot answer mints nothing and contacts nobody.
+func TestAnUnreadableProjectedTokenContactsNoBroker(t *testing.T) {
+	h := newHost(t)
+	client := h.client(t, Credentials{Prefix: testPrefix, Token: failingToken{errors.New("projection not mounted")}})
+	if _, err := client.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("unreadable token: %v", err)
+	}
+	if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 0 {
+		t.Fatalf("broker calls = %v, want none", calls)
+	}
+}
+
+type countingToken struct {
+	token string
+	reads *int
+}
+
+func (c countingToken) ProjectedToken() (string, error) {
+	*c.reads++
+	return c.token, nil
 }
 
 func TestMintModuleOperationContextRejectsAnInvalidCapability(t *testing.T) {
@@ -199,5 +246,35 @@ func TestTheBrokerClientNeverFollowsARedirect(t *testing.T) {
 	}
 	if calls, _, _, _ := target.snapshot(); len(calls) != 0 {
 		t.Fatalf("the redirect was followed: %v", calls)
+	}
+}
+
+func TestProjectedTokenFileReadsTheProjectionAsItIsNow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("  first-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := ProjectedTokenFile(path)
+	if token, err := source.ProjectedToken(); err != nil || token != "first-token" {
+		t.Fatalf("token = %q, %v", token, err)
+	}
+	// The kubelet rewrites the file under the running process.
+	if err := os.WriteFile(path, []byte("rotated-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if token, err := source.ProjectedToken(); err != nil || token != "rotated-token" {
+		t.Fatalf("after rotation: token = %q, %v", token, err)
+	}
+	// Empty mid-rotation, or never mounted, is an error and never a token.
+	if err := os.WriteFile(path, []byte(" \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.ProjectedToken(); err == nil {
+		t.Fatal("an empty projection must not read as a token")
+	}
+	for _, missing := range []ProjectedTokenFile{"", ProjectedTokenFile(filepath.Join(t.TempDir(), "absent"))} {
+		if _, err := missing.ProjectedToken(); err == nil {
+			t.Fatalf("%q: an absent projection must not read as a token", missing)
+		}
 	}
 }

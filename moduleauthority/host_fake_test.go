@@ -43,14 +43,14 @@ import (
 //     module_capabilities_server.go.
 
 const (
-	testInternalToken = "internal-perimeter-token"
-	testPrefix        = "documents"
-	testSecret        = "projected-secret"
-	testTenant        = "11111111-1111-4111-8111-111111111111"
-	testPrincipal     = "00000000-0000-4000-8000-00000000beef"
-	testOwner         = "44444444-4444-4444-8444-444444444444"
-	testDelegation    = "33333333-3333-4333-8333-333333333333"
-	exampleSource     = "55555555-5555-4555-8555-555555555555"
+	testInternalToken  = "internal-perimeter-token"
+	testPrefix         = "documents"
+	testProjectedToken = "projected-sa-token"
+	testTenant         = "11111111-1111-4111-8111-111111111111"
+	testPrincipal      = "00000000-0000-4000-8000-00000000beef"
+	testOwner          = "44444444-4444-4444-8444-444444444444"
+	testDelegation     = "33333333-3333-4333-8333-333333333333"
+	exampleSource      = "55555555-5555-4555-8555-555555555555"
 )
 
 // The broker's paths as the host serves them, spelled out rather than taken
@@ -61,7 +61,17 @@ const (
 	hostSourceOperationContextPath = "/modules/_source-operation-context"
 )
 
-var moduleCredentials = Credentials{Prefix: testPrefix, Secret: testSecret}
+var moduleCredentials = Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken)}
+
+// staticToken is a ProjectedTokenSource that answers one value; rotatingToken
+// answers the next of several on each read, the way a kubelet rotation does.
+type staticToken string
+
+func (s staticToken) ProjectedToken() (string, error) { return string(s), nil }
+
+type failingToken struct{ err error }
+
+func (f failingToken) ProjectedToken() (string, error) { return "", f.err }
 
 // catalogIdentity mirrors the gateway's validCatalogIdentity closely enough
 // for a prefix: one lowercase DNS-ish segment.
@@ -156,11 +166,14 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	secret := r.Header.Get("X-Codefly-Module-Secret")
-	if secret == "" {
+	// Exactly one bearer, as the real broker reads it; a module secret header
+	// is not a credential the host reads any more.
+	authorization := r.Header.Values("Authorization")
+	if len(authorization) != 1 || !strings.HasPrefix(authorization[0], "Bearer ") {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	projected := strings.TrimPrefix(authorization[0], "Bearer ")
 	var payload map[string]string
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&payload); err != nil {
 		plainError(w, http.StatusBadRequest, "invalid json")
@@ -171,8 +184,8 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusBadRequest, "invalid prefix")
 		return
 	}
-	// accounts' verdict on the secret: the gateway maps it per path.
-	if payload["prefix"] != testPrefix || secret != testSecret {
+	// accounts' verdict on the token: the gateway maps it per path.
+	if payload["prefix"] != testPrefix || projected != testProjectedToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}

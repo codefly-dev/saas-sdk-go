@@ -66,7 +66,8 @@ type sourceOperationContextResponse struct {
 //     also a 403 whose body names no reason (a host that predates the
 //     reasons), since every 403 of this mint is a delegation the module may
 //     not use;
-//   - HTTP 401 is ErrInvalidCredentials.
+//   - HTTP 401 is ErrInvalidCredentials;
+//   - HTTP 503 is ErrExecutionUnestablished, and may be retried.
 //
 // Anything else (400, 502, transport errors) is an ordinary failure; a 502 may
 // be retried. The result is never cached.
@@ -74,8 +75,12 @@ func (c *Client) MintSourceOperationContext(ctx context.Context, sourceID string
 	if sourceID == "" {
 		return SourceOperationContext{}, ErrInvalidExchange
 	}
+	projected, err := c.credentials.projectedToken()
+	if err != nil {
+		return SourceOperationContext{}, err
+	}
 	var issued sourceOperationContextResponse
-	if err := c.broker.post(ctx, sourceOperationContextPath, c.credentials.Secret, map[string]string{
+	if err := c.broker.post(ctx, sourceOperationContextPath, projected, map[string]string{
 		"prefix":    c.credentials.Prefix,
 		"source_id": sourceID,
 	}, &issued); err != nil {
@@ -114,6 +119,8 @@ func delegationRefusal(err error) error {
 	switch be.StatusCode {
 	case http.StatusUnauthorized:
 		return ErrInvalidCredentials
+	case http.StatusServiceUnavailable:
+		return ErrExecutionUnestablished
 	case http.StatusPreconditionFailed:
 		if be.Reason == delegationMissingReason {
 			return ErrDelegationMissing
