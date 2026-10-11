@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — exclude broker diagnostics
+
+- **Fix at the SDK error boundary; breaking.** Broker errors exclude all
+  response diagnostics instead of attempting credential redaction.
+  `BrokerError.Path` and `Reason` are removed; only the HTTP status and the
+  refused/not-established/other classification remain, with fixed messages.
+- Transport and response read failures return `BrokerTransportError` with only
+  a timeout/connection-refused/TLS/other category. No underlying cause is
+  retained or unwrapped; retry policies use `errors.As` and the category.
+- Non-200 status classification does not read the response body. Source 403s
+  uniformly return `ErrDelegationInvalid`; 412s retain only `BrokerError`.
+  Body-derived `ErrDelegationMissing` and `ErrDelegationRevoked` are deprecated
+  and no longer returned by source mints.
+
 ## Unreleased — mint once: the projected ServiceAccount token replaces the module secret
 
 - **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token}`: `Token` is a

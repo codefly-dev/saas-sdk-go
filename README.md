@@ -348,7 +348,28 @@ The host admits only operator-bound namespaces. Re-declaring the identical schem
 is idempotent; fields and enum values may grow, while removal, retyping and changes
 to visibility are refused. A rejected module capability (`Unauthenticated`) is
 refreshed and retried once. Other authority refusals retain their Connect codes
-and details (`connect.CodeOf(err)` / `errors.As`) and are not retried. Broker
-failures retain `*moduleauthority.BrokerError` and their existing sentinels. A
-mint-only client's declaration fails with `ErrNoAuthority` before any network
-request. A missing bridge fails without switching transports.
+and details (`connect.CodeOf(err)` / `errors.As`) and are not retried. A mint-only
+client's declaration fails with `ErrNoAuthority` before any network request. A
+missing bridge fails without switching transports.
+
+Broker non-200 responses return `*moduleauthority.BrokerError`, discoverable
+with `errors.As`. It contains only `StatusCode` and `Classification`
+(`BrokerErrorRefused` for 401/403, `BrokerErrorNotEstablished` for 503,
+`BrokerErrorOther` otherwise), with a fixed message per class. Response bodies
+and headers are excluded entirely; classification never depends on reading a
+body. The 401, 403 and 503 sentinels remain `ErrInvalidCredentials`,
+`ErrPermissionDenied` (or `ErrDelegationInvalid` for source mints), and
+`ErrExecutionUnestablished`. Body-based delegation distinctions are gone: source
+403s all return `ErrDelegationInvalid`; 412s carry only `BrokerError`.
+`BrokerError.Path` and `BrokerError.Reason` have been removed.
+
+Transport and response read failures return `*moduleauthority.BrokerTransportError`
+with a fixed message and a `Category`: `BrokerTransportTimeout`,
+`BrokerTransportConnectionRefused`, `BrokerTransportTLS`, or
+`BrokerTransportOther`. It retains no underlying error and has no `Unwrap`
+method. Callers use `errors.As` and the category for retry decisions, and check
+their context's `Err()` for cancellation. For example, a caller may retry a 502,
+503, timeout or refused connection, while surfacing a 401/403 denial. The SDK
+does not automatically retry broker failures. Malformed initial HTTP headers
+provide no usable status and produce a transport error; malformed bodies cannot
+change a successfully parsed non-200 status into a transport failure.

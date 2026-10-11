@@ -1,13 +1,35 @@
 package moduleauthority
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+type brokerMintCase struct {
+	path      string
+	call      func(*Client) error
+	forbidden error
+}
+
+func brokerMints(t *testing.T) []brokerMintCase {
+	return []brokerMintCase{
+		{hostWorkContextPath, func(c *Client) error { _, err := c.ModuleWorkContext(t.Context()); return err }, ErrPermissionDenied},
+		{hostOperationContextPath, func(c *Client) error {
+			_, err := c.MintModuleOperationContext(t.Context(), "binding")
+			return err
+		}, ErrPermissionDenied},
+		{hostSourceOperationContextPath, func(c *Client) error {
+			_, err := c.MintSourceOperationContext(t.Context(), exampleSource)
+			return err
+		}, ErrDelegationInvalid},
+	}
+}
 
 // Exercise the public mint methods without a listener or network access.
 type brokerErrorTransport func(*http.Request) (*http.Response, error)
@@ -21,12 +43,21 @@ func (g brokerErrorGateway) HTTPClient() *http.Client { return g.client }
 
 func brokerErrorClient(t *testing.T, status int, projected string, body func(*http.Request) io.ReadCloser) *Client {
 	t.Helper()
-	httpClient := &http.Client{Transport: brokerErrorTransport(func(r *http.Request) (*http.Response, error) {
+	return brokerTransportClient(t, projected, brokerErrorTransport(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Authorization") != "Bearer "+projected {
 			t.Fatal("broker request did not carry the projected bearer")
 		}
-		return &http.Response{StatusCode: status, Header: make(http.Header), Body: body(r), Request: r}, nil
-	})}
+		if r.Header.Get(internalTokenHeader) != testInternalToken {
+			t.Fatal("broker request did not carry the internal token")
+		}
+		// Reflect both credentials in headers as well as the supplied body.
+		return &http.Response{StatusCode: status, Header: r.Header.Clone(), Body: body(r), Request: r}, nil
+	}))
+}
+
+func brokerTransportClient(t *testing.T, projected string, transport http.RoundTripper) *Client {
+	t.Helper()
+	httpClient := &http.Client{Transport: transport}
 	client, err := New(Seams{
 		Gateway:       brokerErrorGateway{client: httpClient},
 		InternalToken: testInternalToken,
@@ -59,22 +90,8 @@ func (b brokenBrokerBody) Read(p []byte) (int, error) {
 }
 
 func TestBrokerFailuresPreserveStatus(t *testing.T) {
-	for _, mint := range []struct {
-		path      string
-		call      func(*Client) error
-		forbidden error
-	}{
-		{hostWorkContextPath, func(c *Client) error { _, err := c.ModuleWorkContext(t.Context()); return err }, ErrPermissionDenied},
-		{hostOperationContextPath, func(c *Client) error {
-			_, err := c.MintModuleOperationContext(t.Context(), "binding")
-			return err
-		}, ErrPermissionDenied},
-		{hostSourceOperationContextPath, func(c *Client) error {
-			_, err := c.MintSourceOperationContext(t.Context(), exampleSource)
-			return err
-		}, ErrDelegationInvalid},
-	} {
-		for _, status := range []int{401, 403, 503, 400, 502, 307} {
+	for _, mint := range brokerMints(t) {
+		for _, status := range []int{401, 403, 503, 400, 502, 307, 412, 201, 204} {
 			for _, failure := range []string{"oversized", "unreadable", "partial"} {
 				t.Run(fmt.Sprintf("%s/%d/%s", mint.path, status, failure), func(t *testing.T) {
 					var reader io.Reader
@@ -91,10 +108,7 @@ func TestBrokerFailuresPreserveStatus(t *testing.T) {
 					body := &brokerDiagnosticBody{Reader: reader}
 					client := brokerErrorClient(t, status, testProjectedToken, func(*http.Request) io.ReadCloser { return body })
 					err := mint.call(client)
-					var be *BrokerError
-					if !errors.As(err, &be) || be.StatusCode != status || be.Path != mint.path {
-						t.Fatalf("lost broker status/path: %v", err)
-					}
+					assertBrokerError(t, err, status)
 					var want error
 					switch status {
 					case 401:
@@ -104,15 +118,12 @@ func TestBrokerFailuresPreserveStatus(t *testing.T) {
 					case 503:
 						want = ErrExecutionUnestablished
 					}
-					for _, sentinel := range []error{ErrInvalidCredentials, ErrPermissionDenied, ErrDelegationInvalid, ErrExecutionUnestablished} {
+					for _, sentinel := range []error{ErrInvalidCredentials, ErrPermissionDenied, ErrDelegationInvalid, ErrDelegationMissing, ErrDelegationRevoked, ErrExecutionUnestablished} {
 						if errors.Is(err, sentinel) != (sentinel == want) {
 							t.Errorf("classification = %v, want only %v", err, want)
 						}
 					}
-					if be.Reason != "" {
-						t.Error("retained an incomplete broker diagnostic")
-					}
-					if !body.closed || body.read > (64<<10)+1 {
+					if !body.closed || body.read != 0 {
 						t.Errorf("body closed = %v, bytes read = %d", body.closed, body.read)
 					}
 				})
@@ -121,7 +132,7 @@ func TestBrokerFailuresPreserveStatus(t *testing.T) {
 	}
 }
 
-func TestBrokerFailureRedactsBearer(t *testing.T) {
+func TestBrokerFailureExcludesBearer(t *testing.T) {
 	for _, projected := range []string{"synthetic-projected-bearer", "first.second.third", "prefix/first.second.third/suffix"} {
 		for _, status := range []int{401, 403, 503, 502} {
 			t.Run(fmt.Sprintf("%s/%d", projected, status), func(t *testing.T) {
@@ -129,76 +140,152 @@ func TestBrokerFailureRedactsBearer(t *testing.T) {
 					return io.NopCloser(strings.NewReader("<html>" + r.Header.Get("Authorization") + "; echoed=" + projected + "</html>"))
 				})
 				_, err := client.ModuleWorkContext(t.Context())
-				var be *BrokerError
-				if !errors.As(err, &be) {
-					t.Fatalf("missing broker error: %v", err)
-				}
-				if strings.Contains(be.Reason, projected) || strings.Contains(err.Error(), projected) {
-					t.Error("reflected bearer leaked into Reason or Error()")
-				}
-				if want := "<html>Bearer [redacted]; echoed=[redacted]</html>"; be.Reason != want {
-					t.Error("reflected bearer was not fully replaced with [redacted]")
-				}
+				assertBrokerError(t, err, status)
+				assertBrokerErrorExcludes(t, err, projected, testInternalToken, "<html>", "echoed=")
 			})
 		}
 	}
 }
 
-func TestBrokerFailureRedactsJWT(t *testing.T) {
+func TestBrokerFailureExcludesJWT(t *testing.T) {
 	for _, jwt := range []string{"eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.c2lnbmF0dXJl", "a.b.c", "a_-0.b_1-.C-2_"} {
 		t.Run(jwt, func(t *testing.T) {
 			client := brokerErrorClient(t, 403, testProjectedToken, func(*http.Request) io.ReadCloser {
 				return io.NopCloser(strings.NewReader("unrelated credential: (" + jwt + "), again=" + jwt))
 			})
 			_, err := client.ModuleWorkContext(t.Context())
-			var be *BrokerError
-			if !errors.As(err, &be) {
-				t.Fatalf("missing broker error: %v", err)
-			}
-			if strings.Contains(be.Reason, jwt) || strings.Contains(err.Error(), jwt) {
-				t.Error("JWT-shaped credential leaked into Reason or Error()")
-			}
-			if be.Reason != "unrelated credential: ([redacted]), again=[redacted]" {
-				t.Error("JWT-shaped credentials were not replaced with [redacted]")
-			}
+			assertBrokerError(t, err, 403)
+			assertBrokerErrorExcludes(t, err, jwt, "unrelated credential", "again=")
 		})
 	}
 }
 
-func TestBrokerFailureReasonIsShortPrintableASCII(t *testing.T) {
+func TestBrokerFailureExcludesResponseDiagnostics(t *testing.T) {
+	const projected = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.c2lnbmF0dXJl"
+	encoded := strings.ReplaceAll(projected, ".", "%2E")
 	for _, tc := range []struct {
 		name string
 		body string
-		want string
 	}{
-		{"controls", "\x00denied\r\n\t\x1b\x7f\u202e\u00e9\xffend\x00", "denied        end"},
-		{"length", strings.Repeat("x", 1024), strings.Repeat("x", 256)},
-		// Redact before shortening, even when a credential crosses the limit.
-		{"bearer at limit", strings.Repeat("x", 240) + testProjectedToken, strings.Repeat("x", 240) + "[redacted]"},
-		{"JWT at limit", strings.Repeat("!", 240) + "first.second.third", strings.Repeat("!", 240) + "[redacted]"},
+		{"projected", "Authorization: Bearer " + projected},
+		{"internal", "X-Codefly-Internal-Token: " + testInternalToken},
+		{"URL encoded", encoded},
+		{"base64", base64.StdEncoding.EncodeToString([]byte(projected))},
+		{"split", strings.ReplaceAll(projected, ".", ".\n")},
+		{"partial clean EOF", "Bearer " + projected[:20]},
+		{"opaque partial clean EOF", "Bearer synthetic-opaque-secret"},
+		{"overlapping JWT", "auth.header." + projected},
+		{"encoded at limit", strings.Repeat("!", 240) + encoded},
+		// Preserve the old sanitizer's control and truncation regressions,
+		// now requiring complete exclusion instead of partial retention.
+		{"controls", "\x00denied\r\n\t\x1b\x7f\u202e\u00e9\xffend\x00"},
+		{"length", strings.Repeat("x", 1024)},
+		{"bearer at limit", strings.Repeat("x", 240) + testProjectedToken},
+		{"JWT at limit", strings.Repeat("!", 240) + "first.second.third"},
+		{"revoked reason", "DELEGATION_REVOKED"},
+		{"missing reason", "DELEGATION_MISSING"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			client := brokerErrorClient(t, 401, testProjectedToken, func(*http.Request) io.ReadCloser {
-				return io.NopCloser(strings.NewReader(tc.body))
-			})
-			_, err := client.ModuleWorkContext(t.Context())
-			var be *BrokerError
-			if !errors.As(err, &be) {
-				t.Fatalf("missing broker error: %v", err)
+		for _, mint := range brokerMints(t) {
+			for _, status := range []int{401, 403, 503, 502, 412} {
+				t.Run(fmt.Sprintf("%s/%s/%d", tc.name, mint.path, status), func(t *testing.T) {
+					client := brokerErrorClient(t, status, projected, func(*http.Request) io.ReadCloser {
+						return io.NopCloser(strings.NewReader(tc.body))
+					})
+					err := mint.call(client)
+					assertBrokerError(t, err, status)
+					assertBrokerErrorExcludes(t, err, tc.body, projected, testInternalToken, projected[:20])
+				})
 			}
-			if len(be.Reason) > 256 {
-				t.Errorf("reason has %d bytes, want at most 256", len(be.Reason))
+		}
+	}
+}
+
+// Exact messages and the field allowlist catch even a fragment we did not
+// anticipate, rather than depending on a blacklist of credential encodings.
+func assertBrokerError(t *testing.T, err error, status int) {
+	t.Helper()
+	var be *BrokerError
+	if !errors.As(err, &be) || be.StatusCode != status {
+		t.Fatalf("lost broker status %d: %v", status, err)
+	}
+	classification, message := BrokerErrorOther, "request failed"
+	switch status {
+	case 401, 403:
+		classification, message = BrokerErrorRefused, "request refused"
+	case 503:
+		classification, message = BrokerErrorNotEstablished, "execution not established"
+	}
+	if be.Classification != classification {
+		t.Errorf("classification = %v, want %v", be.Classification, classification)
+	}
+	want := fmt.Sprintf("module broker: HTTP %d: %s", status, message)
+	if be.Error() != want || fmt.Sprintf("%+v", be) != want {
+		t.Error("broker diagnostic is not the fixed status/class message")
+	}
+	assertBrokerErrorFields(t, be, map[string]reflect.Type{
+		"StatusCode": reflect.TypeOf(int(0)), "Classification": reflect.TypeOf(BrokerErrorOther),
+	})
+	var transport *BrokerTransportError
+	if errors.As(err, &transport) || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Error("non-200 status became a transport/read failure")
+	}
+	assertNoBrokerCause(t, be)
+}
+
+func assertBrokerErrorFields(t *testing.T, err error, fields map[string]reflect.Type) {
+	t.Helper()
+	typ := reflect.TypeOf(err).Elem()
+	if typ.NumField() != len(fields) {
+		t.Fatalf("%s retains fields beyond its safe classification", typ)
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if fields[field.Name] != field.Type || !field.IsExported() {
+			t.Errorf("%s retains unexpected field %s of type %s", typ, field.Name, field.Type)
+		}
+	}
+}
+
+func assertNoBrokerCause(t *testing.T, err error) {
+	t.Helper()
+	if _, ok := err.(interface{ Unwrap() error }); ok {
+		t.Error("broker error exposes an Unwrap method")
+	}
+	if _, ok := err.(interface{ Unwrap() []error }); ok {
+		t.Error("broker error exposes multiple causes")
+	}
+}
+
+func assertBrokerErrorExcludes(t *testing.T, err error, excluded ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected a broker failure")
+	}
+	texts := []string{err.Error(), fmt.Sprintf("%+v", err), fmt.Sprintf("%#v", err)}
+	value := reflect.ValueOf(err)
+	if value.Kind() == reflect.Pointer && value.Elem().Kind() == reflect.Struct {
+		value = value.Elem()
+		for i := 0; i < value.NumField(); i++ {
+			if value.Type().Field(i).IsExported() {
+				texts = append(texts, fmt.Sprintf("%+v", value.Field(i).Interface()))
 			}
-			for _, text := range []string{be.Reason, err.Error()} {
-				for _, ch := range text {
-					if ch < ' ' || ch > '~' {
-						t.Errorf("non-printable ASCII character %U in diagnostic", ch)
-					}
-				}
+		}
+	}
+	for _, text := range texts {
+		for _, secret := range excluded {
+			if secret != "" && strings.Contains(text, secret) {
+				t.Error("error text, formatting or an exported field contains an excluded diagnostic")
 			}
-			if be.Reason != tc.want {
-				t.Error("reason was not sanitized and redacted before truncation")
-			}
-		})
+		}
+	}
+	switch e := err.(type) {
+	case interface{ Unwrap() error }:
+		if cause := e.Unwrap(); cause != nil {
+			assertBrokerErrorExcludes(t, cause, excluded...)
+		}
+	case interface{ Unwrap() []error }:
+		for _, cause := range e.Unwrap() {
+			assertBrokerErrorExcludes(t, cause, excluded...)
+		}
 	}
 }

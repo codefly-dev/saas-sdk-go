@@ -122,8 +122,12 @@ func TestMintModuleOperationContextTypesTheBrokerStatuses(t *testing.T) {
 			t.Fatalf("HTTP %d: %v, want %v", tc.refuse.status, err, tc.want)
 		}
 		var be *BrokerError
-		if !errors.As(err, &be) || be.StatusCode != tc.refuse.status || be.Reason != tc.refuse.body || be.Path != hostOperationContextPath {
+		if !errors.As(err, &be) || be.StatusCode != tc.refuse.status {
 			t.Fatalf("HTTP %d: broker error = %+v", tc.refuse.status, be)
+		}
+		assertBrokerError(t, err, tc.refuse.status)
+		if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 1 || calls[0] != hostOperationContextPath {
+			t.Fatalf("broker calls = %v, want only the operation-context mint", calls)
 		}
 	}
 	for _, status := range []int{http.StatusBadRequest, http.StatusBadGateway} {
