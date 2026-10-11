@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
@@ -42,15 +43,15 @@ import (
 //     module_capabilities_server.go.
 
 const (
-	testInternalToken = "internal-perimeter-token"
-	testPrefix        = "documents"
-	testSecret        = "projected-secret"
-	testTenant        = "11111111-1111-4111-8111-111111111111"
-	testPrincipal     = "00000000-0000-4000-8000-00000000beef"
-	testOwner         = "44444444-4444-4444-8444-444444444444"
-	testBindingID     = "binding-example-1"
-	testDelegation    = "33333333-3333-4333-8333-333333333333"
-	exampleSource     = "55555555-5555-4555-8555-555555555555"
+	testInternalToken  = "internal-perimeter-token"
+	testPrefix         = "documents"
+	testProjectedToken = "projected-sa-token"
+	testTenant         = "11111111-1111-4111-8111-111111111111"
+	testPrincipal      = "00000000-0000-4000-8000-00000000beef"
+	testOwner          = "44444444-4444-4444-8444-444444444444"
+	testDelegation     = "33333333-3333-4333-8333-333333333333"
+	exampleSource      = "55555555-5555-4555-8555-555555555555"
+	testBindingID      = "binding-example-1"
 )
 
 // The broker's paths as the host serves them, spelled out rather than taken
@@ -61,7 +62,17 @@ const (
 	hostSourceOperationContextPath = "/modules/_source-operation-context"
 )
 
-var moduleCredentials = Credentials{Prefix: testPrefix, Secret: testSecret}
+var moduleCredentials = Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken)}
+
+// staticToken is a ProjectedTokenSource that answers one value; rotatingToken
+// answers the next of several on each read, the way a kubelet rotation does.
+type staticToken string
+
+func (s staticToken) ProjectedToken() (string, error) { return string(s), nil }
+
+type failingToken struct{ err error }
+
+func (f failingToken) ProjectedToken() (string, error) { return "", f.err }
 
 // catalogIdentity mirrors the gateway's validCatalogIdentity closely enough
 // for a prefix: one lowercase DNS-ish segment.
@@ -156,11 +167,14 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	secret := r.Header.Get("X-Codefly-Module-Secret")
-	if secret == "" {
+	// Exactly one bearer, as the real broker reads it; a module secret header
+	// is not a credential the host reads any more.
+	authorization := r.Header.Values("Authorization")
+	if len(authorization) != 1 || !strings.HasPrefix(authorization[0], "Bearer ") {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	projected := strings.TrimPrefix(authorization[0], "Bearer ")
 	var payload map[string]string
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&payload); err != nil {
 		plainError(w, http.StatusBadRequest, "invalid json")
@@ -171,8 +185,8 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusBadRequest, "invalid prefix")
 		return
 	}
-	// accounts' verdict on the secret: the gateway maps it per path.
-	if payload["prefix"] != testPrefix || secret != testSecret {
+	// accounts' verdict on the token: the gateway maps it per path.
+	if payload["prefix"] != testPrefix || projected != testProjectedToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -250,6 +264,9 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
+	declaration    *v1.ModuleDeclareAuditEventTypesRequest
+	moduleSecret   []string
+	audit          *v1.ModuleEmitAuditEventRequest
 	installation   *v1.ModuleCurrentInstallationRequest
 	authorization  []string
 	artifact       *v1.ModuleExecutableArtifactRequest
@@ -265,6 +282,8 @@ type authorityCall struct {
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
 // package calls; Mint* are never among them.
 var servedOnAuthority = map[string]bool{
+	accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:             true,
+	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
 	accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:             true,
 	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
 	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
@@ -278,6 +297,8 @@ var servedOnAuthority = map[string]bool{
 type fakeAuthority struct {
 	gateway *fakeGateway
 	address string
+	// declarationError is the host admission verdict, configured before a call.
+	declarationError error
 
 	mu    sync.Mutex
 	calls []authorityCall
@@ -304,12 +325,18 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{moduleSecret: md.Get("x-codefly-module-secret"), authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
 	var recvErr error
 	switch method {
+	case accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:
+		call.declaration = &v1.ModuleDeclareAuditEventTypesRequest{}
+		recvErr = stream.RecvMsg(call.declaration)
+	case accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:
+		call.audit = &v1.ModuleEmitAuditEventRequest{}
+		recvErr = stream.RecvMsg(call.audit)
 	case accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
 		call.installation = &v1.ModuleCurrentInstallationRequest{}
 		recvErr = stream.RecvMsg(call.installation)
@@ -348,6 +375,25 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if call.declaration != nil {
+		if a.declarationError != nil {
+			return a.declarationError
+		}
+		return stream.SendMsg(&v1.ModuleDeclareAuditEventTypesResponse{})
+	}
+	if call.audit != nil {
+		switch call.audit.GetIdempotencyKey() {
+		case "actor-unresolved":
+			return status.Error(codes.FailedPrecondition, "audit actor unresolved")
+		case "unavailable":
+			return status.Error(codes.Unavailable, "audit storage unavailable")
+		case "deadline":
+			return status.Error(codes.DeadlineExceeded, "audit deadline exceeded")
+		case "internal":
+			return status.Error(codes.Internal, "audit commit failed")
+		}
+		return stream.SendMsg(&emptypb.Empty{})
 	}
 	if call.installation != nil {
 		if call.installation.ParentWorkContextToken == "denied.token" {

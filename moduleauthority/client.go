@@ -1,16 +1,19 @@
 // Package moduleauthority exchanges a composed module's installed authority
-// with the SaaS host, over the two seams the host actually serves a composed
-// module:
+// with the SaaS host, through a broker and an explicitly selected authority
+// transport:
 //
 //   - the gateway's module broker (REST, JSON over HTTP on the gateway base
-//     URL) — where a module presents its identity secret and is minted a Work
-//     Context: POST /modules/_work-context, /modules/_operation-context and
+//     URL) — where a module presents its pod's projected ServiceAccount token
+//     and is minted a Work Context: POST /modules/_work-context,
+//     /modules/_operation-context and
 //     /modules/_source-operation-context. The Mint* RPCs of
 //     ModuleCapabilitiesService are EXPOSURE_INTERNAL and are never served at
 //     the gateway edge; the broker is how a module reaches them.
 //   - accounts' named `authority` gRPC endpoint — where a module calls, with
 //     its module Work Context, the procedures the host exports to composed
-//     modules (ExchangeDelegatedOperationAudience among them).
+//     modules (ExchangeDelegatedOperationAudience among them). New selects this
+//     transport. NewGatewayAuthority instead uses the host gateway bridge for
+//     procedures that the selected host exposes there, without direct fallback.
 //
 // Neither address is configured here: the consumer passes what Codefly
 // resolved for it, in Seams.
@@ -21,7 +24,10 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,10 +40,16 @@ import (
 const defaultRefreshSkew = 30 * time.Second
 
 var (
-	// ErrInvalidCredentials: the module's credentials are missing, or the
-	// broker refused to prove the module (HTTP 401 — a wrong identity secret or
-	// a wrong internal token; the host does not say which).
+	// ErrInvalidCredentials: the module's credentials are missing or its
+	// projected token could not be read, or the broker refused to prove the
+	// module (HTTP 401 — a token the host refused, another workload's token, a
+	// pod running a build the host does not approve, or a wrong internal token;
+	// the host does not say which).
 	ErrInvalidCredentials = errors.New("module authority: invalid module credentials")
+	// ErrExecutionUnestablished: the host could not establish what this pod is
+	// running (HTTP 503) — its API server unreachable, or no execution binding
+	// wired. Nothing was decided about the module; minting again may succeed.
+	ErrExecutionUnestablished = errors.New("module authority: the host could not establish this pod's execution")
 	// ErrInvalidExchange: the request names no binding or source, or does not
 	// present exactly one of a parent capability and a delegation reference.
 	ErrInvalidExchange = errors.New("module authority: invalid operation exchange")
@@ -99,10 +111,76 @@ type Authority struct {
 	TLS *tls.Config
 }
 
-// Credentials are the Codefly-projected identity of the calling module.
+// Credentials are the identity of the calling module: the prefix it acts as,
+// and the source of the ServiceAccount token Kubernetes projects into its pod
+// for the `accounts` audience. The host reviews that token, reads the pod it
+// names and mints only if the pod is the prefix's declared workload running the
+// build its authority approves. There is no secret: the module identity secret
+// is deleted host-side.
 type Credentials struct {
 	Prefix string
-	Secret string
+	Token  ProjectedTokenSource
+}
+
+// ProjectedTokenSource reads the projected ServiceAccount token as it is NOW.
+// It is called before every mint rather than once, because the kubelet rotates
+// the projection under a running process. Its method set is
+// sdk-go/workcontext's ProjectedTokenSource's, so that implementation satisfies
+// it as written.
+type ProjectedTokenSource interface {
+	ProjectedToken() (string, error)
+}
+
+// ProjectedTokenFile reads the token from the path its projected volume is
+// mounted at, trimmed. An empty file is an error, never an empty token: a
+// projection mid-rotation must not be presented as a credential.
+//
+// It is the same contract as sdk-go/workcontext's ProjectedTokenFile, which this
+// module cannot import while it pins the pre-cutover sdk-go/workcontext for
+// WorkContextToken; consumers already on the newer module pass that one.
+type ProjectedTokenFile string
+
+// ProjectedToken reads and trims the file, bounded.
+func (path ProjectedTokenFile) ProjectedToken() (string, error) {
+	if strings.TrimSpace(string(path)) == "" {
+		return "", fmt.Errorf("%w: no projected token path", ErrInvalidCredentials)
+	}
+	file, err := os.Open(string(path))
+	if err != nil {
+		return "", fmt.Errorf("module authority: open projected token: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, maxProjectedToken+1))
+	if err != nil {
+		return "", fmt.Errorf("module authority: read projected token: %w", err)
+	}
+	if len(raw) > maxProjectedToken {
+		return "", fmt.Errorf("module authority: projected token exceeds %d bytes", maxProjectedToken)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", fmt.Errorf("module authority: projected token is empty")
+	}
+	return token, nil
+}
+
+// maxProjectedToken bounds the token read, at the bound the host's mint
+// request declares.
+const maxProjectedToken = 64 << 10
+
+// projectedToken reads the current token for one mint.
+func (c Credentials) projectedToken() (string, error) {
+	if c.Prefix == "" || c.Token == nil {
+		return "", ErrInvalidCredentials
+	}
+	token, err := c.Token.ProjectedToken()
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrInvalidCredentials, err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("%w: projected token is empty", ErrInvalidCredentials)
+	}
+	return token, nil
 }
 
 // ExchangeRequest selects one installed operation binding. SaaS derives the
@@ -152,9 +230,10 @@ type Client struct {
 // ErrInvalidSeams, on a missing gateway, gateway base URL or internal token,
 // on an authority seam that is set but has no address, and on any plaintext seam to a non-loopback address the
 // consumer has not asserted protected; and with ErrInvalidCredentials on an
-// empty prefix or secret. It opens no connection.
+// empty prefix or no token source. It opens no connection and reads no token:
+// the token is read before each mint.
 func New(seams Seams, credentials Credentials) (*Client, error) {
-	if credentials.Prefix == "" || credentials.Secret == "" {
+	if credentials.Prefix == "" || credentials.Token == nil {
 		return nil, ErrInvalidCredentials
 	}
 	if seams.InternalToken == "" {
@@ -249,8 +328,12 @@ func (c *Client) MintModuleOperationContext(ctx context.Context, bindingID strin
 	if bindingID == "" {
 		return OperationContext{}, ErrInvalidExchange
 	}
+	projected, err := c.credentials.projectedToken()
+	if err != nil {
+		return OperationContext{}, err
+	}
 	var issued operationContextResponse
-	if err := c.broker.post(ctx, operationContextPath, c.credentials.Secret, map[string]string{
+	if err := c.broker.post(ctx, operationContextPath, projected, map[string]string{
 		"prefix":  c.credentials.Prefix,
 		"binding": bindingID,
 	}, &issued); err != nil {
@@ -270,11 +353,12 @@ func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkConte
 	if c.module.Encoded() != "" && c.now().Add(c.refreshSkew).Before(c.expiresAt) {
 		return c.module, nil
 	}
-	if c.credentials.Prefix == "" || c.credentials.Secret == "" {
-		return codefly.WorkContextToken{}, ErrInvalidCredentials
+	projected, err := c.credentials.projectedToken()
+	if err != nil {
+		return codefly.WorkContextToken{}, err
 	}
 	var issued workContextResponse
-	if err := c.broker.post(ctx, workContextPath, c.credentials.Secret, map[string]string{
+	if err := c.broker.post(ctx, workContextPath, projected, map[string]string{
 		"prefix": c.credentials.Prefix,
 	}, &issued); err != nil {
 		return codefly.WorkContextToken{}, fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))

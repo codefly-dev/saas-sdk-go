@@ -71,7 +71,9 @@ gofmt -l . | grep -v '^gen/'     # expect no output
 
 `go test ./...` is load-bearing beyond the unit tests: `internal/apiboundary`
 type-checks the entire public surface against the boundary rule below, and
-`internal/agentcontext` checks these context files. There is no lint config —
+`internal/agentcontext` checks these context files. Keep `golang.org/x/tools`
+compatible with the active Go toolchain: its importer must understand Go's
+export data for the boundary gate to run. There is no lint config —
 `golangci-lint` being installed on your machine does not make it a gate here.
 
 The same workflow's `gen-drift` job regenerates `gen/` from the ref in
@@ -88,7 +90,7 @@ workflow) and fails on any difference — the reproduction check from the
 | `settings/` | presence-aware `Field[M, T]` runtime; `JSONCodec` is the only typed↔ProtoJSON boundary |
 | `settings/catalog/` | Go / TypeScript / proto catalog renderers that `module-compose` calls |
 | `workcontext/` | callee-side verification: HTTP, Connect, gRPC middleware plus scope checks |
-| `moduleauthority/` | a module's own authority: Work Context mints at the gateway broker, exchanges on accounts' `authority` gRPC endpoint |
+| `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport |
 | `gen/` | generated output. Regenerated, never edited |
 | `internal/apiboundary` | the public-API boundary gate, with fixtures that prove it still looks |
 | `internal/agentcontext` | the budget and frontmatter contract for this file and the skills |

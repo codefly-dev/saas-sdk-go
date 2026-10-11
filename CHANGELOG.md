@@ -108,6 +108,56 @@
   are removed by the same delivered-presence contract. No generated output was
   edited or restored to retain the older API.
 
+## Unreleased — exclude broker diagnostics
+
+- **Fix at the SDK error boundary; breaking.** Broker errors exclude all
+  response diagnostics instead of attempting credential redaction.
+  `BrokerError.Path` and `Reason` are removed; only the HTTP status and the
+  refused/not-established/other classification remain, with fixed messages.
+- Transport and response read failures return `BrokerTransportError` with only
+  a timeout/connection-refused/TLS/other category. No underlying cause is
+  retained or unwrapped; retry policies use `errors.As` and the category.
+- Non-200 status classification does not read the response body. Source 403s
+  uniformly return `ErrDelegationInvalid`; 412s retain only `BrokerError`.
+  Body-derived `ErrDelegationMissing` and `ErrDelegationRevoked` are deprecated
+  and no longer returned by source mints.
+
+## Unreleased — mint once: the projected ServiceAccount token replaces the module secret
+
+- **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token}`: `Token` is a
+  `ProjectedTokenSource` that reads the module pod's projected ServiceAccount
+  token (audience `accounts`). `Secret` is deleted with the host's
+  `MODULE_IDENTITY_SECRETS`. Every broker mint sends the token as
+  `Authorization: Bearer`, read from its source before that mint (the kubelet
+  rotates it); `X-Codefly-Module-Secret` is no longer sent.
+- Added `ProjectedTokenFile`, the file-backed source. Its method set is
+  `sdk-go/workcontext`'s `ProjectedTokenSource`, so that implementation is
+  accepted once this module moves off the pre-cutover `sdk-go/workcontext` pin.
+- Added `ErrExecutionUnestablished` for the broker's `503`: the host could not
+  establish what the pod is running, nothing was decided, and a retry may
+  succeed. `401` still maps to `ErrInvalidCredentials`.
+- `gen/` is unchanged: the broker client speaks the broker's REST contract, not
+  the generated request types, so the regeneration waits for the host change to
+  land and is its own refresh.
+
+## Unreleased — module audit declarations and gateway authority
+
+- Added `Client.DeclareAuditEventTypes` over the existing module-authority
+  credential cache and refresh path, with declaration types and enum constants
+  re-exported from `moduleauthority`. Host admission rules remain authoritative.
+- Added explicit `NewGatewayAuthority` for hosts serving the binary-protobuf
+  Connect bridge. Existing direct and mint-only clients retain their behavior.
+
+## Unreleased — module audit emission
+
+- Added `moduleauthority.Client.EmitAuditEvent`, preserving the complete event,
+  caller-selected idempotency key and host error codes through the existing
+  authenticated authority transport. Uncertain effects are not retried.
+- Kept main's complete generated contract and existing artifact, installation
+  and delegation APIs. Receipt lookup and runtime-boundary attestation remain
+  deferred until their host contract is integrated. Module version stays 0.1.0.
+- Updated the API boundary importer for Go 1.27.2 export data.
+
 ## Unreleased — current installation identity
 
 - Added `moduleauthority.Client.GetCurrentInstallation` with independent module

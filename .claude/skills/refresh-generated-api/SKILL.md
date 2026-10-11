@@ -116,7 +116,6 @@ overwrite.
 
 ## Scope
 
-Wiring this into module-saas-starter's release, so a saas tag publishes a
-matching SDK tag, is tracked in the solutions EPIC (obin-ai/lodestar#53, item
-4). Until it lands, this walk is manual — which is a gap in the tooling, not a
-step to get good at performing.
+Release generation belongs to module-saas-starter and this SDK: a saas tag
+must publish a matching SDK contract. Until release automation covers both,
+this walk is manual — a gap in the owning tools, not a consumer responsibility.

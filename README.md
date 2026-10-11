@@ -237,7 +237,9 @@ The SDK surfaces are:
   - the **gateway's module broker** (REST on the auth-gateway's `rest`
     endpoint): `POST /modules/_work-context`, `/modules/_operation-context`
     and `/modules/_source-operation-context`, where the module presents its
-    identity secret. The host never serves the `Mint*` procedures of
+    pod's projected ServiceAccount token (audience `accounts`) as the bearer;
+    the host reviews it and mints only for the principal's declared workload
+    running the build its authority approves. The host never serves the `Mint*` procedures of
     `ModuleCapabilitiesService` at the gateway edge;
   - accounts' **`authority` gRPC endpoint** (`saas/accounts/authority`), where
     the module calls, with its module Work Context, the procedures the host
@@ -251,7 +253,11 @@ The SDK surfaces are:
       // Only from the consumer's own configured assertion that every
       // in-cluster hop is carried by a mutually authenticated mesh.
       AllowInsecureHTTP: meshProtected,
-  }, moduleauthority.Credentials{Prefix: projectedPrefix, Secret: projectedSecret})
+  }, moduleauthority.Credentials{
+      Prefix: modulePrefix,
+      // Read before every mint: the kubelet rotates the projection.
+      Token: moduleauthority.ProjectedTokenFile(projectedTokenPath),
+  })
   if err != nil {
       return err // ErrInvalidSeams / ErrInvalidCredentials: fail closed at startup
   }
@@ -263,9 +269,10 @@ The SDK surfaces are:
   })
   ```
 
-  `New` refuses a missing internal token, gateway base URL or authority
-  address, and refuses to send the internal token or the module secret in
-  plaintext to anything but `localhost` or a loopback IP unless
+  `New` refuses a missing internal token, gateway base URL or an incomplete
+  authority seam. Leaving `Authority` zero builds a mint-only client; authority
+  calls then return `ErrNoAuthority`. It refuses to send the internal token or
+  the projected token in plaintext to anything but `localhost` or a loopback IP unless
   `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
   binding's audience, scopes, lifetime, verification, and audit record.
 
@@ -301,6 +308,40 @@ The SDK surfaces are:
   op, err := authority.MintModuleOperationContext(ctx, installedBindingID)
   // op.Token goes in x-codefly-work-context on the call to op.Audience.
   ```
+  `EmitAuditEvent(ctx, AuditEvent)` sends a registered event through the same
+  module-authenticated authority seam. The host checks the module's grant,
+  tenant, actor, solution and registered field schema. The event's actor may be
+  the module's own principal or a `system:<process>` label; a subject actor must
+  belong to the tenant. An empty tenant requires the host's cross-tenant grant.
+
+  ```go
+  // Persist the complete event and key in the producer's outbox before sending.
+  event := moduleauthority.AuditEvent{
+      Tenant: tenantID, EventType: "example.changed", Actor: "system:worker",
+      Solution: "example", EntryID: entryID, IdempotencyKey: outboxEventID,
+      Fields: map[string]any{"count": float64(3)},
+  }
+  if err := authority.EmitAuditEvent(ctx, event); err != nil {
+      return err // Keep the outbox entry and its original key for recovery.
+  }
+  // The host acknowledged the event; the producer may now settle its outbox row.
+  ```
+
+  The host deduplicates by `(tenant, event_type, idempotency_key)`. Persist and
+  reuse the **complete original event and key** across retries and restarts;
+  never reuse a key for another intent. The contract in `SOURCE.txt` acknowledges
+  a duplicate key without comparing its payload. An empty key disables
+  deduplication, and some registered types require a key. Field values use the
+  protobuf Struct representation, so numbers are represented as doubles.
+
+  A nil error acknowledges the host's durable audit write or an existing key,
+  not completion of outbound webhook delivery. After a timeout or transport
+  error the write may already have committed. The SDK does not own an outbox,
+  store receipts, or automatically retry an uncertain effect; only rejected
+  module authentication is refreshed and retried once. Host error codes remain
+  available through `connect.CodeOf(err)`. Receipt lookup and runtime-boundary
+  attestation await an integrated host contract and are not exposed here.
+
 - **`settings/`** — the schema-agnostic typed-settings library every module and
   product depends on instead of vendoring a copy. It has two parts:
 
@@ -406,8 +447,9 @@ Record the release tag in `SOURCE.txt`; CI checks out that tag through
 `refs/tags/` and verifies that regeneration leaves no diff. Before a host
 release, an exact PR-head commit may be used for development.
 
-> Wiring this regen into module-saas-starter's release (so a saas tag publishes a
-> matching SDK tag) is tracked in the solutions EPIC (obin-ai/lodestar#53, item 4).
+Regeneration and matching SDK releases are owned by `module-saas-starter` and
+this repository. Until release automation covers both, follow the
+`refresh-generated-api` procedure in `.claude/skills/`.
 
 ## Consuming
 
@@ -467,3 +509,74 @@ The host preserves its organization-member metadata-read rule: no new permission
 or binding is required. It checks current parent authority and delegation,
 authenticated module/audience/tenant alignment, current membership, and exact
 active record identity. A refusal never invokes a bearer-based fallback.
+
+### Gateway authority transport and audit declarations
+
+`moduleauthority.NewGatewayAuthority(seams, credentials)` explicitly selects
+the host's binary-protobuf Connect authority bridge at
+`<gateway BaseURL>/modules/_authority`. Leave `Seams.Authority` zero when using
+this constructor. It refuses any simultaneous direct Authority configuration,
+applies the same credential and TLS/mesh checks as `New`, blocks redirects,
+and does not fall back to Accounts. The selected host must serve this bridge;
+a generated client alone
+does not establish that a deployed host supports it or any particular procedure.
+The existing `New` constructor retains the direct authority transport and its
+mint-only mode. Audit declarations work with the existing direct authority
+endpoint; they do not require the gateway bridge.
+
+`Client.DeclareAuditEventTypes` presents the module's event schemas through the
+selected authority seam. Ownership and compatibility remain host decisions.
+Public declaration types and enum constants are re-exported by moduleauthority.
+The SDK supplies `Credentials.Prefix`, uses the same cached module Work Context
+as other authority calls, and preserves every field, enum value, visibility and
+PII flag. It does not create a second registry or infer a namespace from a prefix.
+
+After constructing `authority` with the resolved seams and projected credentials
+as above, declare schemas during startup and propagate any refusal:
+
+```go
+err = authority.DeclareAuditEventTypes(ctx, []*moduleauthority.ModuleAuditEventTypeDeclaration{
+    {
+        Type:        "example.item.changed", // namespace bound to this module by the operator
+        Description: "An item changed",
+        Visibility:  moduleauthority.ModuleAuditEventVisibility_MODULE_AUDIT_EVENT_VISIBILITY_TENANT,
+        Fields: []*moduleauthority.ModuleAuditFieldDeclaration{
+            {Name: "item_id", Kind: moduleauthority.ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_UUID},
+            {Name: "contact", Kind: moduleauthority.ModuleAuditFieldKind_MODULE_AUDIT_FIELD_KIND_STRING, Pii: true},
+        },
+    },
+})
+if err != nil {
+    return err
+}
+```
+
+The host admits only operator-bound namespaces. Re-declaring the identical schema
+is idempotent; fields and enum values may grow, while removal, retyping and changes
+to visibility are refused. A rejected module capability (`Unauthenticated`) is
+refreshed and retried once. Other authority refusals retain their Connect codes
+and details (`connect.CodeOf(err)` / `errors.As`) and are not retried. A mint-only
+client's declaration fails with `ErrNoAuthority` before any network request. A
+missing bridge fails without switching transports.
+
+Broker non-200 responses return `*moduleauthority.BrokerError`, discoverable
+with `errors.As`. It contains only `StatusCode` and `Classification`
+(`BrokerErrorRefused` for 401/403, `BrokerErrorNotEstablished` for 503,
+`BrokerErrorOther` otherwise), with a fixed message per class. Response bodies
+and headers are excluded entirely; classification never depends on reading a
+body. The 401, 403 and 503 sentinels remain `ErrInvalidCredentials`,
+`ErrPermissionDenied` (or `ErrDelegationInvalid` for source mints), and
+`ErrExecutionUnestablished`. Body-based delegation distinctions are gone: source
+403s all return `ErrDelegationInvalid`; 412s carry only `BrokerError`.
+`BrokerError.Path` and `BrokerError.Reason` have been removed.
+
+Transport and response read failures return `*moduleauthority.BrokerTransportError`
+with a fixed message and a `Category`: `BrokerTransportTimeout`,
+`BrokerTransportConnectionRefused`, `BrokerTransportTLS`, or
+`BrokerTransportOther`. It retains no underlying error and has no `Unwrap`
+method. Callers use `errors.As` and the category for retry decisions, and check
+their context's `Err()` for cancellation. For example, a caller may retry a 502,
+503, timeout or refused connection, while surfacing a 401/403 denial. The SDK
+does not automatically retry broker failures. Malformed initial HTTP headers
+provide no usable status and produce a transport error; malformed bodies cannot
+change a successfully parsed non-200 status into a transport failure.

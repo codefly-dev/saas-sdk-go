@@ -2,7 +2,9 @@ package moduleauthority
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,20 +34,20 @@ func TestMintSourceOperationContextNamesOnlyTheSource(t *testing.T) {
 	if len(body) != 2 || body["prefix"] != testPrefix || body["source_id"] != exampleSource {
 		t.Fatalf("body = %v, want exactly prefix and source_id", body)
 	}
-	if headers[0].Get("X-Codefly-Module-Secret") != testSecret || headers[0].Get("X-Codefly-Internal-Token") != testInternalToken {
+	if headers[0].Get("Authorization") != "Bearer "+testProjectedToken || headers[0].Get("X-Codefly-Internal-Token") != testInternalToken {
 		t.Fatalf("headers = %v", headers[0])
 	}
 	h.assertNoStrayPaths(t)
 }
 
-func TestMintSourceOperationContextTypesEveryDelegationRefusal(t *testing.T) {
+func TestMintSourceOperationContextClassifiesByStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		refuse refusal
 		want   error
 	}{
-		{"missing", refusal{http.StatusPreconditionFailed, "DELEGATION_MISSING"}, ErrDelegationMissing},
-		{"revoked", refusal{http.StatusForbidden, "DELEGATION_REVOKED"}, ErrDelegationRevoked},
+		{"missing", refusal{http.StatusPreconditionFailed, "DELEGATION_MISSING"}, nil},
+		{"revoked", refusal{http.StatusForbidden, "DELEGATION_REVOKED"}, ErrDelegationInvalid},
 		{"invalid", refusal{http.StatusForbidden, "DELEGATION_INVALID"}, ErrDelegationInvalid},
 		// A host that names no reason in its 403 (the body before the
 		// reasons landed): every 403 of this mint is a delegation the module
@@ -54,16 +56,16 @@ func TestMintSourceOperationContextTypesEveryDelegationRefusal(t *testing.T) {
 		{"unproven module", refusal{http.StatusUnauthorized, "unauthorized"}, ErrInvalidCredentials},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHost(t)
-			h.gateway.refuse[hostSourceOperationContextPath] = tc.refuse
-			_, err := h.client(t, moduleCredentials).MintSourceOperationContext(t.Context(), exampleSource)
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("want %v, got %v", tc.want, err)
+			client := brokerErrorClient(t, tc.refuse.status, testProjectedToken, func(*http.Request) io.ReadCloser {
+				return io.NopCloser(strings.NewReader(tc.refuse.body))
+			})
+			_, err := client.MintSourceOperationContext(t.Context(), exampleSource)
+			for _, sentinel := range []error{ErrDelegationMissing, ErrDelegationRevoked, ErrDelegationInvalid, ErrInvalidCredentials} {
+				if errors.Is(err, sentinel) != (sentinel == tc.want) {
+					t.Fatalf("want only %v, got %v", tc.want, err)
+				}
 			}
-			var be *BrokerError
-			if !errors.As(err, &be) || be.StatusCode != tc.refuse.status {
-				t.Fatalf("the refusal does not wrap the broker status: %v", err)
-			}
+			assertBrokerError(t, err, tc.refuse.status)
 		})
 	}
 }
@@ -76,13 +78,16 @@ func TestMintSourceOperationContextClaimsNoDelegationRefusalItWasNotGiven(t *tes
 		{http.StatusBadGateway, "source operation context unavailable"},
 		{http.StatusBadRequest, "exactly one of delegation_id or source_id is required"},
 		{http.StatusPreconditionFailed, "SOMETHING_ELSE"},
+		{http.StatusPreconditionFailed, "DELEGATION_MISSING"},
 	} {
-		h := newHost(t)
-		h.gateway.refuse[hostSourceOperationContextPath] = rf
-		_, err := h.client(t, moduleCredentials).MintSourceOperationContext(t.Context(), exampleSource)
+		client := brokerErrorClient(t, rf.status, testProjectedToken, func(*http.Request) io.ReadCloser {
+			return io.NopCloser(strings.NewReader(rf.body))
+		})
+		_, err := client.MintSourceOperationContext(t.Context(), exampleSource)
 		if err == nil || errors.Is(err, ErrDelegationMissing) || errors.Is(err, ErrDelegationRevoked) || errors.Is(err, ErrDelegationInvalid) {
 			t.Fatalf("HTTP %d %q was typed as a delegation refusal: %v", rf.status, rf.body, err)
 		}
+		assertBrokerError(t, err, rf.status)
 	}
 }
 

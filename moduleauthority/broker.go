@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	codefly "github.com/codefly-dev/sdk-go/workcontext"
@@ -25,30 +24,16 @@ const (
 	// internalTokenHeader carries the host's internal perimeter credential, to
 	// the broker and to the authority endpoint alike.
 	internalTokenHeader = "X-Codefly-Internal-Token"
-	// moduleSecretHeader carries the module's identity secret to the broker,
-	// which forwards it only on its internal leg to accounts.
-	moduleSecretHeader = "X-Codefly-Module-Secret"
+	// bearerScheme carries the module pod's projected ServiceAccount token to
+	// the broker as the request's bearer; the broker forwards it unread to
+	// accounts, which reviews it and binds it to the build the pod is running.
+	// The X-Codefly-Module-Secret header it replaced is gone with the secret.
+	bearerScheme = "Bearer "
 )
 
 // maxBrokerResponse bounds what this client reads from the broker. Its
 // answers are a handful of short strings.
 const maxBrokerResponse = 64 << 10
-
-// BrokerError is a non-success answer from the gateway's module broker: the
-// HTTP status and the broker's plain-text reason. Every broker failure this
-// package returns wraps one, alongside a sentinel where the status has a
-// meaning (401 ErrInvalidCredentials; 403 ErrPermissionDenied or a delegation
-// refusal; 412 ErrDelegationMissing). 400 is a request the broker would not
-// accept; 502 means the broker could not reach accounts and is worth retrying.
-type BrokerError struct {
-	Path       string
-	StatusCode int
-	Reason     string
-}
-
-func (e *BrokerError) Error() string {
-	return fmt.Sprintf("module broker %s: HTTP %d: %s", e.Path, e.StatusCode, e.Reason)
-}
 
 type broker struct {
 	baseURL string
@@ -76,34 +61,38 @@ func newBroker(seams Seams) (broker, error) {
 }
 
 // post sends one broker request and decodes a 200 answer into out. Any other
-// status is a *BrokerError.
-func (b broker) post(ctx context.Context, path, secret string, body map[string]string, out any) error {
+// status is a *BrokerError, classified without reading its body. Transport
+// and response read failures are *BrokerTransportError, without a cause.
+func (b broker) post(ctx context.Context, path, projectedToken string, body map[string]string, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return brokerTransportError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set(internalTokenHeader, b.token)
-	req.Header.Set(moduleSecretHeader, secret)
+	req.Header.Set("Authorization", bearerScheme+projectedToken)
 	resp, err := b.client.Do(req)
 	if err != nil {
-		return err
+		return brokerTransportError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		// Exclude diagnostics entirely: a body, header or parser error can
+		// reflect any credential in forms a sanitizer cannot recognize.
+		return newBrokerError(resp.StatusCode)
+	}
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBrokerResponse+1))
 	if err != nil {
-		return err
+		return brokerTransportError(err)
 	}
 	if len(raw) > maxBrokerResponse {
 		return fmt.Errorf("module broker %s: response exceeds %d bytes", path, maxBrokerResponse)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return &BrokerError{Path: path, StatusCode: resp.StatusCode, Reason: strings.TrimSpace(string(raw))}
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: undecodable broker answer", ErrInvalidCapability)
@@ -112,7 +101,8 @@ func (b broker) post(ctx context.Context, path, secret string, body map[string]s
 }
 
 // brokerRefusal types the statuses the mints share: 401 is an unproven
-// module, 403 a proven one refused. Anything else stays a bare *BrokerError.
+// module, 403 a proven one refused, 503 a host that could not establish what
+// this pod is running. Anything else stays a bare *BrokerError.
 func brokerRefusal(err error) error {
 	var be *BrokerError
 	if !errors.As(err, &be) {
@@ -123,6 +113,8 @@ func brokerRefusal(err error) error {
 		return fmt.Errorf("%w: %w", ErrInvalidCredentials, err)
 	case http.StatusForbidden:
 		return fmt.Errorf("%w: %w", ErrPermissionDenied, err)
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("%w: %w", ErrExecutionUnestablished, err)
 	}
 	return err
 }
