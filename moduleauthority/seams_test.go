@@ -50,7 +50,7 @@ func TestNewFailsClosedOnAMissingSeam(t *testing.T) {
 			}
 		})
 	}
-	for _, credentials := range []Credentials{{}, {Prefix: testPrefix}, {Secret: testSecret}} {
+	for _, credentials := range []Credentials{{}, {Prefix: testPrefix}, {Token: staticToken(testProjectedToken)}} {
 		if _, err := New(valid, credentials); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("credentials %+v: %v", credentials, err)
 		}

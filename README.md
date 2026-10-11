@@ -47,7 +47,9 @@ The SDK surfaces are:
   - the **gateway's module broker** (REST on the auth-gateway's `rest`
     endpoint): `POST /modules/_work-context`, `/modules/_operation-context`
     and `/modules/_source-operation-context`, where the module presents its
-    identity secret. The host never serves the `Mint*` procedures of
+    pod's projected ServiceAccount token (audience `accounts`) as the bearer;
+    the host reviews it and mints only for the principal's declared workload
+    running the build its authority approves. The host never serves the `Mint*` procedures of
     `ModuleCapabilitiesService` at the gateway edge;
   - accounts' **`authority` gRPC endpoint** (`saas/accounts/authority`), where
     the module calls, with its module Work Context, the procedures the host
@@ -61,7 +63,11 @@ The SDK surfaces are:
       // Only from the consumer's own configured assertion that every
       // in-cluster hop is carried by a mutually authenticated mesh.
       AllowInsecureHTTP: meshProtected,
-  }, moduleauthority.Credentials{Prefix: projectedPrefix, Secret: projectedSecret})
+  }, moduleauthority.Credentials{
+      Prefix: modulePrefix,
+      // Read before every mint: the kubelet rotates the projection.
+      Token: moduleauthority.ProjectedTokenFile(projectedTokenPath),
+  })
   if err != nil {
       return err // ErrInvalidSeams / ErrInvalidCredentials: fail closed at startup
   }
@@ -76,7 +82,7 @@ The SDK surfaces are:
   `New` refuses a missing internal token, gateway base URL or an incomplete
   authority seam. Leaving `Authority` zero builds a mint-only client; authority
   calls then return `ErrNoAuthority`. It refuses to send the internal token or
-  the module secret in plaintext to anything but `localhost` or a loopback IP unless
+  the projected token in plaintext to anything but `localhost` or a loopback IP unless
   `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
   binding's audience, scopes, lifetime, verification, and audit record.
 
