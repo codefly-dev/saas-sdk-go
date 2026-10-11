@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// The transport rule, in one place: the internal token and the module secret
+// The transport rule, in one place: the internal token and the projected token
 // travel only over TLS, or in plaintext to a loopback address, or in plaintext
 // to any address the consumer explicitly asserted protected
 // (Seams.AllowInsecureHTTP). Loopback is the literal name "localhost" or a
@@ -30,7 +30,7 @@ func gatewayBaseURL(raw string, allowInsecureHTTP bool) (string, error) {
 	case "https":
 	case "http":
 		if !isLoopback(parsed.Hostname()) && !allowInsecureHTTP {
-			return "", fmt.Errorf("%w: the gateway base URL %q is plaintext to a non-loopback host; the broker is sent the internal token and the module secret, so use https, or assert the hop is mesh-protected with AllowInsecureHTTP", ErrInvalidSeams, raw)
+			return "", fmt.Errorf("%w: the gateway base URL %q is plaintext to a non-loopback host; the broker is sent the internal token and the projected token, so use https, or assert the hop is mesh-protected with AllowInsecureHTTP", ErrInvalidSeams, raw)
 		}
 	default:
 		return "", fmt.Errorf("%w: the gateway base URL %q must be http or https", ErrInvalidSeams, raw)

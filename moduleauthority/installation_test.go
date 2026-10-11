@@ -14,7 +14,7 @@ func TestCurrentInstallationUsesIndependentCredentialsAndExactSelector(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.InstallationID != exampleSource || out.TenantID != testTenant || out.SolutionIdentifier != "acme/example" {
+	if out.InstallationID != exampleSource || out.TenantID != testTenant || out.TargetID != testOwner || out.BindingID != testBindingID {
 		t.Fatal("wrong identity", out)
 	}
 	calls := h.authority.snapshot()
@@ -37,7 +37,7 @@ func TestCurrentInstallationUsesIndependentCredentialsAndExactSelector(t *testin
 func TestCurrentInstallationRefusesBadResponsesAndDoesNotFallback(t *testing.T) {
 	h := newHost(t)
 	client := h.client(t, moduleCredentials)
-	for _, parent := range []string{"wrong-id.token", "missing-tenant.token", "empty-source.token"} {
+	for _, parent := range []string{"wrong-id.token", "missing-tenant.token", "empty-target.token", "invalid-target.token", "empty-binding.token", "invalid-binding.token"} {
 		_, err := client.GetCurrentInstallation(t.Context(), CurrentInstallationRequest{Parent: token(t, parent), InstallationID: exampleSource})
 		if !errors.Is(err, ErrInvalidInstallation) {
 			t.Fatalf("%s: %v", parent, err)

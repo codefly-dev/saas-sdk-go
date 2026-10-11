@@ -1,5 +1,114 @@
 # Changelog
 
+## Unreleased — callable sources
+
+- Reject unsupported HTTP response encodings before reading the body or
+  inferring an HTTP status: Declare/List return `DatasourceError` with no
+  receipt; Invoke/Lookup keep `OutcomeUnknown` and the original effect ID.
+  List returns `InputError` for an absent/unspecified host effect and
+  `DatasourceError` for an unknown future effect enum, with no partial list.
+- Fix cross-language parity at the error/receipt boundary: skip null and unknown
+  details without losing effect IDs; scope `SOURCE_OPERATION_OUTCOME_UNKNOWN`
+  to Invoke/Lookup; normalize UTF-8 charset, gzip case and BOM on Connect JSON
+  errors while retaining the gateway client and Connect decoder.
+- Add `DatasourceError{Receipt}` for invalid output on a valid COMMITTED receipt.
+  Receipt output comes from `receipt.output_json`; result output comes from the
+  top-level field. Both validate without discarding known commitment. Unknown
+  receipts ignore output; invalid receipt identity/status/time stays unknown.
+- Normalize absent listed schemas to `{}`; declaration still requires both
+  schemas before dispatch. Use the protobuf Timestamp JSON profile for receipt
+  times and rate-limit resets, rejecting year zero and excess fractional digits.
+- Add `datasource.Client.Invoke`, `Lookup`, `DeclareOperations` and
+  `ListOperations` on the existing gateway-bound Connect client, matching the
+  Python facade. Add operations, JSON output, receipts, UUIDv7 effect IDs and
+  per-call deadlines; the host alone owns replay and provider dispatch.
+- Add `ErrNotPermitted`, `ErrUnknownOperation`, `InputError`, `RateLimited`,
+  `ProviderRefused`, `OperationRefused`, `ErrEffectReused`, `ErrEffectNotFound`
+  and `ErrOutcomeUnknown`. The host's `SOURCE_OPERATION_OUTCOME_UNKNOWN`
+  reason retains the effect ID. `*OutcomeUnknown` wraps the original error for
+  `errors.Is`/`errors.As` and Connect diagnostics; callers must check
+  `ErrOutcomeUnknown` before applying transport retry rules. The SDK never retries.
+  Only `SOURCE_PROVIDER_REFUSED` maps to a provider refusal; its status comes
+  from the host's `provider_status` metadata (canonical HTTP 100–599, zero
+  when absent or invalid). `InputError.Pointer` preserves the host's first
+  `BadRequest.FieldViolation.field`. Host messages remain unchanged.
+- Add `OperationDeclarationRemoved` / `ErrOperationDeclarationRemoved` for
+  `SOURCE_OPERATION_DECLARATION_REMOVED`. It preserves the original effect ID
+  and `receipt_status` as `ReceiptStatus` and `Receipt.Status` (COMMITTED or
+  UNKNOWN; absent/unrecognized metadata becomes UNKNOWN). Recover with Lookup,
+  never with a fresh ID; the SDK never retries or invents receipt output.
+- Remove the old Lookup caveat: the host now recovers saved receipts after
+  declaration removal/replacement, under current source read authority.
+  Committed receipts survive; unresolved/expired stays unknown. Lookup NotFound
+  means no attempt marker exists.
+- Lookup misses return the original ID with `NOT_ATTEMPTED`; callers may
+  explicitly reinvoke with the same ID. Committed receipts include `Output`,
+  so recovery can retrieve output without another invoke. Receipt statuses are
+  `COMMITTED`, `UNKNOWN` and `NOT_ATTEMPTED`.
+- Every non-Connect HTTP failure after Invoke/Lookup dispatch, including 4xx,
+  429 and 500, returns `ErrOutcomeUnknown` with the original effect ID and
+  diagnostic cause. Decoded RPC errors retain their existing typed mappings.
+- Validate effect IDs and reject an expired deadline before dispatch with
+  `InputError`, no result and zero RPC calls. Explicit cancellation returns
+  `context.Canceled` with no result. Add operation descriptions and host-computed
+  digests to declaration/list round-tripping.
+- Document the call and retry contracts in `README.md` and package examples.
+- Invoke payloads use `input_json` / `output_json` strings containing exactly
+  one JSON object, preserving numeric precision. Declaration schemas retain
+  the host's `Struct` representation. Lookup sends only the effect ID; its
+  existing org/source arguments cannot override the host's derived authority.
+- Update `golang.org/x/tools` so the API boundary gate can read Go 1.27 export
+  data; the gate and its fixtures are unchanged.
+- Regenerate the full host API from released tag `v0.0.94`, recorded in
+  `SOURCE.txt` with module version `0.1.0`. The datasource bindings are unchanged
+  from the reviewed PR-head contract. This refresh creates no SDK release.
+  CI and the regeneration procedure now accept release-tag provenance.
+- Include the host's installation narrowing, organisation installation listing
+  and team grant/revoke RPCs, plus platform-admin module envelope reads/writes,
+  in the regenerated API. Module capability comments describe the host's
+  structured tenant-membership and idempotency refusals.
+- Include the runtime-facing `PruneSourceOperationReceipts` and
+  `LookupPruneSourceOperationReceipts` RPCs in generated bindings only;
+  no receipt retention methods are exposed by the caller facade.
+- Re-export the OAuth2 grant type/constants reachable from source reads. The
+  generation template emits all host-owned `saas/` schemas and imports Core's
+  Runnable descriptors from Core v0.3.41, which supplies the required package
+  while preserving consumer compatibility; plugin versions are unchanged.
+
+### Removed / changed (breaking, inherited host contract)
+
+- Host `v0.0.94` removes `MintModuleRegistration` and `MintSolutionRegistration`
+  RPCs, their procedure constants, and `ModuleMintRegistrationRequest/Response`
+  and `SolutionMintRegistrationRequest/Response`. Work Context mints now prove
+  workload identity with projected ServiceAccount tokens; there is no replacement
+  registration-credential mint RPC.
+- Generated `ModuleMintWorkContextRequest`, `ModuleMintOperationContextRequest`
+  and `ModuleMintSourceOperationContextRequest` lose `Secret`/`GetSecret` and
+  gain `ServiceAccountToken`/`GetServiceAccountToken`. The first two requests
+  also gain `OrganizationId` for shared-principal installation selection.
+  The gateway route-rejection fixture uses the current request field. The
+  hand-written broker sends the projected token as its sole Bearer credential,
+  and includes the organization selector on the first two REST mint bodies.
+- `moduleauthority.CurrentInstallation.SolutionIdentifier` is replaced by
+  `TargetID` and `BindingID`, reflecting the host's immutable authority
+  identities. The SDK validates the target UUID and nonempty binding.
+- Generated `Installation.SolutionIdentifier`,
+  `InstallSolutionRequest.SolutionIdentifier` and
+  `ModuleCurrentInstallationResponse.SolutionIdentifier` are removed in favor
+  of target/binding identity fields. Their `GetSolutionIdentifier` methods
+  disappear too.
+- Generated `PutSolutionRegistration` / `DeleteSolutionRegistration` RPCs,
+  procedure constants and request types (including the Put request's oneof
+  wrappers), `SolutionFrontendRegistration` and `SolutionBackendRegistration`
+  are removed. The host reconciles delivered presence; there is no writer RPC
+  replacement. Read contracts and new entitlement/target contracts are retained.
+- Generated `SolutionFrontendBinding.LeaseExpiresAt`,
+  `SolutionBackendBinding.LeaseExpiresAt`, `SolutionRegistration.RuntimeBoundary`
+  and their getters, and the
+  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_EXPIRED` constant
+  are removed by the same delivered-presence contract. No generated output was
+  edited or restored to retain the older API.
+
 ## Unreleased — exclude broker diagnostics
 
 - **Fix at the SDK error boundary; breaking.** Broker errors exclude all
@@ -16,21 +125,32 @@
 
 ## Unreleased — mint once: the projected ServiceAccount token replaces the module secret
 
-- **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token}`: `Token` is a
-  `ProjectedTokenSource` that reads the module pod's projected ServiceAccount
+- **Breaking.** `moduleauthority.Credentials` is `{Prefix, Token, OrganizationID}`.
+  `Token` is a `ProjectedTokenSource` that reads the module pod's projected ServiceAccount
   token (audience `accounts`). `Secret` is deleted with the host's
   `MODULE_IDENTITY_SECRETS`. Every broker mint sends the token as
   `Authorization: Bearer`, read from its source before that mint (the kubelet
   rotates it); `X-Codefly-Module-Secret` is no longer sent.
+- `OrganizationID` selects the installation for module Work Context and
+  operation-context mints. Shared modules must supply it; tenant-pinned modules
+  may omit it or name their own tenant. Use a separate client per organization
+  so its cached module Work Context stays scoped. Source-context mints send only
+  `prefix` and `source_id`; their delegation determines the organization.
+- Every token source is trimmed and checked before dispatch: empty or oversized
+  (more than 64 KiB) tokens return `ErrInvalidCredentials` with zero broker calls.
+  The host requires audience `accounts` and lifetime at most 600 seconds. No
+  token path is defaulted. Tests cover file rotation and exact REST bodies on
+  all three mints; the host fake rejects missing, duplicate and non-Bearer
+  Authorization, and any legacy secret header as a regression guard.
 - Added `ProjectedTokenFile`, the file-backed source. Its method set is
   `sdk-go/workcontext`'s `ProjectedTokenSource`, so that implementation is
   accepted once this module moves off the pre-cutover `sdk-go/workcontext` pin.
 - Added `ErrExecutionUnestablished` for the broker's `503`: the host could not
   establish what the pod is running, nothing was decided, and a retry may
   succeed. `401` still maps to `ErrInvalidCredentials`.
-- `gen/` is unchanged: the broker client speaks the broker's REST contract, not
-  the generated request types, so the regeneration waits for the host change to
-  land and is its own refresh.
+- The broker client speaks the REST contract verified against
+  `gateway_modules.go` at released host tag `v0.0.94`; the generated request
+  types are consumed through the tagged API refresh above.
 
 ## Unreleased — module audit declarations and gateway authority
 
@@ -123,7 +243,7 @@ version and to signal the breaking removal below.
   - the three mints go to the gateway's module broker as JSON
     (`POST /modules/_work-context`, `/modules/_operation-context`,
     `/modules/_source-operation-context`) with `X-Codefly-Internal-Token` and
-    `X-Codefly-Module-Secret`;
+    `Authorization: Bearer <projected ServiceAccount token>`;
   - `ExchangeOperation` calls accounts' `authority` gRPC endpoint with the
     module Work Context in `x-codefly-work-context` and the internal token in
     `x-codefly-internal-token`, and still refreshes a rejected module Work
@@ -133,8 +253,8 @@ version and to signal the breaking removal below.
   token, gateway, gateway base URL or authority address, and on a plaintext
   seam to anything but `localhost` or a loopback IP unless the consumer sets
   `AllowInsecureHTTP` from its own mesh-protection assertion; and with
-  `ErrInvalidCredentials` on an empty prefix or secret. The broker client never
-  follows a redirect. The `connect.ClientOption` variadic is gone.
+  `ErrInvalidCredentials` on an empty prefix or missing token source. The broker
+  client never follows a redirect. The `connect.ClientOption` variadic is gone.
 
   Refusals change shape with the transport: a broker answer other than 200 is
   a `*BrokerError` (path, status, reason), wrapped with `ErrInvalidCredentials`

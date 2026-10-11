@@ -41,9 +41,10 @@ const defaultRefreshSkew = 30 * time.Second
 
 var (
 	// ErrInvalidCredentials: the module's credentials are missing or its
-	// projected token could not be read, or the broker refused to prove the
-	// module (HTTP 401 — a token the host refused, another workload's token, a
-	// pod running a build the host does not approve, or a wrong internal token;
+	// projected token could not be read, is empty or exceeds 64 KiB, or the
+	// broker refused to prove the module (HTTP 401 — a token the host refused,
+	// another workload's token, a pod running a build the host does not approve,
+	// or a wrong internal token;
 	// the host does not say which).
 	ErrInvalidCredentials = errors.New("module authority: invalid module credentials")
 	// ErrExecutionUnestablished: the host could not establish what this pod is
@@ -95,7 +96,7 @@ type Seams struct {
 	// hops to a non-loopback address are protected out of band (every
 	// in-cluster hop carried by a mutually authenticated mesh). It must come
 	// from the consumer's own configured assertion — never inferred. Without
-	// it, the internal token and the module secret are sent only over https
+	// it, the internal token and the projected token are sent only over https
 	// (or TLS) or to a loopback address, and New refuses anything else.
 	AllowInsecureHTTP bool
 }
@@ -120,6 +121,14 @@ type Authority struct {
 type Credentials struct {
 	Prefix string
 	Token  ProjectedTokenSource
+	// OrganizationID selects the organization for module Work Context and
+	// operation-context mints. Required for a shared module; a tenant-pinned
+	// module may omit it or name its own tenant. The host checks the module's
+	// envelope and live installation; this selector grants no authority.
+	// Use a separate Client for each organization: its cached module Work
+	// Context belongs to that organization. Source-context mints ignore this
+	// field because the source's delegation determines their organization.
+	OrganizationID string
 }
 
 // ProjectedTokenSource reads the projected ServiceAccount token as it is NOW.
@@ -127,6 +136,8 @@ type Credentials struct {
 // the projection under a running process. Its method set is
 // sdk-go/workcontext's ProjectedTokenSource's, so that implementation satisfies
 // it as written.
+// Empty tokens and tokens larger than 64 KiB after trimming whitespace are
+// refused with ErrInvalidCredentials before any broker request is sent.
 type ProjectedTokenSource interface {
 	ProjectedToken() (string, error)
 }
@@ -134,6 +145,8 @@ type ProjectedTokenSource interface {
 // ProjectedTokenFile reads the token from the path its projected volume is
 // mounted at, trimmed. An empty file is an error, never an empty token: a
 // projection mid-rotation must not be presented as a credential.
+// The consumer supplies the mount path; there is no default. The file read
+// is limited to 64 KiB, including surrounding whitespace.
 //
 // It is the same contract as sdk-go/workcontext's ProjectedTokenFile, which this
 // module cannot import while it pins the pre-cutover sdk-go/workcontext for
@@ -177,8 +190,12 @@ func (c Credentials) projectedToken() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrInvalidCredentials, err)
 	}
-	if strings.TrimSpace(token) == "" {
+	token = strings.TrimSpace(token)
+	if token == "" {
 		return "", fmt.Errorf("%w: projected token is empty", ErrInvalidCredentials)
+	}
+	if len(token) > maxProjectedToken {
+		return "", fmt.Errorf("%w: projected token exceeds %d bytes", ErrInvalidCredentials, maxProjectedToken)
 	}
 	return token, nil
 }
@@ -333,9 +350,10 @@ func (c *Client) MintModuleOperationContext(ctx context.Context, bindingID strin
 		return OperationContext{}, err
 	}
 	var issued operationContextResponse
-	if err := c.broker.post(ctx, operationContextPath, projected, map[string]string{
-		"prefix":  c.credentials.Prefix,
-		"binding": bindingID,
+	if err := c.broker.post(ctx, operationContextPath, projected, operationContextRequest{
+		Prefix:         c.credentials.Prefix,
+		Binding:        bindingID,
+		OrganizationID: c.credentials.OrganizationID,
 	}, &issued); err != nil {
 		return OperationContext{}, fmt.Errorf("module authority: mint operation context: %w", brokerRefusal(err))
 	}
@@ -358,8 +376,9 @@ func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkConte
 		return codefly.WorkContextToken{}, err
 	}
 	var issued workContextResponse
-	if err := c.broker.post(ctx, workContextPath, projected, map[string]string{
-		"prefix": c.credentials.Prefix,
+	if err := c.broker.post(ctx, workContextPath, projected, workContextRequest{
+		Prefix:         c.credentials.Prefix,
+		OrganizationID: c.credentials.OrganizationID,
 	}, &issued); err != nil {
 		return codefly.WorkContextToken{}, fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
 	}

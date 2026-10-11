@@ -1,6 +1,67 @@
 package datasource
 
-import v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
+import (
+	"encoding/json"
+	"time"
+
+	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
+)
+
+// Effect describes whether a declared operation may change the provider.
+type Effect string
+
+const (
+	EffectReadOnly Effect = "READ_ONLY"
+	EffectMutation Effect = "MUTATION"
+)
+
+// Operation declares a route relative to a connected source. The host owns
+// admission, JSON Schema validation, routing, credentials and output limits.
+type Operation struct {
+	Name           string
+	Description    string
+	Method         string
+	Path           string
+	Query          []string
+	Input          json.RawMessage
+	Output         json.RawMessage
+	Effect         Effect
+	MaxOutputBytes uint32
+	// Digest is read from ListOperations; DeclareOperations ignores it because
+	// the host computes the admitted declaration's digest.
+	Digest string
+}
+
+// ReceiptStatus is the host's observation of an effect, not a retry decision.
+type ReceiptStatus string
+
+const (
+	ReceiptStatusCommitted ReceiptStatus = "COMMITTED"
+	ReceiptStatusUnknown   ReceiptStatus = "UNKNOWN"
+	// ReceiptStatusNotAttempted means Lookup found no attempt marker.
+	// A caller may explicitly invoke with the same ID; the SDK never retries.
+	ReceiptStatusNotAttempted ReceiptStatus = "NOT_ATTEMPTED"
+)
+
+// Receipt identifies an effect for Lookup. Unknown means its outcome is not
+// known; it does not mean that the provider did nothing. CommittedAt is zero
+// when the host has not reported a commit; ProviderStatus is zero when absent.
+type Receipt struct {
+	EffectID       string
+	Status         ReceiptStatus
+	CommittedAt    time.Time
+	ProviderStatus int
+	// Output is the committed receipt.output_json evidence, also available after
+	// Lookup. It is nil when unavailable or malformed (see DatasourceError).
+	Output json.RawMessage
+}
+
+// Result carries top-level output_json and the host receipt. Invoke also returns
+// a non-nil Result on an RPC error so a minted effect ID is never lost.
+type Result struct {
+	Output  json.RawMessage
+	Receipt Receipt
+}
 
 // The message types this package's methods return, re-exported under the
 // facade's own name — see the same block in package accounts for why an
@@ -25,6 +86,8 @@ type (
 	ApiDatasourceConfig = v1.ApiDatasourceConfig
 	// ApiOAuth2Config is the non-secret OAuth configuration of an API source.
 	ApiOAuth2Config = v1.ApiOAuth2Config
+	// ApiOAuth2Grant selects the host's OAuth2 credential lifecycle.
+	ApiOAuth2Grant = v1.ApiOAuth2Config_Grant
 	// ApiCredentialKind identifies how an API source authenticates.
 	ApiCredentialKind = v1.ApiCredentialKind
 	// CrawlerDatasourceConfig is the configuration of a public web crawler.
@@ -66,6 +129,11 @@ const (
 )
 
 const (
+	ApiOAuth2GrantUnspecified       = v1.ApiOAuth2Config_GRANT_UNSPECIFIED
+	ApiOAuth2GrantRefreshToken      = v1.ApiOAuth2Config_GRANT_REFRESH_TOKEN
+	ApiOAuth2GrantClientCredentials = v1.ApiOAuth2Config_GRANT_CLIENT_CREDENTIALS
+	ApiOAuth2GrantAuthorizationCode = v1.ApiOAuth2Config_GRANT_AUTHORIZATION_CODE
+
 	ApiCredentialKindUnspecified = v1.ApiCredentialKind_API_CREDENTIAL_KIND_UNSPECIFIED
 	ApiCredentialKindBearer      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_BEARER
 	ApiCredentialKindBasic       = v1.ApiCredentialKind_API_CREDENTIAL_KIND_BASIC

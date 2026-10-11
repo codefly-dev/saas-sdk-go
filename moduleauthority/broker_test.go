@@ -19,7 +19,7 @@ func TestTheGatewayFakeRefusesTheConnectPathTheOldClientUsed(t *testing.T) {
 	// way the real gateway does, or every other test here proves nothing.
 	h := newHost(t)
 	old := accountsv1connect.NewModuleCapabilitiesServiceClient(h.gateway.HTTPClient(), h.gateway.BaseURL())
-	_, err := old.MintModuleWorkContext(t.Context(), connect.NewRequest(&ModuleMintWorkContextRequest{Prefix: testPrefix}))
+	_, err := old.MintModuleWorkContext(t.Context(), connect.NewRequest(&ModuleMintWorkContextRequest{Prefix: testPrefix, ServiceAccountToken: testProjectedToken}))
 	if connect.CodeOf(err) != connect.CodeUnimplemented { // Connect's mapping of HTTP 404
 		t.Fatalf("a Connect call at the gateway: %v, want 404 (unimplemented)", err)
 	}
@@ -237,7 +237,7 @@ func TestMintsRejectIncompleteInputWithoutNetwork(t *testing.T) {
 }
 
 func TestTheBrokerClientNeverFollowsARedirect(t *testing.T) {
-	// A redirect would replay the internal token and the module secret to an
+	// A redirect would replay the internal token and the projected token to an
 	// address the transport rule never judged.
 	h := newHost(t)
 	target := newFakeGateway(t)

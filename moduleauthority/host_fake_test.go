@@ -26,14 +26,14 @@ import (
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
-// This file fakes the two host seams exactly as module-saas-starter serves
+// This file fakes the two host seams as module-saas-starter v0.0.94 serves
 // them, so the client is tested against the host's contract rather than
 // against itself:
 //
 //   - fakeGateway is the auth-gateway's module broker
 //     (module/services/auth-gateway/code/gateway_modules.go): the three
-//     POST /modules/_* paths, their perimeter (internal token + module
-//     secret header), body validation, status mapping, plain-text refusals and
+//     POST /modules/_* paths, their perimeter (internal token + projected
+//     ServiceAccount bearer), body validation, status mapping, plain-text refusals and
 //     JSON answers. Every other path answers 404 "endpoint not exposed", as the
 //     real gateway does for every EXPOSURE_INTERNAL procedure — the old bug was
 //     a Connect call to exactly such a path.
@@ -51,6 +51,7 @@ const (
 	testOwner          = "44444444-4444-4444-8444-444444444444"
 	testDelegation     = "33333333-3333-4333-8333-333333333333"
 	exampleSource      = "55555555-5555-4555-8555-555555555555"
+	testBindingID      = "binding-example-1"
 )
 
 // The broker's paths as the host serves them, spelled out rather than taken
@@ -63,8 +64,7 @@ const (
 
 var moduleCredentials = Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken)}
 
-// staticToken is a ProjectedTokenSource that answers one value; rotatingToken
-// answers the next of several on each read, the way a kubelet rotation does.
+// staticToken is a test-only ProjectedTokenSource that answers one value.
 type staticToken string
 
 func (s staticToken) ProjectedToken() (string, error) { return string(s), nil }
@@ -102,19 +102,21 @@ type fakeGateway struct {
 	headers []http.Header
 
 	// Behaviour knobs, per path.
-	refuse   map[string]refusal
-	expires  time.Time
-	binding  string // overrides the binding answered by the operation mint
-	sourceID string // overrides the source answered by the source mint
+	refuse         map[string]refusal
+	expires        time.Time
+	binding        string // overrides the binding answered by the operation mint
+	sourceID       string // overrides the source answered by the source mint
+	projectedToken string // token currently accepted by the simulated accounts verifier
 }
 
 func newFakeGateway(t *testing.T) *fakeGateway {
 	t.Helper()
 	g := &fakeGateway{
-		valid:   map[string]bool{},
-		bodies:  map[string][]map[string]string{},
-		refuse:  map[string]refusal{},
-		expires: time.Now().Add(time.Hour),
+		valid:          map[string]bool{},
+		bodies:         map[string][]map[string]string{},
+		refuse:         map[string]refusal{},
+		expires:        time.Now().Add(time.Hour),
+		projectedToken: testProjectedToken,
 	}
 	g.server = httptest.NewServer(http.HandlerFunc(g.serve))
 	t.Cleanup(g.server.Close)
@@ -166,14 +168,24 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	// Exactly one bearer, as the real broker reads it; a module secret header
-	// is not a credential the host reads any more.
+	// The real gateway no longer reads the legacy header. Refuse even its
+	// presence here as a stricter regression guard against sending it again.
+	if len(r.Header.Values("X-Codefly-Module-Secret")) != 0 {
+		plainError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	// Exactly one Bearer token, trimmed and bounded as gateway_modules.go
+	// lines 112–122 at v0.0.94 (the literal limit is independent of the SDK).
 	authorization := r.Header.Values("Authorization")
 	if len(authorization) != 1 || !strings.HasPrefix(authorization[0], "Bearer ") {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	projected := strings.TrimPrefix(authorization[0], "Bearer ")
+	projected := strings.TrimSpace(strings.TrimPrefix(authorization[0], "Bearer "))
+	if projected == "" || len(projected) > 64*1024 {
+		plainError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	var payload map[string]string
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&payload); err != nil {
 		plainError(w, http.StatusBadRequest, "invalid json")
@@ -185,7 +197,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// accounts' verdict on the token: the gateway maps it per path.
-	if payload["prefix"] != testPrefix || projected != testProjectedToken {
+	if payload["prefix"] != testPrefix || projected != g.projectedToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -398,14 +410,20 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		if call.installation.ParentWorkContextToken == "denied.token" {
 			return status.Error(codes.PermissionDenied, "current authority denied")
 		}
-		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, SolutionIdentifier: "acme/example"}
+		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, TargetId: testOwner, BindingId: testBindingID}
 		switch call.installation.ParentWorkContextToken {
 		case "wrong-id.token":
 			out.InstallationId = testOwner
 		case "missing-tenant.token":
 			out.TenantId = ""
-		case "empty-source.token":
-			out.SolutionIdentifier = ""
+		case "empty-target.token":
+			out.TargetId = ""
+		case "invalid-target.token":
+			out.TargetId = "invalid"
+		case "empty-binding.token":
+			out.BindingId = ""
+		case "invalid-binding.token":
+			out.BindingId = "   "
 		}
 		return stream.SendMsg(out)
 	}
