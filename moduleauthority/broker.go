@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,8 +37,12 @@ const (
 // answers are a handful of short strings.
 const maxBrokerResponse = 64 << 10
 
+const maxBrokerReason = 256
+
+var brokerJWT = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+
 // BrokerError is a non-success answer from the gateway's module broker: the
-// HTTP status and the broker's plain-text reason. Every broker failure this
+// HTTP status and a short, sanitized diagnostic. Every broker failure this
 // package returns wraps one, alongside a sentinel where the status has a
 // meaning (401 ErrInvalidCredentials; 403 ErrPermissionDenied or a delegation
 // refusal; 412 ErrDelegationMissing; 503 ErrExecutionUnestablished). 400 is a
@@ -46,7 +51,10 @@ const maxBrokerResponse = 64 << 10
 type BrokerError struct {
 	Path       string
 	StatusCode int
-	Reason     string
+	// Reason contains at most 256 printable ASCII bytes. The request's bearer
+	// and JWT-shaped strings are redacted. Unreadable or oversized diagnostics
+	// are discarded; the response body is never retained.
+	Reason string
 }
 
 func (e *BrokerError) Error() string {
@@ -98,6 +106,18 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body map[
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		// Status decides the failure even when its diagnostic cannot be read.
+		be := &BrokerError{Path: path, StatusCode: resp.StatusCode}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBrokerResponse+1))
+		if err == nil && len(raw) <= maxBrokerResponse {
+			be.Reason = sanitizeBrokerReason(string(raw), projectedToken)
+		}
+		// Do not retain a partial diagnostic: the read limit or error may have
+		// cut through a credential that could no longer be matched for redaction.
+		return be
+	}
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBrokerResponse+1))
 	if err != nil {
 		return err
@@ -105,13 +125,31 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body map[
 	if len(raw) > maxBrokerResponse {
 		return fmt.Errorf("module broker %s: response exceeds %d bytes", path, maxBrokerResponse)
 	}
-	if resp.StatusCode != http.StatusOK {
-		return &BrokerError{Path: path, StatusCode: resp.StatusCode, Reason: strings.TrimSpace(string(raw))}
-	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: undecodable broker answer", ErrInvalidCapability)
 	}
 	return nil
+}
+
+func sanitizeBrokerReason(reason, projectedToken string) string {
+	// Redact before sanitizing or shortening so neither operation hides a
+	// match. The exact bearer may be opaque or contain a JWT-shaped substring.
+	if projectedToken != "" {
+		reason = strings.ReplaceAll(reason, projectedToken, "[redacted]")
+	}
+	reason = brokerJWT.ReplaceAllString(reason, "[redacted]")
+	reason = strings.Map(func(r rune) rune {
+		if r < ' ' || r > '~' {
+			return ' '
+		}
+		return r
+	}, reason)
+	reason = strings.TrimSpace(reason)
+	if len(reason) > maxBrokerReason {
+		reason = reason[:maxBrokerReason]
+	}
+	// A shortened string must not keep the full diagnostic's backing storage.
+	return strings.Clone(reason)
 }
 
 // brokerRefusal types the statuses the mints share: 401 is an unproven
