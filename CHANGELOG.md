@@ -142,6 +142,31 @@ compiling. `gen/` and `SOURCE.txt` are unchanged (module-saas-starter v0.0.94).
   v0.0.94 gateway relays a pre-cutover token on all three mints, and the SDK
   refuses each. The guarded `sdk-go/workcontext` now stays at the host's own
   pin in the conformance build, since this SDK no longer requires it.
+## Unreleased — read the host's journal (waiting for the host release)
+
+**`gen/` here is ahead of the ref `SOURCE.txt` records.** `ReadJournal` and its
+three messages are not in `module-saas-starter` v0.0.94, and no release carries
+them yet. The two generated files below were produced by this repo's own
+`buf.gen.yaml` (buf 1.73.0, the pinned plugins) from the v0.0.94 proto with the
+wire contract added to `module_capabilities.proto` in a scratch checkout, not
+by hand. They are a stopgap: the `gen-drift` job fails until the contract is in
+a published `module-saas-starter` release and `gen/` is regenerated from that
+tag. Do not release this until it is.
+
+### Added (moduleauthority, read the journal)
+
+- `Client.ReadJournal(ctx, afterSeq, limit, types) (JournalPage, error)` calls
+  `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
+  module, through the same credentials and refresh-once rule as every authority
+  call. The host serves it only to a cross-tenant module principal; any other
+  caller gets the host's `PermissionDenied`, preserved. `JournalPage.NextAfterSeq`
+  is the resume point the host guarantees misses no committed entry, so a
+  reader resumes from it rather than from the last `Seq` it saw. A negative
+  position, a limit outside 0..500 (0 is the host's default of 100), or no type
+  (or an empty one) is `ErrInvalidJournalRead` before any call.
+- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
+  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
+  `ModuleReadJournalResponse`.
 
 ## v0.1.1 — the broker contract, held against the host's real gateway
 

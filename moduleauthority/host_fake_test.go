@@ -338,6 +338,7 @@ type authorityCall struct {
 	// the capability travelled with it and that the identifiers are the
 	// capability's own.
 	authorityQuestion *v1.ModuleResolveWorkContextAuthorityRequest
+	journal        *v1.ModuleReadJournalRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
@@ -354,6 +355,10 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:                         true,
 	accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:        true,
+	// ReadJournal is not in the v0.0.94 host: it is the wire contract the next
+	// host release is to serve (see SOURCE.txt), faked here as that contract
+	// states it.
+	accountsv1connect.ModuleCapabilitiesServiceReadJournalProcedure: true,
 }
 
 type fakeAuthority struct {
@@ -368,6 +373,15 @@ type fakeAuthority struct {
 	authorityRefusal error
 	// authority is the live state this host answers, by question kind.
 	authority authorityState
+	// journal is what the fake host has committed, in seq order. A test sets it
+	// before a call; the fake serves it the way the contract states.
+	journal []*v1.ModuleJournalEntry
+	// journalNext, when set, overrides next_after_seq, to model a host that
+	// holds the resume point back of the last entry it returned.
+	journalNext *int64
+	// crossTenant is whether the fake host treats this caller as a cross-tenant
+	// module principal. ReadJournal is refused to any other.
+	crossTenant bool
 
 	mu    sync.Mutex
 	calls []authorityCall
@@ -375,7 +389,7 @@ type fakeAuthority struct {
 
 func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.TransportCredentials) *fakeAuthority {
 	t.Helper()
-	a := &fakeAuthority{gateway: gateway}
+	a := &fakeAuthority{gateway: gateway, crossTenant: true}
 	options := []grpc.ServerOption{grpc.UnknownServiceHandler(a.handle)}
 	if creds != nil {
 		options = append(options, grpc.Creds(creds))
@@ -424,6 +438,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	case accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:
 		call.authorityQuestion = &v1.ModuleResolveWorkContextAuthorityRequest{}
 		recvErr = stream.RecvMsg(call.authorityQuestion)
+	case accountsv1connect.ModuleCapabilitiesServiceReadJournalProcedure:
+		call.journal = &v1.ModuleReadJournalRequest{}
+		recvErr = stream.RecvMsg(call.journal)
 	default:
 		recvErr = stream.RecvMsg(request)
 		call.request = request
@@ -447,6 +464,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if j := call.journal; j != nil {
+		return a.serveJournal(stream, j)
 	}
 	if call.declaration != nil {
 		if a.declarationError != nil {
@@ -550,6 +570,40 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		return stream.SendMsg(&v1.IssuedWorkContext{Token: corework.FixtureForeignToken()})
 	}
 	return stream.SendMsg(&v1.IssuedWorkContext{Token: sealedToken("child.token")})
+}
+
+// serveJournal answers ReadJournal as the wire contract states it: refused to a
+// caller that is not a cross-tenant module principal, entries with a seq
+// greater than after_seq of the requested types, at most limit of them (zero
+// meaning 100), and a resume point.
+func (a *fakeAuthority) serveJournal(stream grpc.ServerStream, req *v1.ModuleReadJournalRequest) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.crossTenant {
+		return status.Error(codes.PermissionDenied, "journal is served to cross-tenant module principals only")
+	}
+	if req.GetAfterSeq() < 0 || req.GetLimit() < 0 || req.GetLimit() > 500 || len(req.GetTypes()) == 0 {
+		return status.Error(codes.InvalidArgument, "after_seq >= 0, limit 0..500 and at least one type required")
+	}
+	limit := int(req.GetLimit())
+	if limit == 0 {
+		limit = 100
+	}
+	out := &v1.ModuleReadJournalResponse{NextAfterSeq: req.GetAfterSeq()}
+	for _, e := range a.journal {
+		if e.GetSeq() <= req.GetAfterSeq() || !slices.Contains(req.GetTypes(), e.GetType()) {
+			continue
+		}
+		if len(out.Entries) == limit {
+			break
+		}
+		out.Entries = append(out.Entries, e)
+		out.NextAfterSeq = e.GetSeq()
+	}
+	if a.journalNext != nil {
+		out.NextAfterSeq = *a.journalNext
+	}
+	return stream.SendMsg(out)
 }
 
 func (a *fakeAuthority) snapshot() []authorityCall {
