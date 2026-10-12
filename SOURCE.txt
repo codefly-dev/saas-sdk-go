@@ -1,5 +1,6 @@
 gen/ generated from codefly-dev/module-saas-starter@v0.0.94
 (accounts public proto: module/services/accounts/proto)
+(auth gateway: module/services/auth-gateway/code)
 
 module version: 0.1.0 (module/module.package.codefly.yaml)
 This SDK's release is matched to the saas-starter module version above.

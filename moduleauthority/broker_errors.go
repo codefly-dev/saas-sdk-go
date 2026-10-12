@@ -24,7 +24,8 @@ const (
 // only the HTTP status and its classification, and formats a fixed diagnostic
 // per class. Response bodies, headers and underlying errors are never retained.
 // Use errors.As to inspect it, including when wrapped with ErrInvalidCredentials
-// (401), ErrPermissionDenied or ErrDelegationInvalid (403), or
+// (401), ErrPermissionDenied or ErrDelegationInvalid (403),
+// ErrDelegationMissing (412 from the source mint), or
 // ErrExecutionUnestablished (503). A 502 or 503 may be worth retrying; a refusal
 // must not be treated as a transient transport failure.
 type BrokerError struct {

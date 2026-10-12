@@ -101,3 +101,53 @@ func TestPlaintextSeamsNeedLoopbackOrAnAssertion(t *testing.T) {
 		t.Fatalf("TLS seams: %v", err)
 	}
 }
+
+// accounts refuses any organization selector that is not a canonical UUID
+// (InvalidArgument, an untyped 400 at the first work or operation mint); New
+// refuses it before anything is sent, on the same rule — whichever mints the
+// client would go on to make, source mints included, though they never send
+// the field.
+func TestNewRefusesANonCanonicalOrganization(t *testing.T) {
+	const org = "6f1c3e2a-9b4d-4c8e-a1f0-2d3b4c5e6f7a"
+	h := newHost(t)
+	for _, org := range []string{
+		"ACME",
+		strings.ToUpper(org),
+		"{" + org + "}",
+		"urn:uuid:" + org,
+		strings.ReplaceAll(org, "-", ""),
+		" " + org,
+	} {
+		client, err := New(h.seams(), Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken), OrganizationID: org})
+		if !errors.Is(err, ErrInvalidCredentials) || client != nil {
+			t.Fatalf("organization %q: error = %v, want %v and no client", org, err, ErrInvalidCredentials)
+		}
+	}
+	if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 0 {
+		t.Fatalf("a refused construction reached the broker: %v", calls)
+	}
+
+	// The work and operation mints send a canonical organization.
+	client := h.client(t, Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken), OrganizationID: org})
+	if _, err := client.ModuleWorkContext(t.Context()); err != nil {
+		t.Fatalf("canonical organization, work mint: %v", err)
+	}
+	if _, err := client.MintModuleOperationContext(t.Context(), "model"); err != nil {
+		t.Fatalf("canonical organization, operation mint: %v", err)
+	}
+	// A source-only client leaves the selector empty, and sends none.
+	source := h.client(t, moduleCredentials)
+	if _, err := source.MintSourceOperationContext(t.Context(), exampleSource); err != nil {
+		t.Fatalf("source-only client: %v", err)
+	}
+	_, _, bodies, _ := h.gateway.snapshot()
+	if got := bodies[hostWorkContextPath]; len(got) != 1 || got[0]["organization_id"] != org {
+		t.Fatalf("work mint bodies = %v", got)
+	}
+	if got := bodies[hostOperationContextPath]; len(got) != 1 || got[0]["organization_id"] != org {
+		t.Fatalf("operation mint bodies = %v", got)
+	}
+	if got := bodies[hostSourceOperationContextPath]; len(got) != 1 || len(got[0]) != 2 {
+		t.Fatalf("source mint bodies = %v, want prefix and source_id only", got)
+	}
+}

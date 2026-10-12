@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased — the broker contract, held against the host's real gateway
+
+- **Fix (moduleauthority).** A source mint's HTTP 412 returns
+  `ErrDelegationMissing` again, wrapping the same `*BrokerError`: the source
+  has no active delegation, and a person must reconnect it. It is decided by
+  status alone, as 403 → `ErrDelegationInvalid` is — the v0.0.94 gateway
+  answers 412 on that path only for `DELEGATION_MISSING` (any other
+  FailedPrecondition is a 502) — so no response body is read.
+  `ErrDelegationMissing` is no longer deprecated. `ErrDelegationRevoked`
+  stays deprecated: telling it apart would need the body.
+- **Behaviour change.** `moduleauthority.New` refuses an `OrganizationID` that
+  is not a canonical (lowercase, hyphenated) UUID with `ErrInvalidCredentials`
+  — accounts' own rule — whichever mints the client goes on to make. Who
+  changes behaviour:
+  - a client that mints module Work Contexts or operation contexts used to
+    fail at its first such mint with an untyped HTTP 400; it now fails at
+    construction;
+  - a client that only mints source operation contexts, which never send the
+    field, used to work with such a value; it now fails at construction.
+    Leave `OrganizationID` empty there, or correct it.
+  An uppercase, braced, `urn:uuid:`, unhyphenated or space-padded UUID is
+  refused; the empty string still means "no organization".
+- Documented: a missing or wrong organization (a shared module naming none, a
+  tenant-pinned module naming another) is refused as `ErrInvalidCredentials`
+  (HTTP 401) on the module Work Context mint and `ErrPermissionDenied`
+  (HTTP 403) on the operation mint (`ErrInvalidCredentials` doc, README).
+- **CI.** New `host-gateway-conformance` job: `conformance/hostgateway/run.sh`
+  mints with the SDK's real client through module-saas-starter's real
+  auth-gateway handlers at the `SOURCE.txt` ref, faking only accounts' gRPC
+  mints. The host checkout comes from a `host-source` composite action now
+  shared with `gen-drift`; `SOURCE.txt` records the gateway path beside the
+  proto path. The runner fails unless all eight expected tests are listed,
+  run and pass. It also fails if the build would give the gateway a grpc,
+  protobuf or sdk-go/workcontext whose source differs from the host's pin,
+  and it resolves nothing at `@latest`: `moduleauthority`'s imports must all
+  be declared by the SDK's go.mod (checked `-mod=readonly` before `go get`
+  adds it), and everything after that one `go get` runs `-mod=readonly`.
+- `moduleauthority`'s fake gateway follows the real one's prefix rule, check
+  order, and indifference to the legacy module-secret header; its remaining,
+  deliberate divergences are listed in `host_fake_test.go`.
+
 ## Unreleased — callable sources
 
 - Reject unsupported HTTP response encodings before reading the body or

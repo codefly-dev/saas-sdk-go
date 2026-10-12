@@ -53,8 +53,8 @@ Fleet standard — [handbook#68](https://github.com/obin-ai/handbook/issues/68).
   descriptor has meant a text-rewritten module path, not a bad protobuf
   release.
 - **Say what you did not verify.** Unverified is not the same as working. CI
-  (below) runs the build walk and the `gen/` drift check, nothing more — if
-  you could not exercise something else, the PR says so.
+  (below) runs the build walk, the `gen/` drift check and the host-gateway
+  mint, nothing more — if you could not exercise something else, the PR says so.
 
 ## Build and test
 
@@ -79,7 +79,9 @@ export data for the boundary gate to run. There is no lint config —
 The same workflow's `gen-drift` job regenerates `gen/` from the ref in
 `SOURCE.txt` with this repo's `buf.gen.yaml` (buf itself pinned in the
 workflow) and fails on any difference — the reproduction check from the
-`refresh-generated-api` skill, run for you.
+`refresh-generated-api` skill, run for you. Its `host-gateway-conformance` job
+mints through the host's *real* gateway handlers at that same ref
+(`conformance/hostgateway/run.sh <host checkout>`; see the `AGENTS.md` there).
 
 ## Where things live
 
@@ -92,6 +94,7 @@ workflow) and fails on any difference — the reproduction check from the
 | `workcontext/` | callee-side verification: HTTP, Connect, gRPC middleware plus scope checks |
 | `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport |
 | `gen/` | generated output. Regenerated, never edited |
+| `conformance/hostgateway/` | `moduleauthority` minting through the host's real gateway at the `SOURCE.txt` ref |
 | `internal/apiboundary` | the public-API boundary gate, with fixtures that prove it still looks |
 | `internal/agentcontext` | the budget and frontmatter contract for this file and the skills |
 

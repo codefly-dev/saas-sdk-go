@@ -9,11 +9,10 @@ import (
 
 var (
 	// ErrDelegationMissing: the source has no active delegation to this
-	// module. A person must connect or reconnect the source to authorize its
-	// work.
-	//
-	// Deprecated: broker response bodies are excluded from errors. Source
-	// mints now return a BrokerError with status 412 without this sentinel.
+	// module (HTTP 412 from the source mint). A person must connect or
+	// reconnect the source to authorize its work; minting again will not.
+	// The status alone identifies it: the host answers 412 on this path only
+	// for a missing delegation, so no response body is read.
 	ErrDelegationMissing = errors.New("module authority: the source has no active delegation to this module")
 	// ErrDelegationRevoked: the delegation was revoked, explicitly or because
 	// the person who made it left, lost the permission, or the source was
@@ -56,13 +55,15 @@ type sourceOperationContextResponse struct {
 // mint. The caller names only the source; it can never pick an organization.
 //
 // A refusal is typed, and wraps the *BrokerError:
+//   - HTTP 412 is ErrDelegationMissing: a person must reconnect the source;
 //   - HTTP 403 is ErrDelegationInvalid, since every 403 of this mint is a
 //     delegation the module may not use;
 //   - HTTP 401 is ErrInvalidCredentials;
 //   - HTTP 503 is ErrExecutionUnestablished, and may be retried.
 //
-// Other non-200 statuses (including 412) carry only BrokerError. Bodies are
-// never read to distinguish missing or revoked delegations. Transport and read
+// Other non-200 statuses carry only BrokerError. Only the status is read:
+// bodies are never read, so a revoked delegation is not told apart from
+// another unusable one. Transport and read
 // failures carry BrokerTransportError. A 502 may be retried. The result is never
 // cached, and a refusal must never be answered with the module's own authority.
 func (c *Client) MintSourceOperationContext(ctx context.Context, sourceID string) (SourceOperationContext, error) {
@@ -115,6 +116,10 @@ func delegationRefusal(err error) error {
 		return ErrExecutionUnestablished
 	case http.StatusForbidden:
 		return ErrDelegationInvalid
+	case http.StatusPreconditionFailed:
+		// gateway_modules.go at v0.0.94 answers 412 on this path only for
+		// accounts' DELEGATION_MISSING; any other FailedPrecondition is a 502.
+		return ErrDelegationMissing
 	}
 	return nil
 }
