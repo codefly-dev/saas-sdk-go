@@ -127,7 +127,10 @@ type Credentials struct {
 	Token  ProjectedTokenSource
 	// OrganizationID selects the organization for module Work Context and
 	// operation-context mints, as a canonical (lowercase, hyphenated) UUID;
-	// New refuses any other form with ErrInvalidCredentials, as accounts would.
+	// New refuses any other form with ErrInvalidCredentials, as accounts would,
+	// even for a client that only mints source operation contexts: a
+	// misconfigured credential fails at construction, not at whichever mint
+	// first sends it.
 	// Required for a shared module; a tenant-pinned module may omit it or name
 	// its own tenant. The host checks the module's envelope and live
 	// installation; this selector grants no authority. A missing or wrong

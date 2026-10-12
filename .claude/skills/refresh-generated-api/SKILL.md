@@ -119,7 +119,11 @@ Mint through the new ref's real gateway before the PR, not after CI says so
 conformance/hostgateway/run.sh "$host_checkout" -race
 ```
 
-A red run there is the host's contract moving; fix the client, never the test.
+Read a red run before fixing it. If the test file does not compile at the new
+ref, the host renamed what the file binds to: re-bind those calls and accessors,
+and leave the assertions alone. If it compiles and an assertion fails, the
+broker contract moved: fix the client. `conformance/hostgateway/AGENTS.md`
+("When it goes red") tells the two apart.
 
 Silence is the proof. This also catches a stale `SOURCE.txt`: if the diff is
 non-empty for a ref you did not change, the recorded ref is not the one the

@@ -11,10 +11,17 @@
   `ErrDelegationMissing` is no longer deprecated. `ErrDelegationRevoked`
   stays deprecated: telling it apart would need the body.
 - **Behaviour change.** `moduleauthority.New` refuses an `OrganizationID` that
-  is not a canonical (lowercase, hyphenated) UUID with `ErrInvalidCredentials`.
-  It used to be accepted and fail at the first mint as an untyped HTTP 400,
-  since accounts applies the same rule. An uppercase, braced, `urn:uuid:` or
-  unhyphenated UUID is now refused at construction.
+  is not a canonical (lowercase, hyphenated) UUID with `ErrInvalidCredentials`
+  — accounts' own rule — whichever mints the client goes on to make. Who
+  changes behaviour:
+  - a client that mints module Work Contexts or operation contexts used to
+    fail at its first such mint with an untyped HTTP 400; it now fails at
+    construction;
+  - a client that only mints source operation contexts, which never send the
+    field, used to work with such a value; it now fails at construction.
+    Leave `OrganizationID` empty there, or correct it.
+  An uppercase, braced, `urn:uuid:`, unhyphenated or space-padded UUID is
+  refused; the empty string still means "no organization".
 - Documented: a missing or wrong organization (a shared module naming none, a
   tenant-pinned module naming another) is refused as `ErrInvalidCredentials`
   (HTTP 401) on the module Work Context mint and `ErrPermissionDenied`
@@ -24,7 +31,10 @@
   auth-gateway handlers at the `SOURCE.txt` ref, faking only accounts' gRPC
   mints. The host checkout comes from a `host-source` composite action now
   shared with `gen-drift`; `SOURCE.txt` records the gateway path beside the
-  proto path.
+  proto path. The runner fails unless all eight expected tests are listed,
+  run and pass. It also fails if the build would give the gateway a grpc,
+  protobuf or sdk-go/workcontext whose source differs from the host's pin,
+  and it resolves nothing at `@latest` (`-mod=readonly` after one `go get`).
 - `moduleauthority`'s fake gateway follows the real one's prefix rule, check
   order, and indifference to the legacy module-secret header; its remaining,
   deliberate divergences are listed in `host_fake_test.go`.

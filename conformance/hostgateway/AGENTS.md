@@ -7,13 +7,31 @@ hand-written fake. The fake once still accepted `X-Codefly-Module-Secret`
 after the host stopped reading it, and every test here stayed green.
 
 ```bash
-git clone --depth 1 --branch "$(grep -m1 -oE 'v[0-9]+\.[0-9]+\.[0-9]+$' SOURCE.txt)" \
-  https://github.com/codefly-dev/module-saas-starter.git /tmp/saas-host
-conformance/hostgateway/run.sh /tmp/saas-host -race -v
+# SOURCE.txt records a release tag or a 40-hex commit; this fetches either.
+ref=$(grep -m1 -oE 'module-saas-starter@(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$' SOURCE.txt)
+ref=${ref#*@}
+case $ref in v*) spec="refs/tags/$ref:refs/tags/$ref" ;; *) spec=$ref ;; esac
+git init -q /tmp/saas-host
+git -C /tmp/saas-host fetch -q --depth 1 https://github.com/codefly-dev/module-saas-starter.git "$spec"
+git -C /tmp/saas-host checkout -q "$ref"
+conformance/hostgateway/run.sh /tmp/saas-host -race
 ```
 
 CI's `host-gateway-conformance` job runs the same script on the checkout the
 `host-source` action makes (the one `gen-drift` uses).
+
+The script fails, rather than passes, when:
+- the tests in the file are not exactly the `expected` list at its top, or
+  any of them did not run and pass, or one skipped. A test added to the file
+  is added to that list too.
+- the build gives the gateway a different `google.golang.org/grpc`,
+  `google.golang.org/protobuf` or `sdk-go/workcontext` from the one the host
+  pins. The one exception is a version whose module tree is byte-identical,
+  checked on every run. Today that is `workcontext` b91ce91 → b3fb40d. Other
+  modules the SDK moves, such as `golang.org/x/*`, are printed as warnings.
+- the test file imports a package no required module provides. After
+  `go get` adds the SDK, everything runs with `-mod=readonly`, so nothing is
+  resolved at `@latest`.
 
 ## How it is wired, and why
 
@@ -32,8 +50,9 @@ CI's `host-gateway-conformance` job runs the same script on the checkout the
   host's own gateway tests fake them: the real mints need a Kubernetes
   TokenReview and a database. What accounts *decides* is therefore not under
   test — only what the gateway forwards to it and how it relays each answer.
-- Requiring the SDK raises some module versions the host pins (`run.sh`
-  prints which); the gateway is compiled with those.
+- Requiring the SDK raises some module versions the host pins. The gateway is
+  compiled with those, so the three that change what it does are gated (see
+  above), and the rest are printed.
 - The host's and this SDK's `gen/saas/accounts/v1` register the same proto
   files in one binary, so the script sets
   `GOLANG_PROTOBUF_REGISTRATION_CONFLICT=ignore`. Nothing under test resolves
@@ -48,6 +67,30 @@ duplicate, non-Bearer or empty bearer refused before accounts; the 64 KiB
 token bound; and the three gateway answers the fake copies (D1, D3, D4 in
 `moduleauthority/host_fake_test.go`).
 
-Red here means the host's contract moved, or the client broke it. Fix the
-client (or realign the fake), never the expectation, unless the host's own
-change says the contract changed — and then the PR names that host change.
+## When it goes red
+
+First ask which kind of red it is. Two kinds look alike after a `SOURCE.txt`
+move and need opposite fixes.
+
+- **The test file does not compile** (`[setup failed]` / `build failed`,
+  pointing into `zz_saas_sdk_go_conformance_test.go`). The host changed what
+  the file is bound to:
+  - one of the four unexported names;
+  - `newGatewayHarness`'s results;
+  - an `accountsv1` request or response field the fake accounts reads or
+    answers with.
+
+  Re-bind the file at the new ref. Edit `newRealGateway` and the `Get…`
+  accessors to the host's new spelling, and change no assertion about status,
+  header, body or sentinel. This is the likeliest red after a ref move, and it
+  says nothing yet about the SDK.
+- **It compiles and an assertion fails** (`--- FAIL`). The broker contract
+  moved, or the client broke it. That covers a path, a header, a JSON field
+  name, a status, or what reaches accounts. Fix the client, or realign the
+  fake. Change an expectation only when the host's own change says the
+  contract changed, and name that host commit in the PR.
+- **`run.sh` fails before or after `go test`** on the ref, the test list, a
+  guarded module or the host checkout's state. Its message names the cause.
+
+A compile error that renames an accounts *request* field is both: re-bind the
+accessor, then let the assertions say whether the SDK-facing wire changed.

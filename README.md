@@ -303,8 +303,10 @@ The SDK surfaces are:
   checks the module envelope and live installation; selecting an organization
   grants no authority. The selector must be a canonical UUID (lowercase,
   hyphenated), as accounts requires; `New` refuses any other form with
-  `ErrInvalidCredentials` rather than letting the first mint fail as an untyped
-  400. A missing or wrong organization — a shared module that names none, or a
+  `ErrInvalidCredentials` at construction, whichever mints the client will
+  make, rather than letting the first work or operation mint fail as an
+  untyped 400. A client that only mints source operation contexts leaves it
+  empty. A missing or wrong organization — a shared module that names none, or a
   tenant-pinned module that names another — is refused as unproven
   credentials: `ErrInvalidCredentials` (HTTP 401) from `ModuleWorkContext`, and
   `ErrPermissionDenied` (HTTP 403) from `MintModuleOperationContext`. The host
