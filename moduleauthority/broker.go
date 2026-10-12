@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 // The host gateway's module broker (module-saas-starter,
@@ -164,12 +162,11 @@ func (r operationContextResponse) operationContext(now time.Time) (OperationCont
 	if err != nil {
 		return OperationContext{}, err
 	}
-	token, err := codefly.ParseWorkContextToken(r.WorkContext)
-	if err != nil {
+	if !sealed(r.WorkContext) {
 		return OperationContext{}, fmt.Errorf("%w: malformed operation token", ErrInvalidCapability)
 	}
 	return OperationContext{
-		Token:       token,
+		Token:       r.WorkContext,
 		ExpiresAt:   expiresAt,
 		PrincipalID: r.PrincipalID,
 		Tenant:      r.Tenant,

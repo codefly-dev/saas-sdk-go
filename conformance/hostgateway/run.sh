@@ -19,6 +19,7 @@ set -euo pipefail
 expected=(
 	TestSDKConformanceFakeGatewayStillFollowsThisOne
 	TestSDKConformanceNoOrganization
+	TestSDKConformancePreCutoverTokenRefused
 	TestSDKConformanceRefusals
 	TestSDKConformanceRemovedAndMalformedCredentials
 	TestSDKConformanceRotatedProjectedFile

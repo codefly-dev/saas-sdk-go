@@ -26,7 +26,7 @@ func TestAMintOnlyClientMintsAndRefusesAuthorityCalls(t *testing.T) {
 		t.Fatalf("mint-only client could not mint its module Work Context: %v", err)
 	}
 	callsBefore, _, _, _ := h.gateway.snapshot()
-	_, err = client.ExchangeOperation(t.Context(), ExchangeRequest{BindingID: "documents-ingest", Parent: token(t, "parent.token")})
+	_, err = client.ExchangeOperation(t.Context(), ExchangeRequest{BindingID: "documents-ingest", Parent: sealedToken("parent.token")})
 	if !errors.Is(err, ErrNoAuthority) {
 		t.Fatalf("ExchangeOperation without an authority seam: %v, want ErrNoAuthority", err)
 	}

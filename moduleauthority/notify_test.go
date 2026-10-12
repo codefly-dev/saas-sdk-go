@@ -32,7 +32,7 @@ func TestNotifyOrgAdminsCallsTheAuthorityEndpointAsTheModule(t *testing.T) {
 	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken {
 		t.Fatalf("x-codefly-internal-token = %v", call.internalToken)
 	}
-	if len(call.workContext) != 1 || call.workContext[0] != "module.token1" {
+	if len(call.workContext) != 1 || call.workContext[0] != sealedToken("module.token1") {
 		t.Fatalf("x-codefly-work-context = %v", call.workContext)
 	}
 	n := call.notice
@@ -116,7 +116,7 @@ func TestNotifyUserCallsTheAuthorityEndpointAsTheModule(t *testing.T) {
 	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken {
 		t.Fatalf("x-codefly-internal-token = %v", call.internalToken)
 	}
-	if len(call.workContext) != 1 || call.workContext[0] != "module.token1" {
+	if len(call.workContext) != 1 || call.workContext[0] != sealedToken("module.token1") {
 		t.Fatalf("x-codefly-work-context = %v", call.workContext)
 	}
 	n := call.userNotice

@@ -20,7 +20,7 @@ func TestMintSourceOperationContextNamesOnlyTheSource(t *testing.T) {
 	}
 	if got.Tenant != testTenant || got.OwnerPrincipalID != testOwner || got.DelegationID != testDelegation ||
 		got.SourceID != exampleSource || got.Audience != "runtime" || got.BindingID != "runtime-admission" ||
-		got.PrincipalID != testPrincipal || got.Token.Encoded() != "operation.token" {
+		got.PrincipalID != testPrincipal || got.Token != sealedToken("operation.token") {
 		t.Fatalf("context: %+v", got)
 	}
 	if _, err := client.MintSourceOperationContext(t.Context(), exampleSource); err != nil {

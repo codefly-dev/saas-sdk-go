@@ -25,7 +25,7 @@ func TestAuditEmissionUsesModuleAuthority(t *testing.T) {
 	if call.method != "/saas.accounts.v1.ModuleCapabilitiesService/EmitAuditEvent" {
 		t.Fatal(call.method)
 	}
-	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken || len(call.workContext) != 1 || call.workContext[0] != "module.token1" || len(call.authorization) != 0 {
+	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken || len(call.workContext) != 1 || call.workContext[0] != sealedToken("module.token1") || len(call.authorization) != 0 {
 		t.Fatal("wrong authority carriers")
 	}
 	e := call.audit
@@ -113,7 +113,7 @@ func TestAuditEmissionRefreshesOnlyRejectedModuleAuthentication(t *testing.T) {
 			if _, err := client.ModuleWorkContext(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			h.gateway.revoke("module.token1")
+			h.gateway.revoke(sealedToken("module.token1"))
 			h.gateway.mu.Lock()
 			h.gateway.rejectAll = scenario.rejectAll
 			h.gateway.mu.Unlock()
@@ -131,7 +131,7 @@ func TestAuditEmissionRefreshesOnlyRejectedModuleAuthentication(t *testing.T) {
 				t.Fatalf("got %d calls, want %d", len(calls), scenario.wantCalls)
 			}
 			for i, call := range calls {
-				if len(call.workContext) != 1 || call.workContext[0] != fmt.Sprintf("module.token%d", i+1) || call.audit.GetIdempotencyKey() != event.IdempotencyKey {
+				if len(call.workContext) != 1 || call.workContext[0] != sealedToken(fmt.Sprintf("module.token%d", i+1)) || call.audit.GetIdempotencyKey() != event.IdempotencyKey {
 					t.Fatal("authentication refresh changed the intent or reused the rejected credential")
 				}
 			}

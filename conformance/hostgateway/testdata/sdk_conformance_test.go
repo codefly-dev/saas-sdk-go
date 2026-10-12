@@ -23,6 +23,13 @@ package main
 //   - (*ExtAuthz).internalToken: the perimeter credential the harness chose;
 //   - the accounts types in auth-gateway/pkg/gen/saas/accounts/v1.
 //
+// The faked accounts answers Work Contexts in core's encoding
+// (core/workcontext, signed with core's public fixture key), because the SDK
+// carries only tokens core decodes. The host's REAL accounts at a ref before
+// module-saas-starter#1093 mints the pre-cutover JSON payload instead, which
+// the SDK refuses after the gateway relays it:
+// TestSDKConformancePreCutoverTokenRefused holds that, through these handlers.
+//
 // A host change to any of them fails this file's compilation: red, never a
 // silent pass.
 
@@ -42,6 +49,7 @@ import (
 
 	accountsv1 "auth-gateway/pkg/gen/saas/accounts/v1"
 
+	sdkcorework "github.com/codefly-dev/core/workcontext"
 	"github.com/codefly-dev/saas-sdk-go/moduleauthority"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -93,6 +101,59 @@ type fakeAccounts struct {
 	calls []accountsCall
 	// refuse is accounts' answer per method, instead of a Work Context.
 	refuse map[string]error
+	// preCutover answers every mint with a pre-cutover JSON-payload token,
+	// which is what the host's real accounts mints before #1093.
+	preCutover bool
+}
+
+// token is the Work Context accounts answers for method: sdkSealed(method),
+// or the pre-cutover encoding.
+func (a *fakeAccounts) token(method string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.preCutover {
+		return sdkcorework.FixtureForeignToken()
+	}
+	return sdkSealed(method)
+}
+
+var sdkSealedTokens sync.Map
+
+// sdkSealed is a Work Context in core's encoding, named by its task ID and
+// signed with core's conformance fixture key — whose private half is public,
+// so nothing trusts it. The SDK only asks core whether a token is sealed; it
+// verifies none, so this is exactly as good as accounts' own signature here.
+func sdkSealed(name string) string {
+	if token, ok := sdkSealedTokens.Load(name); ok {
+		return token.(string)
+	}
+	ctx := context.Background()
+	_, key := sdkcorework.FixtureKeyPair()
+	seals := sdkcorework.FixtureSeals()
+	digest, incarnation, err := seals.ApprovedBuild(ctx, sdkcorework.FixturePrincipal)
+	if err != nil {
+		panic(err)
+	}
+	authority := &sdkcorework.Authority{
+		Issuer: sdkcorework.FixtureIssuer, KeyID: sdkcorework.FixtureKeyID, Key: key,
+		Revisions: sdkcorework.FixtureRevisions(), Seals: seals,
+	}
+	token, _, err := authority.Start(ctx, sdkcorework.StartInput{
+		Execution:          sdkcorework.Execution{ImageDigest: digest, BuildIncarnation: incarnation},
+		TenantID:           sdkcorework.FixtureTenant,
+		OwnerPrincipalID:   sdkcorework.FixturePrincipal,
+		OwnerPrincipalKind: "service",
+		OrganizationID:     sdkcorework.FixtureOrganization,
+		TaskID:             name,
+		Audience:           sdkcorework.FixtureAudience,
+		InstallationID:     sdkcorework.FixtureInstallation,
+		TTL:                time.Hour,
+	})
+	if err != nil {
+		panic(err)
+	}
+	stored, _ := sdkSealedTokens.LoadOrStore(name, token)
+	return stored.(string)
 }
 
 func (a *fakeAccounts) record(ctx context.Context, call accountsCall) error {
@@ -163,7 +224,7 @@ func newRealGateway(t *testing.T) *realGateway {
 					return nil, err
 				}
 				return &accountsv1.ModuleMintWorkContextResponse{
-					Token: "module-work-context.sig", ExpiresAt: expires, PrincipalId: sdkPrincipal, Tenant: sdkTenant,
+					Token: accounts.token(mintWork), ExpiresAt: expires, PrincipalId: sdkPrincipal, Tenant: sdkTenant,
 				}, nil
 			}),
 			unary(mintOperation, func(ctx context.Context, dec func(any) error) (any, error) {
@@ -175,7 +236,7 @@ func newRealGateway(t *testing.T) *realGateway {
 					return nil, err
 				}
 				return &accountsv1.ModuleMintOperationContextResponse{
-					Token: "operation-context.sig", ExpiresAt: expires, PrincipalId: sdkPrincipal, Tenant: sdkTenant,
+					Token: accounts.token(mintOperation), ExpiresAt: expires, PrincipalId: sdkPrincipal, Tenant: sdkTenant,
 					Audience: "modelservice", Binding: req.GetBinding(),
 				}, nil
 			}),
@@ -188,7 +249,7 @@ func newRealGateway(t *testing.T) *realGateway {
 					return nil, err
 				}
 				return &accountsv1.ModuleMintSourceOperationContextResponse{
-					Token: "source-context.sig", ExpiresAt: expires, PrincipalId: sdkPrincipal, Tenant: sdkTenant,
+					Token: accounts.token(mintSource), ExpiresAt: expires, PrincipalId: sdkPrincipal, Tenant: sdkTenant,
 					Audience: "ingest", Binding: "source-sync", DelegationId: sdkDelegation, SourceId: req.GetSourceId(),
 					OwnerPrincipalId: sdkOwner,
 				}, nil
@@ -315,8 +376,8 @@ func TestSDKConformanceThreeMints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("work-context mint: %v", err)
 	}
-	if work.Encoded() != "module-work-context.sig" {
-		t.Fatalf("work context = %q", work.Encoded())
+	if work != sdkSealed(mintWork) {
+		t.Fatalf("work context = %q", work)
 	}
 
 	token.set("projected-2")
@@ -324,7 +385,7 @@ func TestSDKConformanceThreeMints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("operation-context mint: %v", err)
 	}
-	if op.Token.Encoded() != "operation-context.sig" || op.BindingID != sdkBinding || op.Audience != "modelservice" ||
+	if op.Token != sdkSealed(mintOperation) || op.BindingID != sdkBinding || op.Audience != "modelservice" ||
 		op.Tenant != sdkTenant || op.PrincipalID != sdkPrincipal || !op.ExpiresAt.After(time.Now()) {
 		t.Fatalf("operation context = %+v", op)
 	}
@@ -334,7 +395,7 @@ func TestSDKConformanceThreeMints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source-operation-context mint: %v", err)
 	}
-	if src.Token.Encoded() != "source-context.sig" || src.SourceID != sdkSource || src.DelegationID != sdkDelegation ||
+	if src.Token != sdkSealed(mintSource) || src.SourceID != sdkSource || src.DelegationID != sdkDelegation ||
 		src.OwnerPrincipalID != sdkOwner || src.Tenant != sdkTenant || src.Audience != "ingest" || src.BindingID != "source-sync" {
 		t.Fatalf("source operation context = %+v", src)
 	}
@@ -363,6 +424,26 @@ func TestSDKConformanceThreeMints(t *testing.T) {
 		s.GetSourceId() != sdkSource || s.GetDelegationId() != "" {
 		t.Fatalf("accounts received source mint prefix=%q token=%q source_id=%q delegation_id=%q",
 			s.GetPrefix(), s.GetServiceAccountToken(), s.GetSourceId(), s.GetDelegationId())
+	}
+}
+
+// The pre-cutover JSON-payload token — what the host's real accounts mints
+// before module-saas-starter#1093 — is relayed by the real gateway on every
+// mint, and refused by the SDK with ErrInvalidCapability: this SDK carries
+// only Work Contexts core decodes. The mint reached accounts once per path.
+func TestSDKConformancePreCutoverTokenRefused(t *testing.T) {
+	g := newRealGateway(t)
+	g.accounts.mu.Lock()
+	g.accounts.preCutover = true
+	g.accounts.mu.Unlock()
+	client := newSDKClient(t, g, &rotatingToken{token: "projected-1"}, sdkOrg)
+	for _, method := range []string{mintWork, mintOperation, mintSource} {
+		if err := mint(t.Context(), client, method); !errors.Is(err, moduleauthority.ErrInvalidCapability) {
+			t.Fatalf("%s answered a pre-cutover token: SDK error %v, want ErrInvalidCapability", method, err)
+		}
+	}
+	if calls := g.accounts.snapshot(); len(calls) != 3 {
+		t.Fatalf("accounts calls = %d, want one per mint", len(calls))
 	}
 }
 
