@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/codefly-dev/core/wool"
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,7 +35,7 @@ func forAuditTransports(t *testing.T, test func(*testing.T, host, *Client)) {
 				call := authorityCall{
 					method: auditDeclarationProcedure, declaration: req.Msg,
 					internalToken: req.Header().Values("X-Codefly-Internal-Token"),
-					workContext:   req.Header().Values(codefly.WorkContextHeaderName),
+					workContext:   req.Header().Values(wool.WorkContextHeader),
 					authorization: req.Header().Values("Authorization"),
 					moduleSecret:  req.Header().Values("X-Codefly-Module-Secret"),
 				}
@@ -128,7 +128,7 @@ func TestAuditDeclarationPreservesSchemaAndCachesModuleProof(t *testing.T) {
 			t.Fatalf("authority calls=%d, want 2", len(calls))
 		}
 		for _, call := range calls {
-			assertAuditCall(t, call, want, "module.token1")
+			assertAuditCall(t, call, want, sealedToken("module.token1"))
 		}
 		if calls, _, _, _ := h.gateway.snapshot(); len(calls) != 1 || calls[0] != hostWorkContextPath {
 			t.Fatalf("broker calls=%v, want one cached module mint", calls)
@@ -142,7 +142,7 @@ func TestAuditDeclarationRefreshPreservesSchema(t *testing.T) {
 		if _, err := client.ModuleWorkContext(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		h.gateway.revoke("module.token1")
+		h.gateway.revoke(sealedToken("module.token1"))
 		input := &v1.ModuleDeclareAuditEventTypesRequest{Prefix: moduleCredentials.Prefix, Types: auditDeclarations()}
 		want := proto.Clone(input).(*v1.ModuleDeclareAuditEventTypesRequest)
 		if err := client.DeclareAuditEventTypes(t.Context(), input.Types); err != nil {
@@ -152,8 +152,8 @@ func TestAuditDeclarationRefreshPreservesSchema(t *testing.T) {
 		if len(calls) != 2 {
 			t.Fatalf("authority calls=%d, want one rejection and one retry", len(calls))
 		}
-		assertAuditCall(t, calls[0], want, "module.token1")
-		assertAuditCall(t, calls[1], want, "module.token2")
+		assertAuditCall(t, calls[0], want, sealedToken("module.token1"))
+		assertAuditCall(t, calls[1], want, sealedToken("module.token2"))
 		if !proto.Equal(input, want) {
 			t.Fatal("refresh mutated the caller's schema")
 		}

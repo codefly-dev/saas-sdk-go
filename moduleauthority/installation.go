@@ -9,7 +9,6 @@ import (
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 var ErrInvalidInstallation = errors.New("module authority: invalid current installation request or response")
@@ -17,7 +16,7 @@ var ErrInvalidInstallation = errors.New("module authority: invalid current insta
 // CurrentInstallationRequest selects one installation. The host derives the
 // tenant, owner and actors only from Parent, verified independently of the module.
 type CurrentInstallationRequest struct {
-	Parent         codefly.WorkContextToken
+	Parent         string
 	InstallationID string
 }
 
@@ -34,10 +33,10 @@ type CurrentInstallation struct {
 // It adds no permission, binding, viewer bearer or authority mint for the parent.
 // Callers must match TenantID to their independently verified request tenant.
 func (c *Client) GetCurrentInstallation(ctx context.Context, req CurrentInstallationRequest) (CurrentInstallation, error) {
-	if req.Parent.Encoded() == "" || !artifactUUID.MatchString(req.InstallationID) {
+	if !sealed(req.Parent) || !artifactUUID.MatchString(req.InstallationID) {
 		return CurrentInstallation{}, ErrInvalidInstallation
 	}
-	out, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.GetCurrentInstallation, &v1.ModuleCurrentInstallationRequest{ParentWorkContextToken: req.Parent.Encoded(), InstallationId: req.InstallationID})
+	out, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.GetCurrentInstallation, &v1.ModuleCurrentInstallationRequest{ParentWorkContextToken: req.Parent, InstallationId: req.InstallationID})
 	if err != nil {
 		return CurrentInstallation{}, fmt.Errorf("module authority: current installation: %w", err)
 	}

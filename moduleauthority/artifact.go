@@ -8,7 +8,6 @@ import (
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 var ErrInvalidArtifact = errors.New("module authority: invalid executable artifact request or receipt")
@@ -37,7 +36,7 @@ type ArtifactIdentity struct {
 // ArtifactRequest addresses an installed policy. The host derives the tenant
 // and caller from the signed Parent; no caller-chosen principal appears here.
 type ArtifactRequest struct {
-	Parent         codefly.WorkContextToken
+	Parent         string
 	InstallationID string
 	PolicyID       string
 	Identity       ArtifactIdentity
@@ -54,14 +53,14 @@ type ArtifactAuthorization struct {
 // ArtifactRevocation addresses a retained approval even when its old policy or
 // installation no longer runs. The host checks the original activation scope.
 type ArtifactRevocation struct {
-	Parent         codefly.WorkContextToken
+	Parent         string
 	InstallationID string
 	ApprovalID     string
 }
 
 func artifactRequest(req ArtifactRequest) (*v1.ModuleExecutableArtifactRequest, error) {
 	i := req.Identity
-	if req.Parent.Encoded() == "" || !artifactUUID.MatchString(req.InstallationID) || req.PolicyID == "" || len(req.PolicyID) > 128 || i.Schema == "" || len(i.Schema) > 128 || i.Source == "" || len(i.Source) > 512 || i.ExpectedRevision < 0 || len(i.Subject) == 0 || len(i.Subject) > 65536 || len(i.Contracts) > 256 {
+	if !sealed(req.Parent) || !artifactUUID.MatchString(req.InstallationID) || req.PolicyID == "" || len(req.PolicyID) > 128 || i.Schema == "" || len(i.Schema) > 128 || i.Source == "" || len(i.Source) > 512 || i.ExpectedRevision < 0 || len(i.Subject) == 0 || len(i.Subject) > 65536 || len(i.Contracts) > 256 {
 		return nil, ErrInvalidArtifact
 	}
 	contracts := make([]*v1.ExecutableArtifactContract, 0, len(i.Contracts))
@@ -71,7 +70,7 @@ func artifactRequest(req ArtifactRequest) (*v1.ModuleExecutableArtifactRequest, 
 		}
 		contracts = append(contracts, &v1.ExecutableArtifactContract{Kind: c.Kind, Name: c.Name, Digest: c.Digest})
 	}
-	return &v1.ModuleExecutableArtifactRequest{ParentWorkContextToken: req.Parent.Encoded(), InstallationId: req.InstallationID, PolicyId: req.PolicyID, Identity: &v1.ExecutableArtifactIdentity{Schema: i.Schema, Source: i.Source, Subject: append([]byte{}, i.Subject...), Contracts: contracts, ExpectedRevision: i.ExpectedRevision}}, nil
+	return &v1.ModuleExecutableArtifactRequest{ParentWorkContextToken: req.Parent, InstallationId: req.InstallationID, PolicyId: req.PolicyID, Identity: &v1.ExecutableArtifactIdentity{Schema: i.Schema, Source: i.Source, Subject: append([]byte{}, i.Subject...), Contracts: contracts, ExpectedRevision: i.ExpectedRevision}}, nil
 }
 func artifactReceipt(out *v1.ModuleExecutableArtifactResponse, expected *int64) (ArtifactAuthorization, error) {
 	const prefix = "host/approved-artifacts/"
@@ -112,10 +111,10 @@ func (c *Client) AuthorizeExecutableArtifact(ctx context.Context, req ArtifactRe
 // RevokeExecutableArtifact permanently revokes one retained consent. Replaying
 // its prior approval request cannot revive that exact identity.
 func (c *Client) RevokeExecutableArtifact(ctx context.Context, req ArtifactRevocation) (ArtifactAuthorization, error) {
-	if req.Parent.Encoded() == "" || !artifactUUID.MatchString(req.InstallationID) || !artifactUUID.MatchString(req.ApprovalID) {
+	if !sealed(req.Parent) || !artifactUUID.MatchString(req.InstallationID) || !artifactUUID.MatchString(req.ApprovalID) {
 		return ArtifactAuthorization{}, ErrInvalidArtifact
 	}
-	out, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.RevokeExecutableArtifact, &v1.ModuleRevokeExecutableArtifactRequest{ParentWorkContextToken: req.Parent.Encoded(), InstallationId: req.InstallationID, ApprovalId: req.ApprovalID})
+	out, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.RevokeExecutableArtifact, &v1.ModuleRevokeExecutableArtifactRequest{ParentWorkContextToken: req.Parent, InstallationId: req.InstallationID, ApprovalId: req.ApprovalID})
 	if err != nil {
 		return ArtifactAuthorization{}, fmt.Errorf("module authority: revoke executable artifact: %w", err)
 	}

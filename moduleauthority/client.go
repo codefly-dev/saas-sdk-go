@@ -31,7 +31,6 @@ import (
 	"sync"
 	"time"
 
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
 	"github.com/google/uuid"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
@@ -147,7 +146,7 @@ type Credentials struct {
 // It is called before every mint rather than once, because the kubelet rotates
 // the projection under a running process. Its method set is
 // sdk-go/workcontext's ProjectedTokenSource's, so that implementation satisfies
-// it as written.
+// it as written — this module does not import sdk-go/workcontext.
 // Empty tokens and tokens larger than 64 KiB after trimming whitespace are
 // refused with ErrInvalidCredentials before any broker request is sent.
 type ProjectedTokenSource interface {
@@ -160,9 +159,10 @@ type ProjectedTokenSource interface {
 // The consumer supplies the mount path; there is no default. The file read
 // is limited to 64 KiB, including surrounding whitespace.
 //
-// It is the same contract as sdk-go/workcontext's ProjectedTokenFile, which this
-// module cannot import while it pins the pre-cutover sdk-go/workcontext for
-// WorkContextToken; consumers already on the newer module pass that one.
+// It is the same contract as sdk-go/workcontext's ProjectedTokenFile; a
+// consumer that already imports that module may pass that one instead. This
+// one exists because moduleauthority does not import sdk-go/workcontext: it
+// carries Work Contexts as opaque strings and reads them only through core.
 type ProjectedTokenFile string
 
 // ProjectedToken reads and trims the file, bounded.
@@ -232,7 +232,7 @@ func (c Credentials) projectedToken() (string, error) {
 //     previous child has already expired.
 type ExchangeRequest struct {
 	BindingID string
-	Parent    codefly.WorkContextToken
+	Parent    string
 	Lookup    bool
 	// DelegationID names one source delegation, as MintSourceOperationContext
 	// reported it. It is an identifier, never a credential: on its own it
@@ -251,7 +251,7 @@ type Client struct {
 	refreshSkew time.Duration
 
 	mu        sync.Mutex
-	module    codefly.WorkContextToken
+	module    string
 	expiresAt time.Time
 }
 
@@ -304,7 +304,7 @@ func (c *Client) Close() error {
 
 // ModuleWorkContext returns a current module capability, refreshing it before
 // expiry. Concurrent callers share one refresh.
-func (c *Client) ModuleWorkContext(ctx context.Context) (codefly.WorkContextToken, error) {
+func (c *Client) ModuleWorkContext(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.moduleWorkContextLocked(ctx)
@@ -314,13 +314,13 @@ func (c *Client) ModuleWorkContext(ctx context.Context) (codefly.WorkContextToke
 // authority endpoint, under exactly one of the request's two authority arms. A
 // rejected module capability is refreshed and retried once; neither the parent
 // nor the issued child is ever stored.
-func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest) (codefly.WorkContextToken, error) {
-	parent := exchange.Parent.Encoded()
+func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest) (string, error) {
+	parent := exchange.Parent
 	// Exactly one of the two arms, which is the host's message-level rule read
 	// back here: a request carrying both presents an authority the host would
 	// have to choose between, and one carrying neither presents none at all.
-	if exchange.BindingID == "" || (parent == "") == (exchange.DelegationID == "") {
-		return codefly.WorkContextToken{}, ErrInvalidExchange
+	if exchange.BindingID == "" || (parent == "") == (exchange.DelegationID == "") || (parent != "" && !sealed(parent)) {
+		return "", ErrInvalidExchange
 	}
 	issued, err := callAsModule(ctx, c, accountsv1connect.ModuleCapabilitiesServiceClient.ExchangeDelegatedOperationAudience, &v1.ModuleExchangeDelegatedOperationAudienceRequest{
 		BindingId:              exchange.BindingID,
@@ -329,19 +329,18 @@ func (c *Client) ExchangeOperation(ctx context.Context, exchange ExchangeRequest
 		DelegationId:           exchange.DelegationID,
 	})
 	if err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("module authority: exchange operation audience: %w", err)
+		return "", fmt.Errorf("module authority: exchange operation audience: %w", err)
 	}
-	token, err := codefly.ParseWorkContextToken(issued.GetToken())
-	if err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("%w: malformed exchanged token", ErrInvalidCapability)
+	if !sealed(issued.GetToken()) {
+		return "", fmt.Errorf("%w: malformed exchanged token", ErrInvalidCapability)
 	}
-	return token, nil
+	return issued.GetToken(), nil
 }
 
 // OperationContext is a Work Context minted with no person present for one
 // installed operation binding, with what SaaS reports it asserts.
 type OperationContext struct {
-	Token       codefly.WorkContextToken
+	Token       string
 	ExpiresAt   time.Time
 	PrincipalID string
 	Tenant      string
@@ -387,40 +386,39 @@ func (c *Client) MintModuleOperationContext(ctx context.Context, bindingID strin
 	return op, nil
 }
 
-func (c *Client) moduleWorkContextLocked(ctx context.Context) (codefly.WorkContextToken, error) {
-	if c.module.Encoded() != "" && c.now().Add(c.refreshSkew).Before(c.expiresAt) {
+func (c *Client) moduleWorkContextLocked(ctx context.Context) (string, error) {
+	if c.module != "" && c.now().Add(c.refreshSkew).Before(c.expiresAt) {
 		return c.module, nil
 	}
 	projected, err := c.credentials.projectedToken()
 	if err != nil {
-		return codefly.WorkContextToken{}, err
+		return "", err
 	}
 	var issued workContextResponse
 	if err := c.broker.post(ctx, workContextPath, projected, workContextRequest{
 		Prefix:         c.credentials.Prefix,
 		OrganizationID: c.credentials.OrganizationID,
 	}, &issued); err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
+		return "", fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
 	}
 	expiresAt, err := parseExpiry(issued.ExpiresAt, c.now())
 	if err != nil {
-		return codefly.WorkContextToken{}, err
+		return "", err
 	}
-	token, err := codefly.ParseWorkContextToken(issued.Token)
-	if err != nil {
-		return codefly.WorkContextToken{}, fmt.Errorf("%w: malformed token", ErrInvalidCapability)
+	if !sealed(issued.Token) {
+		return "", fmt.Errorf("%w: malformed token", ErrInvalidCapability)
 	}
-	c.module = token
+	c.module = issued.Token
 	c.expiresAt = expiresAt
-	return token, nil
+	return issued.Token, nil
 }
 
 // forgetModuleWorkContext drops the cached module capability if it is still
 // the one a call was rejected with, so the next caller mints a fresh one. A
 // capability another caller already refreshed is kept.
-func (c *Client) forgetModuleWorkContext(rejected codefly.WorkContextToken) {
-	if c.module.Encoded() == rejected.Encoded() {
-		c.module = codefly.WorkContextToken{}
+func (c *Client) forgetModuleWorkContext(rejected string) {
+	if c.module == rejected {
+		c.module = ""
 		c.expiresAt = time.Time{}
 	}
 }

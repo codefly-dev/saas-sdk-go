@@ -4,15 +4,17 @@
 solutions and modules depend on instead of regenerating and vendoring their own
 copies. Four surfaces: the generated accounts bindings behind hand-written
 facades (`accounts/`, `datasource/`), the schema-agnostic typed-settings runtime
-and its catalog renderers (`settings/`), and callee-side Work Context
-verification (`workcontext/`).
+and its catalog renderers (`settings/`), and a composed module's own authority
+(`moduleauthority/`).
 
 It does **not** own:
 
 - the accounts **proto**. That is `codefly-dev/module-saas-starter`
   (`module/services/accounts/proto`); `gen/` here is output, never source.
-- the Work Context **wire format** or the rotation-aware JWKS verifier. Those
-  are `codefly-dev/sdk-go`; `workcontext/` only binds them to the gateway seam.
+- the Work Context **wire format** or its **verification**. The format and the
+  structural reader are `codefly-dev/core` (`core/workcontext`); the callee's
+  verifier is `codefly-dev/sdk-go/workcontext`, used directly. This SDK
+  carries Work Contexts as opaque strings and has no callee side.
 - the resource and configuration model (`codefly-dev/core`), the gateway
   (`codefly-dev/solution-runtime-go`), or any product's settings schema.
 
@@ -42,8 +44,8 @@ Fleet standard — [handbook#68](https://github.com/obin-ai/handbook/issues/68).
 - **Never hardcode what the system resolves** — injected environment, derived
   ports, service addresses, credentials copied out of another component. This
   SDK is on the resolving side of that line: a facade takes a gateway and reads
-  `BaseURL()` off it rather than holding a URL, and `JWKSFromGateway` derives
-  the JWKS address the same way. Typing one of those in encodes something true
+  `BaseURL()` off it rather than holding a URL, and `moduleauthority` takes
+  both seams from the consumer rather than defaulting either. Typing one of those in encodes something true
   on one machine for ten minutes, and it fails quietly — a runtime missing a
   credential can skip registration *silently*, so the service boots, serves,
   and is simply absent.
@@ -91,8 +93,7 @@ mints through the host's *real* gateway handlers at that same ref
 | `datasource/` | the same facade over `DatasourceService` |
 | `settings/` | presence-aware `Field[M, T]` runtime; `JSONCodec` is the only typed↔ProtoJSON boundary |
 | `settings/catalog/` | Go / TypeScript / proto catalog renderers that `module-compose` calls |
-| `workcontext/` | callee-side verification: HTTP, Connect, gRPC middleware plus scope checks |
-| `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport |
+| `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport. Work Contexts are opaque `string`s, shape-checked only by `core/workcontext.Decode` |
 | `gen/` | generated output. Regenerated, never edited |
 | `conformance/hostgateway/` | `moduleauthority` minting through the host's real gateway at the `SOURCE.txt` ref |
 | `internal/apiboundary` | the public-API boundary gate, with fixtures that prove it still looks |
@@ -115,11 +116,11 @@ examples. Read it rather than re-deriving the API from the tree.
 - **`settings` imports no generated schema.** That is what makes it reusable
   byte-for-byte across products. Product-specific fields belong in the product
   proto and its own field catalog, never here.
-- **`workcontext` fails closed.** No keys, an unreachable JWKS, or an unknown
-  `kid` all reject the request. Replay is deliberately *not* enforced — a
-  captured token is accepted until expiry, whatever its `replay_policy`; a
-  callee needing single-use reads `GetReplayPolicy()` / `GetNonce()` and checks
-  its own store. That is a documented limit, not an oversight to route around.
+- **`moduleauthority` holds Work Contexts; it never verifies one.** A token is
+  carried only if `core/workcontext.Decode` reads it as sealed — never a
+  hand-written parser, and never a decoded claim treated as a finding.
+  Verifying belongs to the receiver (`sdk-go/workcontext`); a callee-side
+  verifier does not come back here.
 - **The release version tracks the saas-starter module version**, and
   `SOURCE.txt` records the proto ref `gen/` came from. Both move together with
   a regeneration, or the tag claims a contract it does not carry.

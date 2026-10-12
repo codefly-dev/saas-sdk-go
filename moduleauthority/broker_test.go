@@ -37,8 +37,8 @@ func TestModuleWorkContextIsMintedAtTheBrokerAndCached(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if module.Encoded() != "module.token1" {
-			t.Fatalf("module Work Context = %q", module.Encoded())
+		if module != sealedToken("module.token1") {
+			t.Fatalf("module Work Context = %q", module)
 		}
 	}
 	calls, _, bodies, headers := h.gateway.snapshot()
@@ -69,8 +69,8 @@ func TestModuleWorkContextIsRefreshedBeforeExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Encoded() == second.Encoded() {
-		t.Fatalf("a capability inside the refresh window was reused: %q", first.Encoded())
+	if first == second {
+		t.Fatalf("a capability inside the refresh window was reused: %q", first)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestMintModuleOperationContextSendsOnlyTheBindingAndNeverCaches(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if issued.Token.Encoded() != "operation.token" || issued.Audience != "modelservice" || issued.BindingID != "model" ||
+		if issued.Token != sealedToken("operation.token") || issued.Audience != "modelservice" || issued.BindingID != "model" ||
 			issued.Tenant != testTenant || issued.PrincipalID != testPrincipal {
 			t.Fatalf("unexpected operation context: %+v", issued)
 		}

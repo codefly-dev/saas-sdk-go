@@ -10,7 +10,7 @@ import (
 )
 
 func artifactFixture(t *testing.T) ArtifactRequest {
-	return ArtifactRequest{Parent: token(t, "parent.token"), InstallationID: "11111111-1111-4111-8111-111111111111", PolicyID: "content", Identity: ArtifactIdentity{Schema: "example.artifact/v1", Source: "acme.example", Subject: []byte(`{"files":[],"revision":9223372036854775807}`), ExpectedRevision: math.MaxInt64, Contracts: []ArtifactContract{{Kind: "engine", Name: "example/exact", Digest: "sha256:" + strings.Repeat("a", 64)}}}}
+	return ArtifactRequest{Parent: sealedToken("parent.token"), InstallationID: "11111111-1111-4111-8111-111111111111", PolicyID: "content", Identity: ArtifactIdentity{Schema: "example.artifact/v1", Source: "acme.example", Subject: []byte(`{"files":[],"revision":9223372036854775807}`), ExpectedRevision: math.MaxInt64, Contracts: []ArtifactContract{{Kind: "engine", Name: "example/exact", Digest: "sha256:" + strings.Repeat("a", 64)}}}}
 }
 func TestArtifactCallsPreserveIdentityThroughRealGRPC(t *testing.T) {
 	h := newHost(t)
@@ -30,10 +30,10 @@ func TestArtifactCallsPreserveIdentityThroughRealGRPC(t *testing.T) {
 		t.Fatal("wrong authority call count")
 	}
 	for _, call := range calls {
-		if call.artifact == nil || !bytes.Equal(call.artifact.Identity.Subject, req.Identity.Subject) || call.artifact.Identity.ExpectedRevision != math.MaxInt64 || call.artifact.ParentWorkContextToken != "parent.token" {
+		if call.artifact == nil || !bytes.Equal(call.artifact.Identity.Subject, req.Identity.Subject) || call.artifact.Identity.ExpectedRevision != math.MaxInt64 || call.artifact.ParentWorkContextToken != sealedToken("parent.token") {
 			t.Fatal("artifact identity changed in transport")
 		}
-		if len(call.workContext) != 1 || call.workContext[0] != "module.token1" || len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken {
+		if len(call.workContext) != 1 || call.workContext[0] != sealedToken("module.token1") || len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken {
 			t.Fatal("module credentials not presented independently")
 		}
 	}
@@ -81,7 +81,7 @@ func TestArtifactRefreshRetainsExactApprovalRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.gateway.revoke("module.token1")
+	h.gateway.revoke(sealedToken("module.token1"))
 	req := artifactFixture(t)
 	_, err = client.ApproveExecutableArtifact(t.Context(), req)
 	if err != nil {

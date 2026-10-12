@@ -14,7 +14,8 @@ import (
 	"testing"
 	"time"
 
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
+	"github.com/codefly-dev/core/wool"
+	corework "github.com/codefly-dev/core/workcontext"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -119,7 +120,8 @@ type fakeGateway struct {
 	server *httptest.Server
 
 	mu sync.Mutex
-	// issued counts module Work Contexts minted; the n-th is "module.token<n>".
+	// issued counts module Work Contexts minted; the n-th is
+	// sealedToken("module.token<n>").
 	issued int
 	// valid is the set of module Work Contexts the authority endpoint accepts.
 	valid map[string]bool
@@ -139,6 +141,7 @@ type fakeGateway struct {
 	binding        string // overrides the binding answered by the operation mint
 	sourceID       string // overrides the source answered by the source mint
 	projectedToken string // token currently accepted by the simulated accounts verifier
+	foreign        bool   // answers every mint with a token core does not decode
 }
 
 func newFakeGateway(t *testing.T) *fakeGateway {
@@ -246,6 +249,10 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := g.expires.UTC().Format(time.RFC3339)
+	operation := sealedToken("operation.token")
+	if g.foreign {
+		operation = corework.FixtureForeignToken()
+	}
 	switch r.URL.Path {
 	case hostWorkContextPath:
 		if rf, ok := g.refuse[hostWorkContextPath]; ok {
@@ -253,8 +260,11 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.issued++
-		token := fmt.Sprintf("module.token%d", g.issued)
+		token := sealedToken(fmt.Sprintf("module.token%d", g.issued))
 		g.valid[token] = true
+		if g.foreign {
+			token = corework.FixtureForeignToken()
+		}
 		answer(w, map[string]string{"token": token, "expiresAt": expiresAt, "principalId": testPrincipal, "tenant": testTenant})
 	case hostOperationContextPath:
 		binding := payload["binding"]
@@ -266,7 +276,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 			binding = g.binding
 		}
 		answer(w, map[string]string{
-			"work_context": "operation.token", "expires_at": expiresAt, "principal_id": testPrincipal,
+			"work_context": operation, "expires_at": expiresAt, "principal_id": testPrincipal,
 			"tenant": testTenant, "audience": "modelservice", "binding": binding,
 		})
 	case hostSourceOperationContextPath:
@@ -279,7 +289,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 			source = g.sourceID
 		}
 		answer(w, map[string]string{
-			"work_context": "operation.token", "expires_at": expiresAt, "principal_id": testPrincipal,
+			"work_context": operation, "expires_at": expiresAt, "principal_id": testPrincipal,
 			"owner_principal_id": testOwner, "tenant": testTenant, "audience": "runtime",
 			"binding": "runtime-admission", "delegation_id": testDelegation, "source_id": source,
 		})
@@ -346,6 +356,8 @@ type fakeAuthority struct {
 	address string
 	// declarationError is the host admission verdict, configured before a call.
 	declarationError error
+	// foreign answers an exchange with a token core does not decode.
+	foreign bool
 
 	mu    sync.Mutex
 	calls []authorityCall
@@ -372,7 +384,7 @@ func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.Tran
 func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	method, _ := grpc.MethodFromServerStream(stream)
 	md, _ := metadata.FromIncomingContext(stream.Context())
-	call := authorityCall{moduleSecret: md.Get("x-codefly-module-secret"), authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(codefly.WorkContextHeaderName)}
+	call := authorityCall{moduleSecret: md.Get("x-codefly-module-secret"), authorization: md.Get("authorization"), method: method, internalToken: md.Get("x-codefly-internal-token"), workContext: md.Get(wool.WorkContextHeader)}
 	// Each procedure's own request message: decoding NotifyOrgAdmins as an
 	// exchange request would read its fields as the wrong ones.
 	request := &v1.ModuleExchangeDelegatedOperationAudienceRequest{}
@@ -443,22 +455,22 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		return stream.SendMsg(&emptypb.Empty{})
 	}
 	if call.installation != nil {
-		if call.installation.ParentWorkContextToken == "denied.token" {
+		if call.installation.ParentWorkContextToken == sealedToken("denied.token") {
 			return status.Error(codes.PermissionDenied, "current authority denied")
 		}
 		out := &v1.ModuleCurrentInstallationResponse{InstallationId: call.installation.InstallationId, TenantId: testTenant, TargetId: testOwner, BindingId: testBindingID}
 		switch call.installation.ParentWorkContextToken {
-		case "wrong-id.token":
+		case sealedToken("wrong-id.token"):
 			out.InstallationId = testOwner
-		case "missing-tenant.token":
+		case sealedToken("missing-tenant.token"):
 			out.TenantId = ""
-		case "empty-target.token":
+		case sealedToken("empty-target.token"):
 			out.TargetId = ""
-		case "invalid-target.token":
+		case sealedToken("invalid-target.token"):
 			out.TargetId = "invalid"
-		case "empty-binding.token":
+		case sealedToken("empty-binding.token"):
 			out.BindingId = ""
-		case "invalid-binding.token":
+		case sealedToken("invalid-binding.token"):
 			out.BindingId = "   "
 		}
 		return stream.SendMsg(out)
@@ -509,7 +521,10 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		(request.GetParentWorkContextToken() == "") == (request.GetDelegationId() == "") {
 		return status.Error(codes.InvalidArgument, "binding and exactly one of parent or delegation required")
 	}
-	return stream.SendMsg(&v1.IssuedWorkContext{Token: "child.token"})
+	if a.foreign {
+		return stream.SendMsg(&v1.IssuedWorkContext{Token: corework.FixtureForeignToken()})
+	}
+	return stream.SendMsg(&v1.IssuedWorkContext{Token: sealedToken("child.token")})
 }
 
 func (a *fakeAuthority) snapshot() []authorityCall {
@@ -557,13 +572,4 @@ func (h host) assertNoStrayPaths(t *testing.T) {
 	if _, stray, _, _ := h.gateway.snapshot(); len(stray) != 0 {
 		t.Fatalf("the client sent non-broker paths to the gateway: %v", stray)
 	}
-}
-
-func token(t *testing.T, encoded string) codefly.WorkContextToken {
-	t.Helper()
-	parsed, err := codefly.ParseWorkContextToken(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return parsed
 }

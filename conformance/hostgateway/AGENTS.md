@@ -27,8 +27,9 @@ The script fails, rather than passes, when:
 - the build gives the gateway a different `google.golang.org/grpc`,
   `google.golang.org/protobuf` or `sdk-go/workcontext` from the one the host
   pins. The one exception is a version whose module tree is byte-identical,
-  checked on every run. Today that is `workcontext` b91ce91 → b3fb40d. Other
-  modules the SDK moves, such as `golang.org/x/*`, are printed as warnings.
+  checked on every run. The SDK no longer requires `sdk-go/workcontext`, so
+  today the build keeps the host's own pin of it. Other modules the SDK moves,
+  such as `core` and `golang.org/x/*`, are printed as warnings.
 - `moduleauthority` imports a package the SDK's own `go.mod` does not declare,
   which the SDK's `go list -mod=readonly -deps ./moduleauthority` refuses before
   `go get` adds the SDK; or the test file imports a package no required module
@@ -52,6 +53,11 @@ The script fails, rather than passes, when:
   host's own gateway tests fake them: the real mints need a Kubernetes
   TokenReview and a database. What accounts *decides* is therefore not under
   test — only what the gateway forwards to it and how it relays each answer.
+  That includes the token's encoding: the fake answers core-format Work
+  Contexts (signed with core's public fixture key) because the SDK carries
+  nothing else, and the host's real accounts before module-saas-starter#1093
+  mints the pre-cutover JSON payload — which
+  `TestSDKConformancePreCutoverTokenRefused` holds the SDK refuses.
 - Requiring the SDK raises some module versions the host pins. The gateway is
   compiled with those, so the three that change what it does are gated (see
   above), and the rest are printed.
@@ -64,7 +70,8 @@ The script fails, rather than passes, when:
 
 The three mints accepted, and exactly `prefix`, `service_account_token`,
 `organization_id`, `binding` and `source_id` reaching accounts; each accounts
-refusal → gateway status → SDK sentinel; the legacy header, a missing,
+refusal → gateway status → SDK sentinel; a pre-cutover token relayed and
+refused as `ErrInvalidCapability`; the legacy header, a missing,
 duplicate, non-Bearer or empty bearer refused before accounts; the 64 KiB
 token bound; and the three gateway answers the fake copies (D1, D3, D4 in
 `moduleauthority/host_fake_test.go`).

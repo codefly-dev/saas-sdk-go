@@ -229,8 +229,21 @@ The SDK surfaces are:
   ServiceAccount token; the client rereads it before every mint and refreshes
   the module's short-lived Work Context, attaches it to the generic SaaS
   exchange, and returns the exchanged
-  child as an opaque `sdk-go` token. The signed-in person's retained parent and
+  child as an opaque `string`. The signed-in person's retained parent and
   the exchanged child remain request-local.
+
+  Every Work Context this package carries — the module's own, an operation or
+  source context, the exchanged child, a `Parent` handed in — is an opaque
+  string in core's encoding. The client is its holder and sender, never its
+  verifier: before caching or sending one it asks only
+  `github.com/codefly-dev/core/workcontext.Decode` whether it is structurally a
+  sealed capability, and attaches it under core's `wool.WorkContextHeader`. A
+  mint answering anything else (the pre-cutover JSON payload among them) is
+  `ErrInvalidCapability`; a `Parent` core does not decode is refused as invalid
+  input (`ErrInvalidExchange`, `ErrInvalidArtifact`, `ErrInvalidInstallation`)
+  before anything is sent. **This needs a host whose accounts mints core-format
+  Work Contexts** (module-saas-starter#1093); the v0.0.94 host recorded in
+  `SOURCE.txt` mints the pre-cutover format, and this client refuses it.
 
   It talks to the two seams the host serves a composed module, and takes both
   explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
@@ -317,7 +330,7 @@ The SDK surfaces are:
 
   `ExchangeRequest` presents authority one of two ways, and exactly one — both,
   or neither, is `ErrInvalidExchange` before anything is sent. `Parent` is a live
-  capability the caller holds; the child is attenuated against it and expires
+  capability the caller holds, as the encoded string it arrived as; the child is attenuated against it and expires
   with it, so **work that outlives the parent cannot be authorized this way at
   all**. `DelegationID` is a reference to a host-owned, revocable source
   delegation, as `MintSourceOperationContext` reported it:
@@ -406,49 +419,13 @@ The SDK surfaces are:
   across products; product-specific fields belong in the product proto and its
   typed field catalog, never here.
 
-- **`workcontext/`** — the callee side of the Work Context contract. A service
-  that receives a delegated `codefly.work-context/v1` capability (minted by
-  accounts, forwarded by whoever acts on the user's behalf) verifies it here
-  before trusting a claim: signature by `kid` against the accounts JWKS
-  (`GET /v1/auth/.well-known/jwks.json`), `iss` = `saas-starter`, `aud` = the
-  service's own name, the time window, and the type. sdk-go owns the wire
-  format and the rotation-aware JWKS cache; this package binds them to the
-  gateway seam, keeps the verified claims on the request context, and maps
-  failures onto HTTP, Connect, and gRPC codes. Nothing fails open — no keys,
-  an unreachable JWKS, or an unknown `kid` all reject the request.
-
-  ```go
-  verifier, err := workcontext.NewVerifier(workcontext.Config{
-      Audience: "lastlogin",                     // this service's name; the token's aud must match
-      Keys:     workcontext.JWKSFromGateway(gw), // the accounts JWKS behind the gateway
-  })
-
-  // net/http: 401 missing / invalid, 403 for another service's context
-  mux.Handle("/api/", verifier.HTTPMiddleware(api))
-  // Connect (unary and streaming handlers) and gRPC
-  mux.Handle(lastloginv1connect.NewLoginsServiceHandler(svc,
-      connect.WithInterceptors(verifier.ConnectInterceptor())))
-  grpc.NewServer(grpc.ChainUnaryInterceptor(verifier.GRPCUnaryInterceptor()))
-
-  // in a handler: the scope check reads the verified context off ctx — the
-  // effective scopes are the last actor's attenuated grant; empty resource_ids
-  // is the wildcard
-  if err := workcontext.RequireScope(ctx, "lastlogin:logins", "read", loginID); err != nil {
-      return nil, workcontext.ConnectError(err) // CodePermissionDenied
-  }
-  ```
-
-  `RequireScopeHTTP("lastlogin:logins", "read")` guards a whole route, and
-  `ScopesFromContext(ctx)` reads the effective scopes. Set `Config.Optional` to
-  let a request without a context through unauthenticated (`FromContext` then
-  reports false) — a present-but-invalid one is still rejected. `StaticKeys`
-  pins a key set for tests or out-of-band distribution.
-
-  Verification establishes authenticity and freshness but **does not enforce
-  replay**: a captured token is accepted until it expires, whatever its
-  `replay_policy`. Enforcing single-use needs a nonce store this stateless layer
-  cannot own — a callee that requires it reads `FromContext(ctx).GetReplayPolicy()`
-  and `GetNonce()` and rejects a nonce it has already seen against its own store.
+- **Verifying a Work Context you receive is not this SDK's job.** The callee
+  side lives in `github.com/codefly-dev/sdk-go/workcontext`, which re-exports
+  core's verifier (`NewVerifier`, `HeaderName`, `FromHeaders`, the key-set
+  helpers). The `workcontext/` package that used to live here — a JWKS verifier
+  over the pre-cutover encoding, with HTTP / Connect / gRPC middleware and
+  `RequireScope` — was removed in this release; see `CHANGELOG.md` for what
+  replaces each symbol.
 
 ## Versioning
 
@@ -478,7 +455,7 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. Core v0.3.41 supplies the required Runnable package;
+protobuf initialization. Core v0.19.1 supplies the required Runnable package;
 the SDK need not adopt the host's entire dependency generation. Verify the
 compatible dependency floor with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.

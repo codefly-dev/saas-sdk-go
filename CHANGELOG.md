@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased — core v0.19.1; Work Contexts are core's, carried opaque
+
+Closes #38. The SDK requires `github.com/codefly-dev/core v0.19.1` and no
+longer depends on `github.com/codefly-dev/sdk-go/workcontext` at all: the
+pre-cutover pseudo-version it pinned (`b3fb40d`) is retracted by
+`workcontext/v0.1.0`, which also removed every symbol this SDK used, so any
+build that also required v0.1.0 (solution-runtime-go, sdk-go v0.4.0) stopped
+compiling. `gen/` and `SOURCE.txt` are unchanged (module-saas-starter v0.0.94).
+
+### Removed (breaking)
+
+- **`workcontext/` is deleted.** Callees verify with
+  `github.com/codefly-dev/sdk-go/workcontext` directly. Removed with no
+  replacement in this SDK: `NewVerifier`, `Config`, `Verifier` (`Verify`,
+  `HTTPMiddleware`, `ConnectInterceptor`, `GRPCUnaryInterceptor`,
+  `GRPCStreamInterceptor`), `KeySource`, `JWKS`, `JWKSFromGateway`,
+  `JWKSURL`, `StaticKeys`, `Gateway`, `JWKSPath`, `DefaultIssuer`,
+  `NewContext`, `FromContext`, `ScopesFromContext`, `HasScope`,
+  `RequireScope`, `RequireScopeHTTP`, `ConnectError`, `GRPCError`,
+  `HTTPStatus`, and `ErrMissing`, `ErrInvalid`, `ErrAudience`, `ErrDenied`,
+  `ErrUnavailable`. Where sdk-go/workcontext v0.1.0 has a counterpart:
+  `NewVerifier(VerifierSettings, KeySet)` → `*PinnedVerifier` (which needs the
+  issuer's revision, seal, grant and replay sources), `HeaderName` /
+  `FromHeaders`, `ResolveKeySetEndpoint` + `AcquireKeySet`, `ScopeContained`
+  over `(*Verified).EffectiveScopes()`, and `ErrInvalid`, `ErrNotACoreToken`,
+  `ErrRevoked`, `ErrReplayed`. It has no context helpers, no transport
+  middleware, no error-to-status mapping, and no exported key-set path.
+- **`moduleauthority` carries Work Contexts as `string`.** Every
+  `codefly.WorkContextToken` in the public API is now the encoded string:
+  `Client.ModuleWorkContext` and `Client.ExchangeOperation` return `string`;
+  `ExchangeRequest.Parent`, `ArtifactRequest.Parent`,
+  `ArtifactRevocation.Parent`, `CurrentInstallationRequest.Parent`,
+  `OperationContext.Token` and `SourceOperationContext.Token` are `string`.
+  Drop the `ParseWorkContextToken` before passing a parent and the
+  `.Encoded()` after reading one.
+
+### Behaviour change
+
+- **Only core-format Work Contexts are carried.** Before caching or sending a
+  token, `moduleauthority` asks `core/workcontext.Decode` whether it is
+  structurally a sealed capability — it verifies nothing. A mint (broker or
+  exchange) answering anything else is `ErrInvalidCapability`, and nothing is
+  cached; a `Parent` core does not decode is `ErrInvalidExchange`,
+  `ErrInvalidArtifact` or `ErrInvalidInstallation` before any request — not
+  even the module's own mint — is sent. The old check accepted any
+  `payload.signature` shape. **A host whose accounts still mints the
+  pre-cutover JSON payload — every module-saas-starter release through
+  v0.0.95, including the v0.0.94 `SOURCE.txt` records — has every mint
+  refused**; this SDK needs a host carrying module-saas-starter#1093.
+- The Work Context header is set from core's `wool.WorkContextHeader`
+  (`X-Codefly-Work-Context`, the same name as before).
+
+### CI
+
+- `conformance/hostgateway` answers core-format tokens from its faked
+  accounts and adds `TestSDKConformancePreCutoverTokenRefused`: the real
+  v0.0.94 gateway relays a pre-cutover token on all three mints, and the SDK
+  refuses each. The guarded `sdk-go/workcontext` now stays at the host's own
+  pin in the conformance build, since this SDK no longer requires it.
+
 ## v0.1.1 — the broker contract, held against the host's real gateway
 
 - **Fix (moduleauthority).** A source mint's HTTP 412 returns

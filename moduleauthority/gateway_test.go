@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/codefly-dev/core/wool"
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
 )
 
 type bridgeGateway struct{ server *httptest.Server }
@@ -27,13 +27,13 @@ func TestGatewayAuthorityExchangesThroughOnlyTheGateway(t *testing.T) {
 		if req.Header().Get("Content-Type") != "application/proto" {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("bridge requires canonical binary protobuf"))
 		}
-		if req.Header().Get(internalTokenHeader) != testInternalToken || req.Header().Get(codefly.WorkContextHeaderName) != "module.token1" {
+		if req.Header().Get(internalTokenHeader) != testInternalToken || req.Header().Get(wool.WorkContextHeader) != sealedToken("module.token1") {
 			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid fixture proof"))
 		}
-		if req.Msg.GetBindingId() != "binding-fixture" || req.Msg.GetParentWorkContextToken() != "parent.token" || !req.Msg.GetLookup() {
+		if req.Msg.GetBindingId() != "binding-fixture" || req.Msg.GetParentWorkContextToken() != sealedToken("parent.token") || !req.Msg.GetLookup() {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("intent changed"))
 		}
-		return connect.NewResponse(&v1.IssuedWorkContext{Token: "child.token"}), nil
+		return connect.NewResponse(&v1.IssuedWorkContext{Token: sealedToken("child.token")}), nil
 	})
 	mux := http.NewServeMux()
 	mux.Handle(procedure, bridge)
@@ -45,11 +45,11 @@ func TestGatewayAuthorityExchangesThroughOnlyTheGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	issued, err := c.ExchangeOperation(t.Context(), ExchangeRequest{BindingID: "binding-fixture", Parent: token(t, "parent.token"), Lookup: true})
+	issued, err := c.ExchangeOperation(t.Context(), ExchangeRequest{BindingID: "binding-fixture", Parent: sealedToken("parent.token"), Lookup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issued.Encoded() != "child.token" || calls.Load() != 1 {
+	if issued != sealedToken("child.token") || calls.Load() != 1 {
 		t.Fatal("exchange did not preserve its outcome")
 	}
 	paths, stray, _, _ := broker.snapshot()
@@ -89,7 +89,7 @@ func TestGatewayAuthorityDoesNotFollowRedirects(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	_, err = c.ExchangeOperation(t.Context(), ExchangeRequest{BindingID: "binding-fixture", Parent: token(t, "parent.token")})
+	_, err = c.ExchangeOperation(t.Context(), ExchangeRequest{BindingID: "binding-fixture", Parent: sealedToken("parent.token")})
 	if err == nil || received.Load() != 0 {
 		t.Fatalf("redirected capability: err=%v, target calls=%d", err, received.Load())
 	}

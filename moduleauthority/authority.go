@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	codefly "github.com/codefly-dev/sdk-go/workcontext"
+	"github.com/codefly-dev/core/wool"
 
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
@@ -122,9 +122,9 @@ func callAsModule[Req, Res any](
 
 // authorityRequest wraps msg with the two credentials the endpoint requires.
 // A fresh request per attempt, so a retry never carries the rejected token.
-func authorityRequest[Req any](a authorityEndpoint, module codefly.WorkContextToken, msg *Req) *connect.Request[Req] {
+func authorityRequest[Req any](a authorityEndpoint, module string, msg *Req) *connect.Request[Req] {
 	req := connect.NewRequest(msg)
 	req.Header().Set(internalTokenHeader, a.token)
-	req.Header().Set(codefly.WorkContextHeaderName, module.Encoded())
+	req.Header().Set(wool.WorkContextHeader, module)
 	return req
 }
