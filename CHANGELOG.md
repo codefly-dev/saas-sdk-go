@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — the broker contract, held against the host's real gateway
+## v0.1.1 — the broker contract, held against the host's real gateway
 
 - **Fix (moduleauthority).** A source mint's HTTP 412 returns
   `ErrDelegationMissing` again, wrapping the same `*BrokerError`: the source
@@ -41,7 +41,7 @@
   order, and indifference to the legacy module-secret header; its remaining,
   deliberate divergences are listed in `host_fake_test.go`.
 
-## Unreleased — callable sources
+## v0.1.0 — callable sources
 
 - Reject unsupported HTTP response encodings before reading the body or
   inferring an HTTP status: Declare/List return `DatasourceError` with no
