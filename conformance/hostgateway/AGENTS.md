@@ -29,9 +29,11 @@ The script fails, rather than passes, when:
   pins. The one exception is a version whose module tree is byte-identical,
   checked on every run. Today that is `workcontext` b91ce91 → b3fb40d. Other
   modules the SDK moves, such as `golang.org/x/*`, are printed as warnings.
-- the test file imports a package no required module provides. After
-  `go get` adds the SDK, everything runs with `-mod=readonly`, so nothing is
-  resolved at `@latest`.
+- `moduleauthority` imports a package the SDK's own `go.mod` does not declare,
+  which the SDK's `go list -mod=readonly -deps ./moduleauthority` refuses before
+  `go get` adds the SDK; or the test file imports a package no required module
+  provides, since everything after `go get` runs with `-mod=readonly`. Between
+  them, nothing is resolved at `@latest`.
 
 ## How it is wired, and why
 

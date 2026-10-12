@@ -90,8 +90,16 @@ export GOLANG_PROTOBUF_REGISTRATION_CONFLICT=ignore
 cd "$pkg"
 modfile=(-modfile="$work/go.mod")
 # Add exactly one dependency, the SDK's moduleauthority, with the requirements
-# its own go.mod declares. Everything after this runs -mod=readonly: an import
-# no required module provides is an error, never a lookup at @latest.
+# its own go.mod declares. `go get` would look up at @latest any import of
+# moduleauthority that go.mod does not declare, so first require that there is
+# none: the SDK's own -mod=readonly resolution of the package must succeed.
+# Everything after `go get` runs -mod=readonly too: an import no required
+# module provides is an error, never a lookup at @latest.
+if ! (cd "$sdk" && go list -mod=readonly -deps ./moduleauthority >/dev/null); then
+	echo "moduleauthority imports a package the SDK's go.mod does not declare;" >&2
+	echo "go get would resolve it at @latest. Require it in go.mod first." >&2
+	exit 1
+fi
 go mod edit -replace=github.com/codefly-dev/saas-sdk-go="$sdk" "$work/go.mod"
 go get "${modfile[@]}" github.com/codefly-dev/saas-sdk-go/moduleauthority@v0.0.0
 build=(-mod=readonly "${modfile[@]}" -overlay="$work/overlay.json")

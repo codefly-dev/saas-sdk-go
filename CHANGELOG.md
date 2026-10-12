@@ -34,7 +34,9 @@
   proto path. The runner fails unless all eight expected tests are listed,
   run and pass. It also fails if the build would give the gateway a grpc,
   protobuf or sdk-go/workcontext whose source differs from the host's pin,
-  and it resolves nothing at `@latest` (`-mod=readonly` after one `go get`).
+  and it resolves nothing at `@latest`: `moduleauthority`'s imports must all
+  be declared by the SDK's go.mod (checked `-mod=readonly` before `go get`
+  adds it), and everything after that one `go get` runs `-mod=readonly`.
 - `moduleauthority`'s fake gateway follows the real one's prefix rule, check
   order, and indifference to the legacy module-secret header; its remaining,
   deliberate divergences are listed in `host_fake_test.go`.
