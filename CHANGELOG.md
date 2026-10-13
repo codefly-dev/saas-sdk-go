@@ -175,6 +175,48 @@ shipped.
   assignment. These are the only exported symbols the regeneration removed:
   nothing else in `gen/` lost a type, a field or an RPC.
 
+- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
+  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
+  module, through the same credentials and refresh-once rule as every authority
+  call. The host serves it only to a cross-tenant module principal; any other
+  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
+  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
+  `JournalPage.NextAfter` is the resume point the host guarantees misses no
+  committed entry and never passes an unfinished transaction, so a reader
+  resumes from it rather than from the last `Position` it saw, and only stores
+  and compares positions for equality.
+- `JournalStart` (`"start"`) is the position that means "before the oldest
+  retained entry": the host accepts it as `after`, and as the `from` of its
+  delivery operation, and never returns it as an entry's position. A reader with
+  no position of its own starts from it.
+- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
+  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
+  entries that record one of them, or the caller's own module work-context mint,
+  so a reader that delivers journal entries can tell a page of its own delivery
+  from a page of real activity. A limit outside 0..500 (0 is the host's default of
+  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
+  any call.
+- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
+  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
+  `ModuleReadJournalResponse`.
+
+### Conformance
+
+- The real host gateway in module-saas-starter commit `4217037f` (#1104)
+  now returns HTTP 412 for a Work Context mint while installation is pending.
+  The conformance expectation and fake documentation follow that contract;
+  the client already preserves the status as a BrokerError.
+
+### Generated contract
+
+- Regenerated the complete host-owned schema from
+  `module-saas-starter@b4008ddd8e38789bf96c1af3ce84c26f0b434ef7` (PR #1106, module package
+  0.1.1) with the pinned buf 1.73.0 and plugins. `SOURCE.txt` records that
+  exact development source; the generated tree no longer mixes a release
+  snapshot with an unrecorded contract. This also carries the host's current
+  delivery/recovery, installation and datasource contracts. The SDK release
+  remains ordered after the host release.
+
 ## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 
 Closes #38. The SDK requires `github.com/codefly-dev/core v0.19.1` and no
@@ -234,43 +276,6 @@ compiling. `gen/` and `SOURCE.txt` are unchanged (module-saas-starter v0.0.94).
   v0.0.94 gateway relays a pre-cutover token on all three mints, and the SDK
   refuses each. The guarded `sdk-go/workcontext` now stays at the host's own
   pin in the conformance build, since this SDK no longer requires it.
-## Unreleased — read the host's journal (waiting for the host release)
-
-**`gen/` here is ahead of the ref `SOURCE.txt` records.** `ReadJournal` and its
-three messages are not in `module-saas-starter` v0.0.94, and no release carries
-them yet. The two generated files below were produced by this repo's own
-`buf.gen.yaml` (buf 1.73.0, the pinned plugins) from the v0.0.94 proto with the
-wire contract added to `module_capabilities.proto` in a scratch checkout, not
-by hand. They are a stopgap: the `gen-drift` job fails until the contract is in
-a published `module-saas-starter` release and `gen/` is regenerated from that
-tag. Do not release this until it is.
-
-### Added (moduleauthority, read the journal)
-
-- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
-  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
-  module, through the same credentials and refresh-once rule as every authority
-  call. The host serves it only to a cross-tenant module principal; any other
-  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
-  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
-  `JournalPage.NextAfter` is the resume point the host guarantees misses no
-  committed entry and never passes an unfinished transaction, so a reader
-  resumes from it rather than from the last `Position` it saw, and only stores
-  and compares positions for equality.
-- `JournalStart` (`"start"`) is the position that means "before the oldest
-  retained entry": the host accepts it as `after`, and as the `from` of its
-  delivery operation, and never returns it as an entry's position. A reader with
-  no position of its own starts from it.
-- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
-  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
-  entries that record one of them, or the caller's own module work-context mint,
-  so a reader that delivers journal entries can tell a page of its own delivery
-  from a page of real activity. A limit outside 0..500 (0 is the host's default of
-  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
-  any call.
-- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
-  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
-  `ModuleReadJournalResponse`.
 
 ## v0.1.1 — the broker contract, held against the host's real gateway
 
