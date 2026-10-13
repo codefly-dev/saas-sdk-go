@@ -95,7 +95,7 @@ func TestReadJournalReturnsAPageAndItsResumePoint(t *testing.T) {
 		t.Fatalf("method = %q", call.method)
 	}
 	if len(call.internalToken) != 1 || call.internalToken[0] != testInternalToken ||
-		len(call.workContext) != 1 || call.workContext[0] != "module.token1" || len(call.authorization) != 0 {
+		len(call.workContext) != 1 || call.workContext[0] != sealedToken("module.token1") || len(call.authorization) != 0 {
 		t.Fatal("wrong authority carriers")
 	}
 	if call.journal.GetAfter() != "" || call.journal.GetLimit() != 10 || !reflect.DeepEqual(call.journal.GetTypes(), []string{journalType}) ||
@@ -255,13 +255,13 @@ func TestReadJournalRefreshesOnlyARejectedModuleCapability(t *testing.T) {
 	if _, err := client.ModuleWorkContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	h.gateway.revoke("module.token1")
+	h.gateway.revoke(sealedToken("module.token1"))
 	page, err := client.ReadJournal(t.Context(), "", 10, []string{journalType}, nil)
 	if err != nil || len(page.Entries) != 1 {
 		t.Fatalf("page = %+v, err = %v", page, err)
 	}
 	calls := h.authority.snapshot()
-	if len(calls) != 2 || calls[0].workContext[0] != "module.token1" || calls[1].workContext[0] != "module.token2" {
+	if len(calls) != 2 || calls[0].workContext[0] != sealedToken("module.token1") || calls[1].workContext[0] != sealedToken("module.token2") {
 		t.Fatalf("calls = %+v", calls)
 	}
 }
