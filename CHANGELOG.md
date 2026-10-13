@@ -14,7 +14,11 @@
   the mount minted nothing there. The variable and the path are exported as
   `WorkloadTokenFileVariable` and `PodWorkloadTokenFile`;
   codefly-dev/solution-runtime-go reads the same variable. It resolves the
-  path only: the token is still read before every mint.
+  path only: the token is still read before every mint. Its scope is the
+  services a native run names the variable for — `module-identity` without
+  `workload-identity`; a `workload-identity` service receives its path as
+  `TOKEN_FILE` in its `workload-identity` configuration and passes
+  `ProjectedTokenFile(path)` itself.
 
 ## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 

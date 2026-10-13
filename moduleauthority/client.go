@@ -164,8 +164,9 @@ type ProjectedTokenSource interface {
 // one exists because moduleauthority does not import sdk-go/workcontext: it
 // carries Work Contexts as opaque strings and reads them only through core.
 //
-// A module running under Codefly passes WorkloadTokenFile(), which names the
-// path Codefly projected the token to wherever it runs.
+// A module-identity service running under Codefly passes WorkloadTokenFile(),
+// which names the path Codefly projected its token to in a cell's pod and in
+// a native run; see WorkloadTokenFile for the one case it does not cover.
 type ProjectedTokenFile string
 
 // WorkloadTokenFileVariable is the environment variable that names the
@@ -180,10 +181,20 @@ const WorkloadTokenFileVariable = "CODEFLY__WORKLOAD_TOKEN_FILE"
 // projected ServiceAccount token at, read-only, for audience `accounts`.
 const PodWorkloadTokenFile = "/var/run/secrets/codefly/token"
 
-// WorkloadTokenFile is where this module's projected token is, wherever
-// Codefly runs it: the file WorkloadTokenFileVariable names when the variable
-// is set to a non-blank value, and PodWorkloadTokenFile otherwise. A process
-// under a native run is told; a pod is not, and reads its mount.
+// WorkloadTokenFile is where a module-identity service's projected token is:
+// the file WorkloadTokenFileVariable names when the variable is set to a
+// non-blank value, and PodWorkloadTokenFile otherwise. A process under a native
+// run is told; a pod is not, and reads its mount.
+//
+// Its scope is exactly the services a native run names the variable for: a
+// service that declares module-identity and does not declare
+// workload-identity (codefly-dev/cli cmd/run/native_cluster.go). A service
+// that declares workload-identity is not given the variable; a native run
+// delivers its token's path as TOKEN_FILE in its workload-identity
+// configuration instead, so for it this helper falls back to
+// PodWorkloadTokenFile, a path that does not exist on the machine running it.
+// Such a service passes ProjectedTokenFile with the path that configuration
+// names.
 //
 // It resolves the path, never the token: the file is still read before every
 // mint, because the projection rotates under a running process.
