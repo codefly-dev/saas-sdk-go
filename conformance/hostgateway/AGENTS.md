@@ -76,6 +76,12 @@ duplicate, non-Bearer or empty bearer refused before accounts; the 64 KiB
 token bound; and the three gateway answers the fake copies (D1, D3, D4 in
 `moduleauthority/host_fake_test.go`).
 
+At host v0.0.97 (`640ee503617a0130abdba79d8eeb11dc4d8be723`), a work-context
+mint's `FailedPrecondition` maps to HTTP 412 (installation pending), preserved
+as `BrokerError` without a delegation sentinel. This differs from the source
+mint's 412 (`ErrDelegationMissing`). The host's `gateway_modules.go` and
+`TestGateway_ModuleWorkContext_RelaysAccountsOutcome` define that mapping.
+
 ## When it goes red
 
 First ask which kind of red it is. Two kinds look alike after a `SOURCE.txt`

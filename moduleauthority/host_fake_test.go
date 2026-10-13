@@ -54,11 +54,11 @@ import (
 //     an extra or misnamed field is visible to an exact-body assertion; the
 //     real gateway decodes into a struct and drops unknown keys silently.
 //   - D5: a test may inject any refusal on any path. The real gateway never
-//     answers 403 (or 412) on /modules/_work-context — accounts'
+//     answers 403 on the SDK's /modules/_work-context path — accounts'
 //     PermissionDenied is a 401 there — so no test here injects one.
 //   - D6: accounts' Unauthenticated and FailedPrecondition on the work-context
-//     mint (a 502 from the real gateway) are not modelled; only injected
-//     statuses are.
+//     mint (502 and 412 respectively from the real gateway) are not modelled;
+//     only injected statuses are. Conformance holds both mappings at SOURCE.txt.
 //   - D7: it accepts one internal token; the real gateway also accepts the
 //     previous one during rotation.
 //   - D8: refusal bodies are whatever a test injects; the real gateway sends

@@ -449,8 +449,8 @@ The proto source of truth is `module-saas-starter/module/services/accounts/proto
 To refresh from a released tag (in a checkout of that repo):
 
 ```bash
-git fetch origin tag v0.0.94
-git checkout --detach v0.0.94
+git fetch origin tag v0.0.97
+git checkout --detach v0.0.97
 cd module/services/accounts/proto
 buf generate --template <this-repo>/buf.gen.yaml -o <this-repo>
 ```
@@ -465,9 +465,11 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. Core v0.19.1 supplies the required Runnable package;
-the SDK need not adopt the host's entire dependency generation. Verify the
-compatible dependency floor with SDK and consumer builds when refreshing it.
+protobuf initialization. The SDK requires Core v0.19.4, which supplies the
+required Runnable package and keeps the Kubernetes dependency graph compatible
+with stable client-go's structured-merge-diff/v6. The SDK need not adopt the
+host's entire dependency generation. Verify the compatible dependency floor
+with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through
 `refs/tags/` and verifies that regeneration leaves no diff. Before a host
@@ -660,6 +662,10 @@ reconnect it — minting again will not help. The gateway answers 412 there only
 for a missing delegation, so the status alone decides it. Body-based delegation
 distinctions are gone: source 403s all return `ErrDelegationInvalid`, whether
 the delegation was revoked or is otherwise unusable.
+At host v0.0.97, a module work-context mint can also answer 412 when the
+workload is admitted but installed nowhere. That remains a `BrokerError`
+with `StatusCode == 412` and `BrokerErrorOther`, without a delegation sentinel;
+the module can serve its install endpoint while waiting for installation.
 `BrokerError.Path` and `BrokerError.Reason` have been removed.
 
 Transport and response read failures return `*moduleauthority.BrokerTransportError`
