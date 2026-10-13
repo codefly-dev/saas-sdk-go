@@ -173,7 +173,7 @@ func brokerParserTransport(t *testing.T, wire string) *http.Transport {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer server.Close()
+		defer func() { _ = server.Close() }()
 		req, err := http.ReadRequest(bufio.NewReader(server))
 		if err != nil {
 			return
