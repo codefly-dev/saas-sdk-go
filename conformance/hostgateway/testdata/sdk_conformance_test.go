@@ -549,7 +549,10 @@ func TestSDKConformanceRefusals(t *testing.T) {
 		{"work execution unestablished", mintWork, refusal(codes.Unavailable, ""), 503, moduleauthority.ErrExecutionUnestablished},
 		{"work invalid request", mintWork, refusal(codes.InvalidArgument, ""), 400, nil},
 		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 502, nil},
-		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 502, nil},
+		// Host v0.0.97 (640ee503617a0130abdba79d8eeb11dc4d8be723),
+		// gateway_modules.go: an admitted workload installed nowhere is 412.
+		// This is not a missing source delegation and carries no sentinel.
+		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 412, nil},
 
 		{"operation unproven", mintOperation, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
 		// The same organization refusal is a 403 on the operation mint.
