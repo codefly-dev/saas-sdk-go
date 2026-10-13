@@ -117,7 +117,7 @@ mints through the host's *real* gateway handlers at that same ref
 | `datasource/` | the same facade over `DatasourceService` |
 | `settings/` | presence-aware `Field[M, T]` runtime; `JSONCodec` is the only typed↔ProtoJSON boundary |
 | `settings/catalog/` | Go / TypeScript / proto catalog renderers that `module-compose` calls |
-| `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport. Work Contexts are opaque `string`s, shape-checked only by `core/workcontext.Decode` |
+| `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport. Work Contexts are opaque `string`s, shape-checked only by `core/workcontext.Decode`. `verifier_sources.go` serves core's three live-authority sources to a callee's verifier without verifying anything itself |
 | `gen/` | generated output. Regenerated, never edited |
 | `conformance/hostgateway/` | `moduleauthority` minting through the host's real gateway at the `SOURCE.txt` ref |
 | `internal/apiboundary` | the public-API boundary gate, with fixtures that prove it still looks |
@@ -145,6 +145,15 @@ examples. Read it rather than re-deriving the API from the tree.
   hand-written parser, and never a decoded claim treated as a finding.
   Verifying belongs to the receiver (`sdk-go/workcontext`); a callee-side
   verifier does not come back here.
+  **A SOURCE is not a verifier.** `WorkContextSources` implements core's
+  `SealSource`, `RevisionSource` and `GrantSource` over the host's
+  `ResolveWorkContextAuthority`, and that belongs here: it holds no key, reads
+  no signature and decides nothing about a capability — it is a client of the
+  ISSUER's live state, which is this SDK's whole job. The rule above is about
+  the decision, and the decision stays in `sdk-go/workcontext`. A source may
+  read a claim off a capability to NARROW what it asks (the owner it questions
+  is the capability's own) and never to settle anything: the host checks the
+  same claim against the same capability, so a misreading refuses.
 - **The release version tracks the saas-starter module version**, and
   `SOURCE.txt` records the proto ref `gen/` came from. Both move together with
   a regeneration, or the tag claims a contract it does not carry.

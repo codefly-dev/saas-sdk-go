@@ -539,6 +539,65 @@ or binding is required. It checks current parent authority and delegation,
 authenticated module/audience/tenant alignment, current membership, and exact
 active record identity. A refusal never invokes a bearer-based fallback.
 
+### Verifying a Work Context presented to you, at full strength
+
+A module that RECEIVES a Work Context is its callee, and a callee verifies with
+`sdk-go/workcontext`'s `PinnedVerifier` — core's verifier, with its
+configuration settled. That verifier needs three live sources only the issuer
+holds, and this SDK is how you reach them:
+
+```go
+sources, err := client.WorkContextSources(moduleauthority.WorkContextSourceSettings{
+    Capability: presented, // the capability this module is verifying
+})
+// Handle err before using sources.
+verifier, err := workcontext.NewVerifier(workcontext.VerifierSettings{
+    Issuer: issuer, Audience: audience,
+    Seals: sources, Revisions: sources, Grants: sources,
+    Replay: replayStore, // yours, and durable+shared across replicas
+}, keySet)
+```
+
+Without them a module can only run core's forwarding-hop `Inspector`, which
+checks the encoding, signature, issuer, audience, window and shape and nothing
+live — so a capability whose installation was revoked, whose build was replaced,
+whose operation binding was withdrawn or whose principal's epoch has moved stays
+accepted until it expires.
+
+The capability is the only required setting, and it is the whole authorization:
+the host authenticates it, requires it to be addressed to your module (its
+registration prefix, or the route alias its delivered presence declares) and to
+the organization your credential is bound to, and answers only about the
+identifiers it names. There is no tenant, audience or owner to supply. Build one
+per presented capability; a module verifying a stream of messages that carry the
+same capability keeps one.
+
+What the answers mean:
+
+- `corework.ErrNoSeal`, `ErrNoApprovedBuild` and `ErrNoBinding` are core's own
+  sentinels, which its verifier turns into a refusal of the capability.
+- `ErrUnreadableAuthorityAnswer` is a host answer this client will not read — a
+  state it does not understand, another arm, or an answer about another
+  principal, installation or binding. It is a refusal, never a permissive
+  default.
+- `ErrNoApprovalGrant` is an approval the issuer never recorded.
+- A host refusal arrives with its **connect** code (`connect.CodeOf`):
+  `CodeFailedPrecondition` means the issuer decided and the authority has
+  changed — mint again, do not retry — while `CodeUnavailable` means the lookup
+  failed and a retry may succeed.
+
+Positive answers are cached for at most `AuthorityCacheBound` (2 seconds), which
+is a **ceiling**: a cached answer delays a revocation by exactly its bound, so a
+larger one is refused rather than clamped, and `CacheEntries: -1` turns caching
+off. Refusals are never cached. One verification costs five or more round trips
+(the revision, the seal, an epoch and a build for the owner and for each actor
+hop, a binding), so decide the cadence for a stream deliberately rather than
+discovering it from a latency graph.
+
+This module verifies nothing: it holds no key, reads no signature and decides
+nothing about a capability. The decision is core's, through
+`sdk-go/workcontext`.
+
 ### Gateway authority transport and audit declarations
 
 `moduleauthority.NewGatewayAuthority(seams, credentials)` explicitly selects
