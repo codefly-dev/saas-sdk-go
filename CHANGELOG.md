@@ -155,15 +155,23 @@ tag. Do not release this until it is.
 
 ### Added (moduleauthority, read the journal)
 
-- `Client.ReadJournal(ctx, afterSeq, limit, types) (JournalPage, error)` calls
-  `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
+- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
+  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
   module, through the same credentials and refresh-once rule as every authority
   call. The host serves it only to a cross-tenant module principal; any other
-  caller gets the host's `PermissionDenied`, preserved. `JournalPage.NextAfterSeq`
-  is the resume point the host guarantees misses no committed entry, so a
-  reader resumes from it rather than from the last `Seq` it saw. A negative
-  position, a limit outside 0..500 (0 is the host's default of 100), or no type
-  (or an empty one) is `ErrInvalidJournalRead` before any call.
+  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
+  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
+  `JournalPage.NextAfter` is the resume point the host guarantees misses no
+  committed entry and never passes an unfinished transaction, so a reader
+  resumes from it rather than from the last `Position` it saw, and only stores
+  and compares positions for equality.
+- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
+  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
+  entries that record one of them, or the caller's own module work-context mint,
+  so a reader that delivers journal entries can tell a page of its own delivery
+  from a page of real activity. A limit outside 0..500 (0 is the host's default of
+  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
+  any call.
 - Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
   `ModuleReadJournalRequest`, `ModuleJournalEntry` and
   `ModuleReadJournalResponse`.

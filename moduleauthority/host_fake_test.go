@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
@@ -373,12 +374,18 @@ type fakeAuthority struct {
 	authorityRefusal error
 	// authority is the live state this host answers, by question kind.
 	authority authorityState
-	// journal is what the fake host has committed, in seq order. A test sets it
+	// journal is what the fake host has committed, in order. A test sets it
 	// before a call; the fake serves it the way the contract states.
 	journal []*v1.ModuleJournalEntry
-	// journalNext, when set, overrides next_after_seq, to model a host that
-	// holds the resume point back of the last entry it returned.
-	journalNext *int64
+	// journalNext, when set, overrides next_after, to model a host that holds
+	// the resume point back of the last entry it returned.
+	journalNext *string
+	// machinery records, by event id, which entries are the host's delivery
+	// machinery: the value is the binding id the mint or exchange was for, or
+	// moduleMintMarker for the caller's own module work-context mint. The fake
+	// sets delivery_machinery on an entry only when the request names that
+	// binding, as the contract states.
+	machinery map[string]string
 	// crossTenant is whether the fake host treats this caller as a cross-tenant
 	// module principal. ReadJournal is refused to any other.
 	crossTenant bool
@@ -572,36 +579,56 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	return stream.SendMsg(&v1.IssuedWorkContext{Token: sealedToken("child.token")})
 }
 
+// moduleMintMarker marks, in fakeAuthority.machinery, the caller's own module
+// work-context mint: delivery machinery whatever bindings the read names.
+const moduleMintMarker = "<module work-context mint>"
+
 // serveJournal answers ReadJournal as the wire contract states it: refused to a
-// caller that is not a cross-tenant module principal, entries with a seq
-// greater than after_seq of the requested types, at most limit of them (zero
-// meaning 100), and a resume point.
+// caller that is not a cross-tenant module principal, entries after the opaque
+// position `after` of the requested types, at most limit of them (zero meaning
+// 100), the host's delivery_machinery mark, and a resume point. The fake knows
+// what its positions mean; a client must not.
 func (a *fakeAuthority) serveJournal(stream grpc.ServerStream, req *v1.ModuleReadJournalRequest) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.crossTenant {
 		return status.Error(codes.PermissionDenied, "journal is served to cross-tenant module principals only")
 	}
-	if req.GetAfterSeq() < 0 || req.GetLimit() < 0 || req.GetLimit() > 500 || len(req.GetTypes()) == 0 {
-		return status.Error(codes.InvalidArgument, "after_seq >= 0, limit 0..500 and at least one type required")
+	if req.GetLimit() < 0 || req.GetLimit() > 500 || len(req.GetTypes()) == 0 {
+		return status.Error(codes.InvalidArgument, "limit 0..500 and at least one type required")
+	}
+	start := 0
+	if after := req.GetAfter(); after != "" {
+		start = -1
+		for i, e := range a.journal {
+			if e.GetPosition() == after {
+				start = i + 1
+			}
+		}
+		if start < 0 {
+			return status.Error(codes.InvalidArgument, "after is not a position of this journal")
+		}
 	}
 	limit := int(req.GetLimit())
 	if limit == 0 {
 		limit = 100
 	}
-	out := &v1.ModuleReadJournalResponse{NextAfterSeq: req.GetAfterSeq()}
-	for _, e := range a.journal {
-		if e.GetSeq() <= req.GetAfterSeq() || !slices.Contains(req.GetTypes(), e.GetType()) {
+	out := &v1.ModuleReadJournalResponse{NextAfter: req.GetAfter()}
+	for _, e := range a.journal[start:] {
+		if !slices.Contains(req.GetTypes(), e.GetType()) {
 			continue
 		}
 		if len(out.Entries) == limit {
 			break
 		}
-		out.Entries = append(out.Entries, e)
-		out.NextAfterSeq = e.GetSeq()
+		served := proto.Clone(e).(*v1.ModuleJournalEntry)
+		binding, recorded := a.machinery[e.GetEventId()]
+		served.DeliveryMachinery = recorded && (binding == moduleMintMarker || slices.Contains(req.GetDeliveryBindings(), binding))
+		out.Entries = append(out.Entries, served)
+		out.NextAfter = e.GetPosition()
 	}
 	if a.journalNext != nil {
-		out.NextAfterSeq = *a.journalNext
+		out.NextAfter = *a.journalNext
 	}
 	return stream.SendMsg(out)
 }
