@@ -598,7 +598,7 @@ func (a *fakeAuthority) serveJournal(stream grpc.ServerStream, req *v1.ModuleRea
 		return status.Error(codes.InvalidArgument, "limit 0..500 and at least one type required")
 	}
 	start := 0
-	if after := req.GetAfter(); after != "" {
+	if after := req.GetAfter(); after != "" && after != JournalStart {
 		start = -1
 		for i, e := range a.journal {
 			if e.GetPosition() == after {

@@ -165,6 +165,10 @@ tag. Do not release this until it is.
   committed entry and never passes an unfinished transaction, so a reader
   resumes from it rather than from the last `Position` it saw, and only stores
   and compares positions for equality.
+- `JournalStart` (`"start"`) is the position that means "before the oldest
+  retained entry": the host accepts it as `after`, and as the `from` of its
+  delivery operation, and never returns it as an entry's position. A reader with
+  no position of its own starts from it.
 - `deliveryBindings` are the caller's binding ids whose mints and exchanges count
   as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
   entries that record one of them, or the caller's own module work-context mint,

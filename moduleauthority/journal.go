@@ -15,6 +15,14 @@ import (
 // read, or an empty type or delivery binding id.
 var ErrInvalidJournalRead = errors.New("module authority: invalid journal read")
 
+// JournalStart is the position that means "before the oldest retained entry".
+// The host accepts it wherever it accepts a position (ReadJournal's after, and
+// the `from` of the delivery operation) and never returns it as an entry's
+// position, so a reader with no position of its own starts a range from it and
+// the range still has a position to be identified by. The empty string also
+// reads from the oldest retained entry, but it names nothing a caller can keep.
+const JournalStart = "start"
+
 // MaxJournalPage is the largest page the host serves. A limit of zero asks for
 // the host's default page.
 const MaxJournalPage = 500
@@ -56,8 +64,8 @@ type JournalPage struct {
 // cross-tenant module principal; any other caller is refused with the host's
 // own code, which is preserved.
 //
-// after is an opaque position the host gave, exclusive; the empty string reads
-// from the oldest retained entry. limit is 1..500, and zero means the host's
+// after is an opaque position the host gave, exclusive; JournalStart or the empty
+// string reads from the oldest retained entry. limit is 1..500, and zero means the host's
 // default. types must name at least one registered type. deliveryBindings are
 // the caller's binding ids whose mints and exchanges count as delivery
 // machinery: the host sets JournalEntry.DeliveryMachinery on the entries that

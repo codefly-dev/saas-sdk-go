@@ -157,6 +157,35 @@ func TestReadJournalReportsTheHostsResumePointNotTheLastPosition(t *testing.T) {
 	}
 }
 
+// JournalStart reads from the oldest retained entry, as the empty position does,
+// and is not any entry's position.
+func TestReadJournalAcceptsTheStartPosition(t *testing.T) {
+	h := newHost(t)
+	client := h.client(t, moduleCredentials)
+	e1, e2 := journalEntry(t, 1, testTenant, journalType), journalEntry(t, 2, testTenant, journalType)
+	h.authority.commit(e1, e2)
+	if JournalStart != "start" {
+		t.Fatalf("JournalStart = %q, the literal the host defines is %q", JournalStart, "start")
+	}
+	page, err := client.ReadJournal(t.Context(), JournalStart, 1, []string{journalType}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Entries) != 1 || page.Entries[0].Position != e1.GetPosition() || page.NextAfter != e1.GetPosition() {
+		t.Fatalf("page = %+v", page)
+	}
+	if page.Entries[0].Position == JournalStart {
+		t.Fatal("an entry carries the start position")
+	}
+	if got := h.authority.snapshot()[0].journal.GetAfter(); got != JournalStart {
+		t.Fatalf("after on the wire = %q", got)
+	}
+	// And the read resumes from what it returned.
+	if page, err = client.ReadJournal(t.Context(), page.NextAfter, 1, []string{journalType}, nil); err != nil || len(page.Entries) != 1 || page.Entries[0].EventID != "event-2" {
+		t.Fatalf("page = %+v, err = %v", page, err)
+	}
+}
+
 // The host marks delivery machinery, for the bindings the read names and for
 // the caller's own module mint; the client carries the mark and the bindings
 // exactly, and a mark for a binding the read did not name is not set.
