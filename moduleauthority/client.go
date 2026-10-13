@@ -156,14 +156,43 @@ type ProjectedTokenSource interface {
 // ProjectedTokenFile reads the token from the path its projected volume is
 // mounted at, trimmed. An empty file is an error, never an empty token: a
 // projection mid-rotation must not be presented as a credential.
-// The consumer supplies the mount path; there is no default. The file read
-// is limited to 64 KiB, including surrounding whitespace.
+// The value is the path to read; ProjectedTokenFile itself has no default.
+// The file read is limited to 64 KiB, including surrounding whitespace.
 //
 // It is the same contract as sdk-go/workcontext's ProjectedTokenFile; a
 // consumer that already imports that module may pass that one instead. This
 // one exists because moduleauthority does not import sdk-go/workcontext: it
 // carries Work Contexts as opaque strings and reads them only through core.
+//
+// A module running under Codefly passes WorkloadTokenFile(), which names the
+// path Codefly projected the token to wherever it runs.
 type ProjectedTokenFile string
+
+// WorkloadTokenFileVariable is the environment variable that names the
+// module's projected token file to a process that cannot read it at the path a
+// pod mounts it at. A native `codefly run` stands in for the cell (codefly-dev/cli
+// v0.1.187, #977): it projects each module workload's token to a file of its
+// own and names that file here. codefly-dev/solution-runtime-go reads the same
+// variable (ProjectedTokenFileEnvironmentVariable).
+const WorkloadTokenFileVariable = "CODEFLY__WORKLOAD_TOKEN_FILE"
+
+// PodWorkloadTokenFile is the path a cell's rendered pod mounts the module's
+// projected ServiceAccount token at, read-only, for audience `accounts`.
+const PodWorkloadTokenFile = "/var/run/secrets/codefly/token"
+
+// WorkloadTokenFile is where this module's projected token is, wherever
+// Codefly runs it: the file WorkloadTokenFileVariable names when the variable
+// is set to a non-blank value, and PodWorkloadTokenFile otherwise. A process
+// under a native run is told; a pod is not, and reads its mount.
+//
+// It resolves the path, never the token: the file is still read before every
+// mint, because the projection rotates under a running process.
+func WorkloadTokenFile() ProjectedTokenFile {
+	if path := strings.TrimSpace(os.Getenv(WorkloadTokenFileVariable)); path != "" {
+		return ProjectedTokenFile(path)
+	}
+	return ProjectedTokenFile(PodWorkloadTokenFile)
+}
 
 // ProjectedToken reads and trims the file, bounded.
 func (path ProjectedTokenFile) ProjectedToken() (string, error) {

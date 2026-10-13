@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased — core v0.19.1; Work Contexts are core's, carried opaque
+## Unreleased
+
+### Added
+
+- **`moduleauthority.WorkloadTokenFile()`**, the one answer to "where is this
+  module's projected token": the file `CODEFLY__WORKLOAD_TOKEN_FILE` names
+  when it is set to a non-blank value, and the pod mount
+  `/var/run/secrets/codefly/token` otherwise. Since codefly CLI v0.1.187
+  (codefly-dev/cli#977) a native `codefly run` stands in for the cell and
+  projects each module workload's token to a file it names in that variable,
+  because a process cannot read the pod mount path; a module that hardcoded
+  the mount minted nothing there. The variable and the path are exported as
+  `WorkloadTokenFileVariable` and `PodWorkloadTokenFile`;
+  codefly-dev/solution-runtime-go reads the same variable. It resolves the
+  path only: the token is still read before every mint.
+
+## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 
 Closes #38. The SDK requires `github.com/codefly-dev/core v0.19.1` and no
 longer depends on `github.com/codefly-dev/sdk-go/workcontext` at all: the
