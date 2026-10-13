@@ -270,7 +270,7 @@ The SDK surfaces are:
   }, moduleauthority.Credentials{
       Prefix: modulePrefix,
       // Read before every mint: the kubelet rotates the projection.
-      Token: moduleauthority.ProjectedTokenFile(projectedTokenPath),
+      Token: moduleauthority.WorkloadTokenFile(),
       // Required for a shared module; a tenant-pinned module may omit it.
       OrganizationID: organizationID,
   })
@@ -292,8 +292,13 @@ The SDK surfaces are:
   `AllowInsecureHTTP` asserts the hop is mesh-protected. SaaS owns the installed
   binding's audience, scopes, lifetime, verification, and audit record.
 
-  `projectedTokenPath` is the token projection mount path supplied by the
-  consumer's deployment; there is no default path. The host requires audience
+  `WorkloadTokenFile()` is where Codefly projected the token for the process
+  it runs: the file `CODEFLY__WORKLOAD_TOKEN_FILE` names when that is set —
+  a native `codefly run` (CLI v0.1.187 and later) stands in for the cell and
+  projects each module's token to a file of its own, since a process cannot
+  read the pod mount — and the pod mount, `/var/run/secrets/codefly/token`,
+  otherwise. A consumer with another projection passes
+  `ProjectedTokenFile(path)` instead, which has no default. The host requires audience
   `accounts` and a token lifetime of at most 600 seconds, and verifies the pod,
   workload and approved build. The SDK rereads the source for every actual mint
   (including a module Work Context refresh), trims whitespace, and rejects an
