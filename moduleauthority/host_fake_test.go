@@ -46,7 +46,7 @@ import (
 //
 // fakeGateway is the edge-case double; the contract itself is held by
 // conformance/hostgateway, which mints through the host's REAL gateway
-// handlers at the tag in SOURCE.txt. The fake follows the real gateway's
+// handlers at the ref in SOURCE.txt. The fake follows the real gateway's
 // perimeter, prefix rule and check order (internal token, then exactly one
 // Bearer, then body, prefix and binding/source validation, then accounts'
 // verdict). Where it still differs, it differs on purpose:
@@ -55,11 +55,11 @@ import (
 //     an extra or misnamed field is visible to an exact-body assertion; the
 //     real gateway decodes into a struct and drops unknown keys silently.
 //   - D5: a test may inject any refusal on any path. The real gateway never
-//     answers 403 (or 412) on /modules/_work-context — accounts'
+//     answers 403 on /modules/_work-context — accounts'
 //     PermissionDenied is a 401 there — so no test here injects one.
-//   - D6: accounts' Unauthenticated and FailedPrecondition on the work-context
-//     mint (a 502 from the real gateway) are not modelled; only injected
-//     statuses are.
+//   - D6: accounts' Unauthenticated (502) and installation-pending
+//     FailedPrecondition (412) on the work-context mint are not modelled;
+//     only injected statuses are.
 //   - D7: it accepts one internal token; the real gateway also accepts the
 //     previous one during rotation.
 //   - D8: refusal bodies are whatever a test injects; the real gateway sends
@@ -357,7 +357,7 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:                         true,
 	accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:        true,
 	// ReadJournal is not in the v0.0.94 host: it is the wire contract the next
-	// host release is to serve (see SOURCE.txt), faked here as that contract
+	// host ref serves (see SOURCE.txt), faked here as that contract
 	// states it.
 	accountsv1connect.ModuleCapabilitiesServiceReadJournalProcedure: true,
 }
