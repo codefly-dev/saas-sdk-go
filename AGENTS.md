@@ -60,8 +60,16 @@ Fleet standard — [handbook#68](https://github.com/obin-ai/handbook/issues/68).
 - **Never hardcode what the system resolves** — injected environment, derived
   ports, service addresses, credentials copied out of another component. This
   SDK is on the resolving side of that line: a facade takes a gateway and reads
-  `BaseURL()` off it rather than holding a URL, and `moduleauthority` takes
-  both seams from the consumer rather than defaulting either. Typing one of those in encodes something true
+  `BaseURL()` off it rather than holding a URL. `moduleauthority` takes its
+  gateway and authority seams from the consumer and defaults neither address:
+  a zero `Authority` builds a mint-only client that fails with
+  `ErrNoAuthority`, never one that dials an address nobody configured. The one
+  value it does resolve is a credential source the consumer opts into, the
+  projected token's path: `WorkloadTokenFile()` reads it from the variable a
+  native run injects (`CODEFLY__WORKLOAD_TOKEN_FILE`) and otherwise falls back
+  to the mount a cell's render declares, and a consumer whose path comes from
+  elsewhere passes `ProjectedTokenFile(path)`, which has no default. Typing one
+  of those in encodes something true
   on one machine for ten minutes, and it fails quietly — a runtime missing a
   credential can skip registration *silently*, so the service boots, serves,
   and is simply absent.
