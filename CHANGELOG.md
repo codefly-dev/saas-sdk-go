@@ -2,7 +2,35 @@
 
 ## Unreleased
 
+### Changed
+
+- Raise the Core dependency floor from v0.19.1 to v0.19.4, consuming Core's
+  Kubernetes dependency compatibility fix for stable client-go consumers.
+  Existing hand-written facade methods retain their signatures.
+- Regenerate from released module-saas-starter v0.0.97 with the existing plugin
+  pins. `SOURCE.txt` now holds both generated bindings and gateway conformance
+  to that release: its gateway pins gRPC v1.84.0, matching Core v0.19.4's floor.
+  The upstream module package version remains 0.1.0; no SDK release is cut by
+  regeneration.
+- Align conformance with host v0.0.97's work-context mint: Accounts'
+  `FailedPrecondition` now returns HTTP 412 (installation pending), previously
+  502. The SDK preserves it as `BrokerError` without a delegation sentinel.
+  The source mint's 412 still maps to `ErrDelegationMissing`.
+
+### Removed (breaking)
+
+- Generated `StartTaskWorkContextRequest`, `StartInstallationTaskRequest`, and
+  `StartChildSessionWorkContextRequest` lose `SessionId` and `GetSessionId`.
+  Accounts assigns the session and returns it in `IssuedWorkContext.SessionId`;
+  callers must not choose one. The deleted proto names and field numbers are
+  reserved upstream. No hand-written facade exposes these request types.
+
 ### Added
+
+- Generated source-trigger declaration, delegation, reconciliation and lookup
+  messages and RPCs; installation retry and pending/failed status values;
+  solution workload mint `Upstream` and `Manifest` fields; and authorization
+  revision `OperationBindingId`. These bindings add no hand-written facades.
 
 - **`moduleauthority.WorkloadTokenFile()`**, the one answer to "where is this
   module's projected token": the file `CODEFLY__WORKLOAD_TOKEN_FILE` names
