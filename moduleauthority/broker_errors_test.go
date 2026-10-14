@@ -29,6 +29,7 @@ type brokerMintCase struct {
 func brokerMints(t *testing.T) []brokerMintCase {
 	return []brokerMintCase{
 		{hostWorkContextPath, func(c *Client) error { _, err := c.ModuleWorkContext(t.Context()); return err }, ErrPermissionDenied, ErrNoHostStateToMintFor},
+		{hostWorkContextPath, func(c *Client) error { _, err := c.MintModuleWorkContext(t.Context()); return err }, ErrPermissionDenied, ErrNoHostStateToMintFor},
 		{hostOperationContextPath, func(c *Client) error {
 			_, err := c.MintModuleOperationContext(t.Context(), "binding")
 			return err

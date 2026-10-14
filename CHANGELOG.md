@@ -59,6 +59,17 @@
   `CodeFailedPrecondition` ("the issuer decided; mint again") from
   `CodeUnavailable` ("the lookup failed; retry").
 
+- `moduleauthority.Client.MintModuleWorkContext(ctx)` returns
+  `ModuleContext{Token, ExpiresAt}` without caching, coalescing or retrying.
+  `ExpiresAt` is the broker's reported expiry, not a decoded token claim.
+  Existing `ModuleWorkContext(ctx) (string, error)` retains its cache and
+  shared refresh through the same mint implementation; organization binding,
+  bounded reads, Core-backed sealed-shape checking and safe refusals are shared.
+- `BrokerTransportConnectionReset` classifies wrapped `syscall.ECONNRESET`
+  through error identity with a fixed diagnostic, retaining no underlying
+  cause. It is appended so existing transport category values remain stable;
+  callers can choose to retry without accessing sensitive transport errors.
+
 - Generated source-trigger declaration, delegation, reconciliation and lookup
   messages and RPCs; installation retry and pending/failed status values;
   solution workload mint `Upstream` and `Manifest` fields; and authorization
