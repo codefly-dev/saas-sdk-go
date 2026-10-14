@@ -219,7 +219,7 @@ The SDK surfaces are:
 
   This call surface uses the four host RPCs from
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
-  `SOURCE.txt` records the released host tag `v0.0.94` used to regenerate
+  `SOURCE.txt` records the released host tag `v0.0.97` used to regenerate
   the bindings. This regeneration does not publish an SDK release.
   The host's runtime-scheduled `PruneSourceOperationReceipts` and
   `LookupPruneSourceOperationReceipts` are included in the generated bindings
@@ -242,8 +242,31 @@ The SDK surfaces are:
   `ErrInvalidCapability`; a `Parent` core does not decode is refused as invalid
   input (`ErrInvalidExchange`, `ErrInvalidArtifact`, `ErrInvalidInstallation`)
   before anything is sent. **This needs a host whose accounts mints core-format
-  Work Contexts** (module-saas-starter#1093); the v0.0.94 host recorded in
-  `SOURCE.txt` mints the pre-cutover format, and this client refuses it.
+  Work Contexts** (module-saas-starter#1093); the former v0.0.94 source mints
+  the pre-cutover format, which this client refuses. `SOURCE.txt` now records
+  v0.0.97.
+
+  `Client.ModuleWorkContext(ctx)` returns a cached token, sharing refreshes
+  between concurrent callers. Consumers that already own their expiry and
+  refresh controller use `Client.MintModuleWorkContext(ctx)` instead:
+
+  ```go
+  issued, err := authority.MintModuleWorkContext(ctx)
+  if err != nil {
+      return err
+  }
+  // issued.Token is opaque; issued.ExpiresAt is the broker's reported expiry.
+  ```
+
+  This returns `ModuleContext{Token string, ExpiresAt time.Time}` and mints
+  once per call. It neither reads nor updates the cached token, coalesces
+  concurrent calls, nor retries failures. Both methods use the same broker
+  request, bounded response reader, expiry parser and refusal mapping. The
+  projected credential is reread for each mint; the organization remains the
+  client's `Credentials.OrganizationID`, so keep a client per organization.
+  The returned expiry comes from the broker, never from decoded token claims.
+  It does not prove authority or override a verifier's lifetime limit; Core
+  owns authority validation, and consumers own their refresh/deadline policy.
 
   It talks to the two seams the host serves a composed module, and takes both
   explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
@@ -312,7 +335,7 @@ The SDK surfaces are:
   sends exactly one `Authorization: Bearer <token>` header alongside the
   internal perimeter token; the removed module-secret credential has no fallback.
 
-  The REST bodies match [the v0.0.94 gateway](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/services/auth-gateway/code/gateway_modules.go):
+  The REST bodies match [the v0.0.97 gateway](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.97/module/services/auth-gateway/code/gateway_modules.go):
 
   | Mint path | JSON fields sent |
   | --- | --- |
@@ -611,11 +634,11 @@ the module can serve its install endpoint while waiting for installation.
 
 Transport and response read failures return `*moduleauthority.BrokerTransportError`
 with a fixed message and a `Category`: `BrokerTransportTimeout`,
-`BrokerTransportConnectionRefused`, `BrokerTransportTLS`, or
-`BrokerTransportOther`. It retains no underlying error and has no `Unwrap`
-method. Callers use `errors.As` and the category for retry decisions, and check
+`BrokerTransportConnectionRefused`, `BrokerTransportConnectionReset`,
+`BrokerTransportTLS`, or `BrokerTransportOther`. It retains no underlying
+error and has no `Unwrap` method. Callers use `errors.As` and the category for retry decisions, and check
 their context's `Err()` for cancellation. For example, a caller may retry a 502,
-503, timeout or refused connection, while surfacing a 401/403 denial. The SDK
-does not automatically retry broker failures. Malformed initial HTTP headers
-provide no usable status and produce a transport error; malformed bodies cannot
+503, timeout, refused connection or connection reset, while surfacing a 401/403
+denial. The SDK does not automatically retry broker failures. Malformed initial
+HTTP headers provide no usable status and produce a transport error; malformed bodies cannot
 change a successfully parsed non-200 status into a transport failure.
