@@ -60,6 +60,15 @@ var (
 	// ErrInvalidCapability: SaaS answered with a Work Context this client
 	// refuses to hand out (malformed, expired, or issued for something else).
 	ErrInvalidCapability = errors.New("module authority: SaaS returned an invalid Work Context")
+	// ErrNoHostStateToMintFor: the module is PROVEN and the host holds nothing
+	// to mint it a capability against (HTTP 412, which relays accounts'
+	// FailedPrecondition) — most usually a workload the host admits that is
+	// installed in no organization it may mint for, or a tenant that names no
+	// organization. Nothing is wrong with the credential and nothing is denied:
+	// a mint succeeds once the module is installed. It is distinct from
+	// ErrPermissionDenied for that reason, and from a 502, which is the gateway
+	// saying the host itself failed.
+	ErrNoHostStateToMintFor = errors.New("module authority: the host holds no state to mint this module a capability against")
 	// ErrPermissionDenied: the module is proven but may not have what it asked
 	// for (HTTP 403 from the operation mint: a binding that declares no
 	// headless scopes, or one the module does not hold).

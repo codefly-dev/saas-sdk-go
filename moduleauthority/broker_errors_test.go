@@ -13,10 +13,12 @@ import (
 
 // brokerMintCase is one mint and the sentinel each mint types a status with.
 // The statuses are driven by a raw transport, not by the host fake: they pin
-// the SDK's mapping for any status, including some the v0.0.94 gateway never
-// sends on that path (a 403 or 412 on the work-context mint — accounts'
-// PermissionDenied is a 401 there). The real gateway's statuses per path are
-// held by conformance/hostgateway.
+// the SDK's mapping for any status, including one the gateway never sends on
+// that path (a 403 on the work-context mint — accounts' PermissionDenied is a
+// 401 there). The real gateway's statuses per path are held by
+// conformance/hostgateway, which is where the 412 below came from: the gateway
+// now relays accounts' FailedPrecondition on the work-context and
+// operation-context mints as 412 rather than 502.
 type brokerMintCase struct {
 	path               string
 	call               func(*Client) error
@@ -26,11 +28,11 @@ type brokerMintCase struct {
 
 func brokerMints(t *testing.T) []brokerMintCase {
 	return []brokerMintCase{
-		{hostWorkContextPath, func(c *Client) error { _, err := c.ModuleWorkContext(t.Context()); return err }, ErrPermissionDenied, nil},
+		{hostWorkContextPath, func(c *Client) error { _, err := c.ModuleWorkContext(t.Context()); return err }, ErrPermissionDenied, ErrNoHostStateToMintFor},
 		{hostOperationContextPath, func(c *Client) error {
 			_, err := c.MintModuleOperationContext(t.Context(), "binding")
 			return err
-		}, ErrPermissionDenied, nil},
+		}, ErrPermissionDenied, ErrNoHostStateToMintFor},
 		{hostSourceOperationContextPath, func(c *Client) error {
 			_, err := c.MintSourceOperationContext(t.Context(), exampleSource)
 			return err
@@ -127,7 +129,7 @@ func TestBrokerFailuresPreserveStatus(t *testing.T) {
 					case 503:
 						want = ErrExecutionUnestablished
 					}
-					for _, sentinel := range []error{ErrInvalidCredentials, ErrPermissionDenied, ErrDelegationInvalid, ErrDelegationMissing, ErrDelegationRevoked, ErrExecutionUnestablished} {
+					for _, sentinel := range []error{ErrInvalidCredentials, ErrPermissionDenied, ErrDelegationInvalid, ErrDelegationMissing, ErrDelegationRevoked, ErrExecutionUnestablished, ErrNoHostStateToMintFor} {
 						if errors.Is(err, sentinel) != (sentinel == want) {
 							t.Errorf("classification = %v, want only %v", err, want)
 						}

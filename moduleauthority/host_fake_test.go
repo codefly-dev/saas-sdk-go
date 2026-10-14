@@ -334,6 +334,10 @@ type authorityCall struct {
 	request        *v1.ModuleExchangeDelegatedOperationAudienceRequest
 	notice         *v1.ModuleNotifyOrgAdminsRequest
 	userNotice     *v1.ModuleNotifyUserRequest
+	// authorityQuestion is one live-authority question, so a test can assert
+	// the capability travelled with it and that the identifiers are the
+	// capability's own.
+	authorityQuestion *v1.ModuleResolveWorkContextAuthorityRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
@@ -349,6 +353,7 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceExchangeDelegatedReadAudienceProcedure:      true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:                         true,
+	accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:        true,
 }
 
 type fakeAuthority struct {
@@ -358,6 +363,11 @@ type fakeAuthority struct {
 	declarationError error
 	// foreign answers an exchange with a token core does not decode.
 	foreign bool
+	// authorityRefusal is the host's verdict on a live-authority question,
+	// configured before a call. nil answers the question.
+	authorityRefusal error
+	// authority is the live state this host answers, by question kind.
+	authority authorityState
 
 	mu    sync.Mutex
 	calls []authorityCall
@@ -411,6 +421,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	case accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:
 		call.userNotice = &v1.ModuleNotifyUserRequest{}
 		recvErr = stream.RecvMsg(call.userNotice)
+	case accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:
+		call.authorityQuestion = &v1.ModuleResolveWorkContextAuthorityRequest{}
+		recvErr = stream.RecvMsg(call.authorityQuestion)
 	default:
 		recvErr = stream.RecvMsg(request)
 		call.request = request
@@ -514,6 +527,18 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		}
 		return stream.SendMsg(&v1.ModuleNotifyUserResponse{NotificationId: "n-1", Delivered: n.GetCategory() != "marketing"})
 	}
+	if question := call.authorityQuestion; question != nil {
+		// ResolveWorkContextAuthority: one live-authority answer, or the
+		// host's refusal.
+		if a.authorityRefusal != nil {
+			return a.authorityRefusal
+		}
+		answer, err := a.answerAuthority(question)
+		if err != nil {
+			return err
+		}
+		return stream.SendMsg(answer)
+	}
 	// The host's own message-level rule: a binding, and exactly one of the two
 	// authority arms. Stated here so a client that sent both, or neither, is
 	// caught by the fake the way the real surface would catch it.
@@ -572,4 +597,127 @@ func (h host) assertNoStrayPaths(t *testing.T) {
 	if _, stray, _, _ := h.gateway.snapshot(); len(stray) != 0 {
 		t.Fatalf("the client sent non-broker paths to the gateway: %v", stray)
 	}
+}
+
+// authorityState is the live authority the fake host answers a verifier's
+// questions from — the issuer's side of
+// ModuleCapabilitiesService/ResolveWorkContextAuthority as
+// module-saas-starter serves it.
+//
+// It is a fake of the ANSWERS and never of the client's translation: every
+// state the wire can carry is settable, including the UNSPECIFIED a host that
+// said nothing would send, so the client's refusals are exercised rather than
+// assumed.
+type authorityState struct {
+	sealState            v1.WorkContextSealState
+	installationRevision uint64
+	// installationID overrides the installation the answer is ABOUT, so a
+	// client that fails to notice an answer about something else is caught.
+	installationID string
+	principalState v1.WorkContextPrincipalState
+	epoch          uint64
+	principalID    string
+	buildState     v1.WorkContextApprovedBuildState
+	imageDigest    string
+	incarnation    uint64
+	bindingState   v1.WorkContextOperationBindingState
+	binding        *v1.WorkContextOperationBindingAnswer
+	revision       uint64
+	ownerPrincipal string
+	grantState     v1.WorkContextApprovalGrantState
+	emptyAnswer    bool
+	mismatchedArm  bool
+}
+
+// answerAuthority renders one answer for one question.
+func (a *fakeAuthority) answerAuthority(
+	question *v1.ModuleResolveWorkContextAuthorityRequest,
+) (*v1.ModuleResolveWorkContextAuthorityResponse, error) {
+	if question == nil {
+		return nil, status.Error(codes.InvalidArgument, "no question")
+	}
+	state := a.authority
+	if state.emptyAnswer {
+		return &v1.ModuleResolveWorkContextAuthorityResponse{}, nil
+	}
+	if state.mismatchedArm {
+		// A host answering a different question than the one asked. The client
+		// must refuse rather than read it.
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_AuthorizationRevision{
+				AuthorizationRevision: &v1.WorkContextAuthorizationRevisionAnswer{Revision: 1},
+			},
+		}, nil
+	}
+	switch asked := question.GetQuestion().(type) {
+	case *v1.ModuleResolveWorkContextAuthorityRequest_Seal:
+		installation := asked.Seal.GetInstallationId()
+		if state.installationID != "" {
+			installation = state.installationID
+		}
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_Seal{
+				Seal: &v1.WorkContextSealAnswer{
+					State: state.sealState, InstallationId: installation,
+					InstallationRevision: state.installationRevision,
+				},
+			},
+		}, nil
+	case *v1.ModuleResolveWorkContextAuthorityRequest_PrincipalEpoch:
+		principal := asked.PrincipalEpoch.GetPrincipalId()
+		if state.principalID != "" {
+			principal = state.principalID
+		}
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_PrincipalEpoch{
+				PrincipalEpoch: &v1.WorkContextPrincipalEpochAnswer{
+					State: state.principalState, PrincipalId: principal, Epoch: state.epoch,
+				},
+			},
+		}, nil
+	case *v1.ModuleResolveWorkContextAuthorityRequest_ApprovedBuild:
+		principal := asked.ApprovedBuild.GetPrincipalId()
+		if state.principalID != "" {
+			principal = state.principalID
+		}
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_ApprovedBuild{
+				ApprovedBuild: &v1.WorkContextApprovedBuildAnswer{
+					State: state.buildState, PrincipalId: principal,
+					ImageDigest: state.imageDigest, BuildIncarnation: state.incarnation,
+				},
+			},
+		}, nil
+	case *v1.ModuleResolveWorkContextAuthorityRequest_OperationBinding:
+		answer := state.binding
+		if answer == nil {
+			answer = &v1.WorkContextOperationBindingAnswer{
+				State: state.bindingState, BindingId: asked.OperationBinding.GetBindingId(),
+			}
+		}
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_OperationBinding{OperationBinding: answer},
+		}, nil
+	case *v1.ModuleResolveWorkContextAuthorityRequest_AuthorizationRevision:
+		owner := asked.AuthorizationRevision.GetOwnerPrincipalId()
+		if state.ownerPrincipal != "" {
+			owner = state.ownerPrincipal
+		}
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_AuthorizationRevision{
+				AuthorizationRevision: &v1.WorkContextAuthorizationRevisionAnswer{
+					OwnerPrincipalId: owner, Revision: state.revision,
+				},
+			},
+		}, nil
+	case *v1.ModuleResolveWorkContextAuthorityRequest_ApprovalGrant:
+		return &v1.ModuleResolveWorkContextAuthorityResponse{
+			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_ApprovalGrant{
+				ApprovalGrant: &v1.WorkContextApprovalGrantAnswer{
+					State: state.grantState, GrantId: asked.ApprovalGrant.GetGrantId(),
+				},
+			},
+		}, nil
+	}
+	return nil, status.Error(codes.InvalidArgument, "unknown question")
 }

@@ -4,6 +4,38 @@
 
 ### Added
 
+- **`moduleauthority.WorkContextSources`**, the three live-authority sources a
+  callee's verifier needs, over
+  `ModuleCapabilitiesService/ResolveWorkContextAuthority`
+  (module-saas-starter#1107). A composed module that receives a Work Context
+  could previously only run core's forwarding-hop `Inspector` — no seal, no
+  epoch, no revision, nothing consumed — so a capability whose installation was
+  revoked, whose build was replaced, whose binding was withdrawn or whose
+  principal's epoch had moved stayed accepted for its whole life. These
+  implement `corework.SealSource`, `corework.RevisionSource` and
+  `corework.GrantSource`, so a consumer hands one value to
+  `sdk-go/workcontext`'s `NewVerifier` as all three and brings its own replay
+  store (durable and shared when it runs more than one replica).
+
+  This module still **verifies nothing**: it holds no key, reads no signature
+  and decides nothing about a capability. A source is a client of the ISSUER's
+  live state, which is this SDK's job; verification stays in
+  `sdk-go/workcontext`.
+
+  `WorkContextSources` is built per presented capability and takes exactly one
+  required field, the capability itself — the host authenticates it, requires it
+  to be addressed to the calling module and to its tenant, and answers only
+  about the identifiers it names, so there is no tenant, audience or owner for a
+  caller to supply or get wrong. Answers are translated and never interpreted: a
+  state this client does not understand, an answer on another arm, and an answer
+  about another principal, installation or binding are each
+  `ErrUnreadableAuthorityAnswer`. Positive answers are cached for at most
+  `AuthorityCacheBound` (2s, a ceiling rather than a default, because a cached
+  answer delays a revocation by exactly that long); refusals are never cached.
+  A host refusal arrives with its connect code, which is how a caller tells
+  `CodeFailedPrecondition` ("the issuer decided; mint again") from
+  `CodeUnavailable` ("the lookup failed; retry").
+
 - **`moduleauthority.WorkloadTokenFile()`**, the one answer to "where is this
   module's projected token": the file `CODEFLY__WORKLOAD_TOKEN_FILE` names
   when it is set to a non-blank value, and the pod mount
@@ -19,6 +51,37 @@
   `workload-identity`; a `workload-identity` service receives its path as
   `TOKEN_FILE` in its `workload-identity` configuration and passes
   `ProjectedTokenFile(path)` itself.
+
+### Changed
+
+- **`gen/` moves from module-saas-starter v0.0.94 to `9ab36e7e`** (the merge
+  commit of #1119 on `main`), which is where `ResolveWorkContextAuthority`
+  first exists. It carries every accounts contract change made since v0.0.94 —
+  `datasource`, `installations`, `api_keys`, `module_registration` and
+  `work_contexts` all move — and those changes are the host's, not this SDK's.
+
+- **`moduleauthority.ErrNoHostStateToMintFor`**, for HTTP **412** on the module
+  Work Context and operation-context mints. The gateway at this ref relays
+  accounts' `FailedPrecondition` as 412, where v0.0.94 relayed it as a 502 — so
+  a workload the host admits that is installed in no organization it may mint
+  for used to read as "the host is broken" and now reads as "the host works and
+  there is nothing to mint for you yet". Nothing is wrong with the credential
+  and nothing is denied; a mint succeeds once the module is installed. Found by
+  `conformance/hostgateway` against the new ref, which is what that suite is
+  for. The source mint's own 412 keeps its own meaning
+  (`ErrDelegationMissing`).
+
+### Removed (breaking)
+
+- **`SessionId` is gone from three Work Context mint requests**, with their
+  `GetSessionId()` accessors: `StartTaskWorkContextRequest`,
+  `StartChildSessionWorkContextRequest` and `StartInstallationTaskRequest`. The
+  host stopped accepting a caller-named session — every session a capability
+  carries is now the one its caller authenticated with, or a fresh one the
+  issuer assigns and returns — so there is no replacement field and nothing to
+  set. A consumer that set one was naming a session it did not own; it drops the
+  assignment. These are the only exported symbols the regeneration removed:
+  nothing else in `gen/` lost a type, a field or an RPC.
 
 ## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 

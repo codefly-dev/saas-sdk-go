@@ -119,8 +119,19 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body any,
 }
 
 // brokerRefusal types the statuses the mints share: 401 is an unproven
-// module, 403 a proven one refused, 503 a host that could not establish what
-// this pod is running. Anything else stays a bare *BrokerError.
+// module, 403 a proven one refused, 412 a proven one the host holds no state to
+// mint for, 503 a host that could not establish what this pod is running.
+// Anything else stays a bare *BrokerError.
+//
+// 412 arrived with the host ref this SDK is generated from. The gateway used to
+// relay accounts' FailedPrecondition on the module Work Context mint as a 502,
+// which reads as "the host is broken"; it now relays it as 412, which reads as
+// "the host works and there is nothing to mint for you yet" — a workload that
+// is admitted and installed nowhere. The two want different handling, which is
+// why the distinction exists and why this is not a bare *BrokerError.
+//
+// The source mint's own 412 keeps its own meaning (ErrDelegationMissing), which
+// is why that path types its statuses itself rather than through here.
 func brokerRefusal(err error) error {
 	var be *BrokerError
 	if !errors.As(err, &be) {
@@ -131,6 +142,8 @@ func brokerRefusal(err error) error {
 		return fmt.Errorf("%w: %w", ErrInvalidCredentials, err)
 	case http.StatusForbidden:
 		return fmt.Errorf("%w: %w", ErrPermissionDenied, err)
+	case http.StatusPreconditionFailed:
+		return fmt.Errorf("%w: %w", ErrNoHostStateToMintFor, err)
 	case http.StatusServiceUnavailable:
 		return fmt.Errorf("%w: %w", ErrExecutionUnestablished, err)
 	}

@@ -549,7 +549,7 @@ func TestSDKConformanceRefusals(t *testing.T) {
 		{"work execution unestablished", mintWork, refusal(codes.Unavailable, ""), 503, moduleauthority.ErrExecutionUnestablished},
 		{"work invalid request", mintWork, refusal(codes.InvalidArgument, ""), 400, nil},
 		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 502, nil},
-		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 502, nil},
+		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 412, moduleauthority.ErrNoHostStateToMintFor},
 
 		{"operation unproven", mintOperation, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
 		// The same organization refusal is a 403 on the operation mint.
