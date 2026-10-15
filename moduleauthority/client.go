@@ -80,9 +80,9 @@ var (
 	ErrNoAuthority = errors.New("module authority: this client has no authority endpoint")
 )
 
-// Gateway is the host gateway seam: its REST base URL and the HTTP client to
-// reach it with, as the consumer's runtime resolved them. solution-runtime's
-// gateway satisfies it.
+// Gateway is the host workload gateway seam: its HTTP base URL and client,
+// as the consumer's runtime resolved them. A public gateway URL has the same
+// shape but does not serve the module credential exchanges.
 type Gateway interface {
 	BaseURL() string
 	HTTPClient() *http.Client
@@ -92,8 +92,9 @@ type Gateway interface {
 // talks to. Every field is resolved by the consumer from its Codefly
 // composition; nothing has a default.
 type Seams struct {
-	// Gateway is the host auth-gateway's REST endpoint, where the module
-	// broker mints Work Contexts. Required.
+	// Gateway is the host auth-gateway's workload HTTP endpoint, where the
+	// module broker mints Work Contexts. The consumer resolves this endpoint;
+	// the public rest endpoint does not serve these exchanges. Required.
 	Gateway Gateway
 	// Authority is accounts' `authority` gRPC endpoint, which serves the
 	// exchanges and every other Work-Context-authenticated call. A module that

@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
@@ -33,8 +34,8 @@ import (
 //
 //   - fakeGateway is the auth-gateway's module broker
 //     (module/services/auth-gateway/code/gateway_modules.go): the three
-//     POST /modules/_* paths, their perimeter (internal token + projected
-//     ServiceAccount bearer), body validation, status mapping, plain-text refusals and
+//     POST /modules/_* paths on its workload listener, their credentials
+//     (projected ServiceAccount bearer; internal token for operation/source), body validation, status mapping, plain-text refusals and
 //     JSON answers. Every other path answers 404 "endpoint not exposed", as the
 //     real gateway does for every EXPOSURE_INTERNAL procedure — the old bug was
 //     a Connect call to exactly such a path.
@@ -45,20 +46,21 @@ import (
 //
 // fakeGateway is the edge-case double; the contract itself is held by
 // conformance/hostgateway, which mints through the host's REAL gateway
-// handlers at the tag in SOURCE.txt. The fake follows the real gateway's
-// perimeter, prefix rule and check order (internal token, then exactly one
-// Bearer, then body, prefix and binding/source validation, then accounts'
-// verdict). Where it still differs, it differs on purpose:
+// handlers at the ref in SOURCE.txt. The fake follows the real gateway's
+// prefix rule and check order (internal token for operation/source, then
+// exactly one Bearer, body, prefix and binding/source validation, then
+// accounts' verdict). The real protected listener additionally authenticates
+// its waypoint presenter; conformance exercises that listener directly. Where it still differs, it differs on purpose:
 //
 //   - D2: it decodes the body into map[string]string and records every key, so
 //     an extra or misnamed field is visible to an exact-body assertion; the
 //     real gateway decodes into a struct and drops unknown keys silently.
 //   - D5: a test may inject any refusal on any path. The real gateway never
-//     answers 403 (or 412) on /modules/_work-context — accounts'
+//     answers 403 on /modules/_work-context — accounts'
 //     PermissionDenied is a 401 there — so no test here injects one.
-//   - D6: accounts' Unauthenticated and FailedPrecondition on the work-context
-//     mint (a 502 from the real gateway) are not modelled; only injected
-//     statuses are.
+//   - D6: accounts' Unauthenticated (401) and installation-pending
+//     FailedPrecondition (412) on the work-context mint are not modelled;
+//     only injected statuses are.
 //   - D7: it accepts one internal token; the real gateway also accepts the
 //     previous one during rotation.
 //   - D8: refusal bodies are whatever a test injects; the real gateway sends
@@ -199,7 +201,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if r.Header.Get("X-Codefly-Internal-Token") != testInternalToken {
+	if r.URL.Path != hostWorkContextPath && r.Header.Get("X-Codefly-Internal-Token") != testInternalToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -338,6 +340,7 @@ type authorityCall struct {
 	// the capability travelled with it and that the identifiers are the
 	// capability's own.
 	authorityQuestion *v1.ModuleResolveWorkContextAuthorityRequest
+	journal           *v1.ModuleReadJournalRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
@@ -354,6 +357,8 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:                         true,
 	accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:        true,
+	// ReadJournal follows the exact host ref recorded in SOURCE.txt.
+	accountsv1connect.ModuleCapabilitiesServiceReadJournalProcedure: true,
 }
 
 type fakeAuthority struct {
@@ -368,6 +373,21 @@ type fakeAuthority struct {
 	authorityRefusal error
 	// authority is the live state this host answers, by question kind.
 	authority authorityState
+	// journal is what the fake host has committed, in order. A test sets it
+	// before a call; the fake serves it the way the contract states.
+	journal []*v1.ModuleJournalEntry
+	// journalNext, when set, overrides next_after, to model a host that holds
+	// the resume point back of the last entry it returned.
+	journalNext *string
+	// machinery records, by event id, which entries are the host's delivery
+	// machinery: the value is the binding id the mint or exchange was for, or
+	// moduleMintMarker for the caller's own module work-context mint. The fake
+	// sets delivery_machinery on an entry only when the request names that
+	// binding, as the contract states.
+	machinery map[string]string
+	// crossTenant is whether the fake host treats this caller as a cross-tenant
+	// module principal. ReadJournal is refused to any other.
+	crossTenant bool
 
 	mu    sync.Mutex
 	calls []authorityCall
@@ -375,7 +395,7 @@ type fakeAuthority struct {
 
 func newFakeAuthority(t *testing.T, gateway *fakeGateway, creds credentials.TransportCredentials) *fakeAuthority {
 	t.Helper()
-	a := &fakeAuthority{gateway: gateway}
+	a := &fakeAuthority{gateway: gateway, crossTenant: true}
 	options := []grpc.ServerOption{grpc.UnknownServiceHandler(a.handle)}
 	if creds != nil {
 		options = append(options, grpc.Creds(creds))
@@ -424,6 +444,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	case accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:
 		call.authorityQuestion = &v1.ModuleResolveWorkContextAuthorityRequest{}
 		recvErr = stream.RecvMsg(call.authorityQuestion)
+	case accountsv1connect.ModuleCapabilitiesServiceReadJournalProcedure:
+		call.journal = &v1.ModuleReadJournalRequest{}
+		recvErr = stream.RecvMsg(call.journal)
 	default:
 		recvErr = stream.RecvMsg(request)
 		call.request = request
@@ -447,6 +470,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	}
 	if !a.gateway.accepts(call.workContext[0]) {
 		return status.Error(codes.Unauthenticated, "module work context is not a valid capability")
+	}
+	if j := call.journal; j != nil {
+		return a.serveJournal(stream, j)
 	}
 	if call.declaration != nil {
 		if a.declarationError != nil {
@@ -550,6 +576,60 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 		return stream.SendMsg(&v1.IssuedWorkContext{Token: corework.FixtureForeignToken()})
 	}
 	return stream.SendMsg(&v1.IssuedWorkContext{Token: sealedToken("child.token")})
+}
+
+// moduleMintMarker marks, in fakeAuthority.machinery, the caller's own module
+// work-context mint: delivery machinery whatever bindings the read names.
+const moduleMintMarker = "<module work-context mint>"
+
+// serveJournal answers ReadJournal as the wire contract states it: refused to a
+// caller that is not a cross-tenant module principal, entries after the opaque
+// position `after` of the requested types, at most limit of them (zero meaning
+// 100), the host's delivery_machinery mark, and a resume point. The fake knows
+// what its positions mean; a client must not.
+func (a *fakeAuthority) serveJournal(stream grpc.ServerStream, req *v1.ModuleReadJournalRequest) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.crossTenant {
+		return status.Error(codes.PermissionDenied, "journal is served to cross-tenant module principals only")
+	}
+	if req.GetLimit() < 0 || req.GetLimit() > 500 || len(req.GetTypes()) == 0 {
+		return status.Error(codes.InvalidArgument, "limit 0..500 and at least one type required")
+	}
+	start := 0
+	if after := req.GetAfter(); after != "" && after != JournalStart {
+		start = -1
+		for i, e := range a.journal {
+			if e.GetPosition() == after {
+				start = i + 1
+			}
+		}
+		if start < 0 {
+			return status.Error(codes.InvalidArgument, "after is not a position of this journal")
+		}
+	}
+	limit := int(req.GetLimit())
+	if limit == 0 {
+		limit = 100
+	}
+	out := &v1.ModuleReadJournalResponse{NextAfter: req.GetAfter()}
+	for _, e := range a.journal[start:] {
+		if !slices.Contains(req.GetTypes(), e.GetType()) {
+			continue
+		}
+		if len(out.Entries) == limit {
+			break
+		}
+		served := proto.Clone(e).(*v1.ModuleJournalEntry)
+		binding, recorded := a.machinery[e.GetEventId()]
+		served.DeliveryMachinery = recorded && (binding == moduleMintMarker || slices.Contains(req.GetDeliveryBindings(), binding))
+		out.Entries = append(out.Entries, served)
+		out.NextAfter = e.GetPosition()
+	}
+	if a.journalNext != nil {
+		out.NextAfter = *a.journalNext
+	}
+	return stream.SendMsg(out)
 }
 
 func (a *fakeAuthority) snapshot() []authorityCall {

@@ -52,13 +52,39 @@
   `TOKEN_FILE` in its `workload-identity` configuration and passes
   `ProjectedTokenFile(path)` itself.
 
+- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
+  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
+  module, through the same credentials and refresh-once rule as every authority
+  call. The host serves it only to a cross-tenant module principal; any other
+  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
+  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
+  `JournalPage.NextAfter` is the resume point the host guarantees misses no
+  committed entry and never passes an unfinished transaction, so a reader
+  resumes from it rather than from the last `Position` it saw, and only stores
+  and compares positions for equality.
+- `JournalStart` (`"start"`) is the position that means "before the oldest
+  retained entry": the host accepts it as `after`, and as the `from` of its
+  delivery operation, and never returns it as an entry's position. A reader with
+  no position of its own starts from it.
+- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
+  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
+  entries that record one of them, or the caller's own module work-context mint,
+  so a reader that delivers journal entries can tell a page of its own delivery
+  from a page of real activity. A limit outside 0..500 (0 is the host's default of
+  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
+  any call.
+- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
+  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
+  `ModuleReadJournalResponse`; `DeliverAuditEventsResponse.From` and `To`
+  carry the exact committed receipt interval for retention coverage checks.
+
 ### Changed
 
-- **`gen/` moves from module-saas-starter v0.0.94 to `9ab36e7e`** (the merge
-  commit of #1119 on `main`), which is where `ResolveWorkContextAuthority`
-  first exists. It carries every accounts contract change made since v0.0.94 —
-  `datasource`, `installations`, `api_keys`, `module_registration` and
-  `work_contexts` all move — and those changes are the host's, not this SDK's.
+- **`gen/` extends the module-saas-starter `9ab36e7e` snapshot in SDK v0.1.3**
+  with the complete host-owned journal and delivery contract. The generated
+  schema carries `ResolveWorkContextAuthority` alongside `ReadJournal`;
+  `SOURCE.txt` identifies the exact development source and the registry
+  removals are listed below.
 
 - **`moduleauthority.ErrNoHostStateToMintFor`**, for HTTP **412** on the module
   Work Context and operation-context mints. The gateway at this ref relays
@@ -80,8 +106,37 @@
   carries is now the one its caller authenticated with, or a fresh one the
   issuer assigns and returns — so there is no replacement field and nothing to
   set. A consumer that set one was naming a session it did not own; it drops the
-  assignment. These are the only exported symbols the regeneration removed:
-  nothing else in `gen/` lost a type, a field or an RPC.
+  assignment.
+
+- The current host-owned schema also removes
+  `ModuleMintWorkContextRequest.Upstream` and `Manifest` (and their getters),
+  `SolutionFrontendBinding.ContractVersion` (and `GetContractVersion`),
+  `SolutionRegistration.Backend` (and `GetBackend`), the entire
+  `SolutionBackendBinding` message, and
+  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_INCOMPATIBLE`.
+  [Host main #1120](https://github.com/codefly-dev/module-saas-starter/pull/1120)
+  resolves addresses and frontend metadata from applied presence instead of
+  accepting process-reported backend/frontend halves.
+  The SDK's hand-written facades consume none of these removed symbols.
+
+### Conformance
+
+- Follow [host #1120](https://github.com/codefly-dev/module-saas-starter/pull/1120)
+  by exercising module mints on the workload listener. The work mint uses the
+  projected credential; operation/source mints retain their internal-token
+  checks. Conformance also checks the protected presenter assertion, rejection
+  of missing/forged assertions, and refusal on the public listener. Consumers
+  must resolve the workload endpoint as the `Gateway` seam.
+
+### Generated contract
+
+- Regenerated the complete host-owned schema from
+  `module-saas-starter@b640a5fc51ab1f4fc83d144bbf1eeddd7637c0dc` (PR #1106, module package
+  0.1.1) with the pinned buf 1.73.0 and plugins. `SOURCE.txt` records that
+  exact development source; the generated tree no longer mixes a release
+  snapshot with an unrecorded contract. This also carries the host's current
+  delivery/recovery, installation and datasource contracts. The SDK release
+  remains ordered after the host release.
 
 ## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 
