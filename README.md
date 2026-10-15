@@ -305,8 +305,8 @@ The SDK surfaces are:
   It talks to the two seams the host serves a composed module, and takes both
   explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
 
-  - the **gateway's module broker** (REST on the auth-gateway's `rest`
-    endpoint): `POST /modules/_work-context`, `/modules/_operation-context`
+  - the **gateway's module broker** (HTTP on the auth-gateway's `workload`
+    endpoint, API `http`): `POST /modules/_work-context`, `/modules/_operation-context`
     and `/modules/_source-operation-context`, where the module presents its
     pod's projected ServiceAccount token (audience `accounts`) as the bearer;
     the host reviews it and mints only for the principal's declared workload
@@ -318,7 +318,7 @@ The SDK surfaces are:
 
   ```go
   authority, err := moduleauthority.New(moduleauthority.Seams{
-      Gateway:       gw,                                   // BaseURL() + HTTPClient()
+      Gateway:       workloadGateway,                      // resolved workload endpoint + HTTPClient()
       Authority:     moduleauthority.Authority{Address: authorityHostPort}, // TLS: nil = h2c
       InternalToken: internalToken,
       // Only from the consumer's own configured assertion that every

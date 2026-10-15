@@ -144,37 +144,6 @@ shipped.
   `TOKEN_FILE` in its `workload-identity` configuration and passes
   `ProjectedTokenFile(path)` itself.
 
-### Changed
-
-- **`gen/` moves from module-saas-starter v0.0.94 to `9ab36e7e`** (the merge
-  commit of #1119 on `main`), which is where `ResolveWorkContextAuthority`
-  first exists. It carries every accounts contract change made since v0.0.94 —
-  `datasource`, `installations`, `api_keys`, `module_registration` and
-  `work_contexts` all move — and those changes are the host's, not this SDK's.
-
-- **`moduleauthority.ErrNoHostStateToMintFor`**, for HTTP **412** on the module
-  Work Context and operation-context mints. The gateway at this ref relays
-  accounts' `FailedPrecondition` as 412, where v0.0.94 relayed it as a 502 — so
-  a workload the host admits that is installed in no organization it may mint
-  for used to read as "the host is broken" and now reads as "the host works and
-  there is nothing to mint for you yet". Nothing is wrong with the credential
-  and nothing is denied; a mint succeeds once the module is installed. Found by
-  `conformance/hostgateway` against the new ref, which is what that suite is
-  for. The source mint's own 412 keeps its own meaning
-  (`ErrDelegationMissing`).
-
-### Removed (breaking)
-
-- **`SessionId` is gone from three Work Context mint requests**, with their
-  `GetSessionId()` accessors: `StartTaskWorkContextRequest`,
-  `StartChildSessionWorkContextRequest` and `StartInstallationTaskRequest`. The
-  host stopped accepting a caller-named session — every session a capability
-  carries is now the one its caller authenticated with, or a fresh one the
-  issuer assigns and returns — so there is no replacement field and nothing to
-  set. A consumer that set one was naming a session it did not own; it drops the
-  assignment. These are the only exported symbols the regeneration removed:
-  nothing else in `gen/` lost a type, a field or an RPC.
-
 - `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
   calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
   module, through the same credentials and refresh-once rule as every authority
@@ -198,19 +167,63 @@ shipped.
   any call.
 - Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
   `ModuleReadJournalRequest`, `ModuleJournalEntry` and
-  `ModuleReadJournalResponse`.
+  `ModuleReadJournalResponse`; `DeliverAuditEventsResponse.From` and `To`
+  carry the exact committed receipt interval for retention coverage checks.
+
+### Changed
+
+- **`gen/` extends the module-saas-starter `9ab36e7e` snapshot in SDK v0.1.3**
+  with the complete host-owned journal and delivery contract. The generated
+  schema carries `ResolveWorkContextAuthority` alongside `ReadJournal`;
+  `SOURCE.txt` identifies the exact development source and the registry
+  removals are listed below.
+
+- **`moduleauthority.ErrNoHostStateToMintFor`**, for HTTP **412** on the module
+  Work Context and operation-context mints. The gateway at this ref relays
+  accounts' `FailedPrecondition` as 412, where v0.0.94 relayed it as a 502 — so
+  a workload the host admits that is installed in no organization it may mint
+  for used to read as "the host is broken" and now reads as "the host works and
+  there is nothing to mint for you yet". Nothing is wrong with the credential
+  and nothing is denied; a mint succeeds once the module is installed. Found by
+  `conformance/hostgateway` against the new ref, which is what that suite is
+  for. The source mint's own 412 keeps its own meaning
+  (`ErrDelegationMissing`).
+
+### Removed (breaking)
+
+- **`SessionId` is gone from three Work Context mint requests**, with their
+  `GetSessionId()` accessors: `StartTaskWorkContextRequest`,
+  `StartChildSessionWorkContextRequest` and `StartInstallationTaskRequest`. The
+  host stopped accepting a caller-named session — every session a capability
+  carries is now the one its caller authenticated with, or a fresh one the
+  issuer assigns and returns — so there is no replacement field and nothing to
+  set. A consumer that set one was naming a session it did not own; it drops the
+  assignment.
+
+- The current host-owned schema also removes
+  `ModuleMintWorkContextRequest.Upstream` and `Manifest` (and their getters),
+  `SolutionFrontendBinding.ContractVersion` (and `GetContractVersion`),
+  `SolutionRegistration.Backend` (and `GetBackend`), the entire
+  `SolutionBackendBinding` message, and
+  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_INCOMPATIBLE`.
+  [Host main #1120](https://github.com/codefly-dev/module-saas-starter/pull/1120)
+  resolves addresses and frontend metadata from applied presence instead of
+  accepting process-reported backend/frontend halves.
+  The SDK's hand-written facades consume none of these removed symbols.
 
 ### Conformance
 
-- The real host gateway in module-saas-starter commit `4217037f` (#1104)
-  now returns HTTP 412 for a Work Context mint while installation is pending.
-  The conformance expectation and fake documentation follow that contract;
-  the client already preserves the status as a BrokerError.
+- Follow [host #1120](https://github.com/codefly-dev/module-saas-starter/pull/1120)
+  by exercising module mints on the workload listener. The work mint uses the
+  projected credential; operation/source mints retain their internal-token
+  checks. Conformance also checks the protected presenter assertion, rejection
+  of missing/forged assertions, and refusal on the public listener. Consumers
+  must resolve the workload endpoint as the `Gateway` seam.
 
 ### Generated contract
 
 - Regenerated the complete host-owned schema from
-  `module-saas-starter@b4008ddd8e38789bf96c1af3ce84c26f0b434ef7` (PR #1106, module package
+  `module-saas-starter@b640a5fc51ab1f4fc83d144bbf1eeddd7637c0dc` (PR #1106, module package
   0.1.1) with the pinned buf 1.73.0 and plugins. `SOURCE.txt` records that
   exact development source; the generated tree no longer mixes a release
   snapshot with an unrecorded contract. This also carries the host's current
