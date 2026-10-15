@@ -26,6 +26,7 @@ expected=(
 	TestSDKConformanceThreeMints
 	TestSDKConformanceTokenBound
 	TestSDKConformanceWrongInternalToken
+	TestSDKConformanceWorkloadPresenter
 )
 
 # The modules whose version changes what the gateway under test does. Any

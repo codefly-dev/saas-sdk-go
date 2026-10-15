@@ -34,8 +34,8 @@ import (
 //
 //   - fakeGateway is the auth-gateway's module broker
 //     (module/services/auth-gateway/code/gateway_modules.go): the three
-//     POST /modules/_* paths, their perimeter (internal token + projected
-//     ServiceAccount bearer), body validation, status mapping, plain-text refusals and
+//     POST /modules/_* paths on its workload listener, their credentials
+//     (projected ServiceAccount bearer; internal token for operation/source), body validation, status mapping, plain-text refusals and
 //     JSON answers. Every other path answers 404 "endpoint not exposed", as the
 //     real gateway does for every EXPOSURE_INTERNAL procedure — the old bug was
 //     a Connect call to exactly such a path.
@@ -47,9 +47,10 @@ import (
 // fakeGateway is the edge-case double; the contract itself is held by
 // conformance/hostgateway, which mints through the host's REAL gateway
 // handlers at the ref in SOURCE.txt. The fake follows the real gateway's
-// perimeter, prefix rule and check order (internal token, then exactly one
-// Bearer, then body, prefix and binding/source validation, then accounts'
-// verdict). Where it still differs, it differs on purpose:
+// prefix rule and check order (internal token for operation/source, then
+// exactly one Bearer, body, prefix and binding/source validation, then
+// accounts' verdict). The real protected listener additionally authenticates
+// its waypoint presenter; conformance exercises that listener directly. Where it still differs, it differs on purpose:
 //
 //   - D2: it decodes the body into map[string]string and records every key, so
 //     an extra or misnamed field is visible to an exact-body assertion; the
@@ -57,7 +58,7 @@ import (
 //   - D5: a test may inject any refusal on any path. The real gateway never
 //     answers 403 on /modules/_work-context — accounts'
 //     PermissionDenied is a 401 there — so no test here injects one.
-//   - D6: accounts' Unauthenticated (502) and installation-pending
+//   - D6: accounts' Unauthenticated (401) and installation-pending
 //     FailedPrecondition (412) on the work-context mint are not modelled;
 //     only injected statuses are.
 //   - D7: it accepts one internal token; the real gateway also accepts the
@@ -200,7 +201,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if r.Header.Get("X-Codefly-Internal-Token") != testInternalToken {
+	if r.URL.Path != hostWorkContextPath && r.Header.Get("X-Codefly-Internal-Token") != testInternalToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -339,7 +340,7 @@ type authorityCall struct {
 	// the capability travelled with it and that the identifiers are the
 	// capability's own.
 	authorityQuestion *v1.ModuleResolveWorkContextAuthorityRequest
-	journal        *v1.ModuleReadJournalRequest
+	journal           *v1.ModuleReadJournalRequest
 }
 
 // servedOnAuthority is the slice of business.ModuleAuthorityProcedures this
@@ -356,9 +357,7 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceNotifyOrgAdminsProcedure:                    true,
 	accountsv1connect.ModuleCapabilitiesServiceNotifyUserProcedure:                         true,
 	accountsv1connect.ModuleCapabilitiesServiceResolveWorkContextAuthorityProcedure:        true,
-	// ReadJournal is not in the v0.0.94 host: it is the wire contract the next
-	// host ref serves (see SOURCE.txt), faked here as that contract
-	// states it.
+	// ReadJournal follows the exact host ref recorded in SOURCE.txt.
 	accountsv1connect.ModuleCapabilitiesServiceReadJournalProcedure: true,
 }
 
