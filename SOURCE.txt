@@ -1,4 +1,4 @@
-gen/ generated from codefly-dev/module-saas-starter@9ab36e7efff8cfd15d48f319dfa540e52c630725
+gen/ generated from codefly-dev/module-saas-starter@62a7a3927e0b0a56fd0e0a1a0a2ff9f3dbb2e8b6 (branch fix/a-modules-own-binding-is-not-a-source-delegation)
 (accounts public proto: module/services/accounts/proto)
 (auth gateway: module/services/auth-gateway/code)
 
