@@ -1,14 +1,13 @@
-gen/ generated from codefly-dev/module-saas-starter@9ab36e7efff8cfd15d48f319dfa540e52c630725
+gen/ generated from codefly-dev/module-saas-starter@f9321b94d91eb91252e7611d571d5bf99cca370a
 (accounts public proto: module/services/accounts/proto)
 (auth gateway: module/services/auth-gateway/code)
 
 module version: 0.1.0 (module/module.package.codefly.yaml)
 This SDK's release is matched to the saas-starter module version above.
 
-Released upstream tag: none — this is the merge commit of
-codefly-dev/module-saas-starter#1119 on `main`, which is where
-ResolveWorkContextAuthority first exists. A commit is a ref this repository's
-gen-drift job resolves, so the SDK does not wait on a deploy tag to carry a
-contract its consumers need; the next regeneration moves to whichever tag
-overtakes it.
+Released upstream tag: none — this is the exact development head of
+codefly-dev/module-saas-starter#1195. It adds the policy-scoped current
+installation source observation. The candidate is not a released host contract.
+The gen-drift and host-gateway-conformance jobs resolve this exact commit;
+the next regeneration moves to whichever accepted release overtakes it.
 Regeneration does not publish an SDK release.

@@ -4,6 +4,13 @@
 
 ### Added
 
+- **`moduleauthority.Client.ListExecutableArtifactSources`** observes one
+  effective executable-artifact policy's complete source set for one exact
+  current installation. It preserves the independent parent and module proofs,
+  checks the returned installation/policy association and bounded set, and
+  creates no approval or activation. Callers explicitly select/check a source
+  and compare the returned tenant with their independently verified tenant.
+
 - **`moduleauthority.WorkContextSources`**, the three live-authority sources a
   callee's verifier needs, over
   `ModuleCapabilitiesService/ResolveWorkContextAuthority`
@@ -54,11 +61,12 @@
 
 ### Changed
 
-- **`gen/` moves from module-saas-starter v0.0.94 to `9ab36e7e`** (the merge
-  commit of #1119 on `main`), which is where `ResolveWorkContextAuthority`
-  first exists. It carries every accounts contract change made since v0.0.94 —
-  `datasource`, `installations`, `api_keys`, `module_registration` and
-  `work_contexts` all move — and those changes are the host's, not this SDK's.
+- **`gen/` moves from module-saas-starter v0.0.94 through `9ab36e7e` to
+  `f9321b94`**, the exact development head of #1195. It carries every accounts
+  contract change across those refs, including datasource/installations,
+  delivered solution presence, and the module source-policy observation.
+  `ResolveWorkContextAuthority` first appeared at the intermediate #1119 merge.
+  These are host contract changes, not a host release or SDK publication.
 
 - **`moduleauthority.ErrNoHostStateToMintFor`**, for HTTP **412** on the module
   Work Context and operation-context mints. The gateway at this ref relays
@@ -80,8 +88,19 @@
   carries is now the one its caller authenticated with, or a fresh one the
   issuer assigns and returns — so there is no replacement field and nothing to
   set. A consumer that set one was naming a session it did not own; it drops the
-  assignment. These are the only exported symbols the regeneration removed:
-  nothing else in `gen/` lost a type, a field or an RPC.
+  assignment.
+
+- **`ModuleMintWorkContextRequest.Upstream` / `Manifest` and their getters**
+  are removed. Work-context renewal no longer publishes delivery or frontend
+  presence; the host's applied delivery contracts own that lifecycle.
+
+- **`SolutionBackendBinding`** and its `Revision`, `ServiceAlias`, `Upstream`
+  and `ContractVersion` fields/getters are removed, together with
+  **`SolutionRegistration.Backend` / `GetBackend`** and
+  **`SolutionFrontendBinding.ContractVersion` / `GetContractVersion`**.
+  Consumers migrate to the host's delivered binding/target registration and
+  frontend-generation contracts; there is no SDK compatibility shim for the
+  removed mutable backend registration.
 
 ## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 

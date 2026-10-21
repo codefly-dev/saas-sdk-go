@@ -321,19 +321,20 @@ func (g *fakeGateway) snapshot() (calls, stray []string, bodies map[string][]map
 
 // authorityCall is one call the fake authority endpoint received.
 type authorityCall struct {
-	declaration    *v1.ModuleDeclareAuditEventTypesRequest
-	moduleSecret   []string
-	audit          *v1.ModuleEmitAuditEventRequest
-	installation   *v1.ModuleCurrentInstallationRequest
-	authorization  []string
-	artifact       *v1.ModuleExecutableArtifactRequest
-	revokeArtifact *v1.ModuleRevokeExecutableArtifactRequest
-	method         string
-	internalToken  []string
-	workContext    []string
-	request        *v1.ModuleExchangeDelegatedOperationAudienceRequest
-	notice         *v1.ModuleNotifyOrgAdminsRequest
-	userNotice     *v1.ModuleNotifyUserRequest
+	declaration     *v1.ModuleDeclareAuditEventTypesRequest
+	moduleSecret    []string
+	audit           *v1.ModuleEmitAuditEventRequest
+	installation    *v1.ModuleCurrentInstallationRequest
+	artifactSources *v1.ModuleExecutableArtifactSourcesRequest
+	authorization   []string
+	artifact        *v1.ModuleExecutableArtifactRequest
+	revokeArtifact  *v1.ModuleRevokeExecutableArtifactRequest
+	method          string
+	internalToken   []string
+	workContext     []string
+	request         *v1.ModuleExchangeDelegatedOperationAudienceRequest
+	notice          *v1.ModuleNotifyOrgAdminsRequest
+	userNotice      *v1.ModuleNotifyUserRequest
 	// authorityQuestion is one live-authority question, so a test can assert
 	// the capability travelled with it and that the identifiers are the
 	// capability's own.
@@ -346,6 +347,7 @@ var servedOnAuthority = map[string]bool{
 	accountsv1connect.ModuleCapabilitiesServiceDeclareAuditEventTypesProcedure:             true,
 	accountsv1connect.ModuleCapabilitiesServiceEmitAuditEventProcedure:                     true,
 	accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:             true,
+	accountsv1connect.ModuleCapabilitiesServiceListExecutableArtifactSourcesProcedure:      true,
 	accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure:          true,
 	accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:        true,
 	accountsv1connect.ModuleCapabilitiesServiceRevokeExecutableArtifactProcedure:           true,
@@ -366,6 +368,9 @@ type fakeAuthority struct {
 	// authorityRefusal is the host's verdict on a live-authority question,
 	// configured before a call. nil answers the question.
 	authorityRefusal error
+	// Explicit wire answers for the non-mutating source metadata client tests.
+	artifactSourcesResponse *v1.ModuleExecutableArtifactSourcesResponse
+	artifactSourcesRefusal  error
 	// authority is the live state this host answers, by question kind.
 	authority authorityState
 
@@ -409,6 +414,9 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 	case accountsv1connect.ModuleCapabilitiesServiceGetCurrentInstallationProcedure:
 		call.installation = &v1.ModuleCurrentInstallationRequest{}
 		recvErr = stream.RecvMsg(call.installation)
+	case accountsv1connect.ModuleCapabilitiesServiceListExecutableArtifactSourcesProcedure:
+		call.artifactSources = &v1.ModuleExecutableArtifactSourcesRequest{}
+		recvErr = stream.RecvMsg(call.artifactSources)
 	case accountsv1connect.ModuleCapabilitiesServiceApproveExecutableArtifactProcedure, accountsv1connect.ModuleCapabilitiesServiceAuthorizeExecutableArtifactProcedure:
 		call.artifact = &v1.ModuleExecutableArtifactRequest{}
 		recvErr = stream.RecvMsg(call.artifact)
@@ -466,6 +474,18 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 			return status.Error(codes.Internal, "audit commit failed")
 		}
 		return stream.SendMsg(&emptypb.Empty{})
+	}
+	if call.artifactSources != nil {
+		if a.artifactSourcesRefusal != nil {
+			return a.artifactSourcesRefusal
+		}
+		if a.artifactSourcesResponse != nil {
+			return stream.SendMsg(a.artifactSourcesResponse)
+		}
+		return stream.SendMsg(&v1.ModuleExecutableArtifactSourcesResponse{
+			Installation: &v1.ModuleCurrentInstallationResponse{InstallationId: call.artifactSources.InstallationId, TenantId: testTenant, TargetId: testOwner, BindingId: testBindingID},
+			PolicyId:     call.artifactSources.PolicyId, Sources: []string{"example/first", "example/second"},
+		})
 	}
 	if call.installation != nil {
 		if call.installation.ParentWorkContextToken == sealedToken("denied.token") {

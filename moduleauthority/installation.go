@@ -40,7 +40,11 @@ func (c *Client) GetCurrentInstallation(ctx context.Context, req CurrentInstalla
 	if err != nil {
 		return CurrentInstallation{}, fmt.Errorf("module authority: current installation: %w", err)
 	}
-	if out == nil || out.InstallationId != req.InstallationID || !artifactUUID.MatchString(out.TenantId) || !artifactUUID.MatchString(out.TargetId) || strings.TrimSpace(out.BindingId) == "" || !utf8.ValidString(out.BindingId) {
+	return currentInstallation(out, req.InstallationID)
+}
+
+func currentInstallation(out *v1.ModuleCurrentInstallationResponse, installationID string) (CurrentInstallation, error) {
+	if out == nil || out.InstallationId != installationID || !artifactUUID.MatchString(out.TenantId) || !artifactUUID.MatchString(out.TargetId) || strings.TrimSpace(out.BindingId) == "" || !utf8.ValidString(out.BindingId) {
 		return CurrentInstallation{}, ErrInvalidInstallation
 	}
 	return CurrentInstallation{InstallationID: out.InstallationId, TenantID: out.TenantId, TargetID: out.TargetId, BindingID: out.BindingId}, nil

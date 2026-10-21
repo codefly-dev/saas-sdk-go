@@ -539,6 +539,22 @@ or binding is required. It checks current parent authority and delegation,
 authenticated module/audience/tenant alignment, current membership, and exact
 active record identity. A refusal never invokes a bearer-based fallback.
 
+### Sources permitted by an executable-artifact policy
+
+`Client.ListExecutableArtifactSources(ctx, ExecutableArtifactSourcesRequest)`
+reads one effective `PolicyID` for the selected `InstallationID`, with the
+original signed `Parent` and the module's independent authority credential.
+It returns `ExecutableArtifactSources{Installation, PolicyID, Sources}` and
+requires the exact policy/installation association and bounded complete set.
+
+Compare `Installation.TenantID` to the independently verified request tenant.
+Handle zero, one and many sources explicitly; choose or check the intended source
+using the consuming module's syntax and reserved-name rules. No source is
+preferred or exclusively owned. The set is member-visible metadata, not content
+access, publication authority, executable approval or an activation command.
+Later actions must recheck their own authority. A refusal never broadens authority
+or falls back to a viewer bearer.
+
 ### Verifying a Work Context presented to you, at full strength
 
 A module that RECEIVES a Work Context is its callee, and a callee verifies with
