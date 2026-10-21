@@ -141,7 +141,7 @@ func TestMintModuleOperationContextTypesTheBrokerStatuses(t *testing.T) {
 	}
 }
 
-func TestTheBrokerRefusesAWrongPerimeterCredential(t *testing.T) {
+func TestBrokerWorkloadAndOperationCredentialsRemainDistinct(t *testing.T) {
 	h := newHost(t)
 	seams := h.seams()
 	seams.InternalToken = "not-the-perimeter-token"
@@ -149,8 +149,14 @@ func TestTheBrokerRefusesAWrongPerimeterCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("wrong internal token: %v", err)
+	if _, err := client.ModuleWorkContext(t.Context()); err != nil {
+		t.Fatalf("workload mint uses its projected credential: %v", err)
+	}
+	if _, err := client.MintModuleOperationContext(t.Context(), "model"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("operation mint accepted wrong internal token: %v", err)
+	}
+	if _, err := client.MintSourceOperationContext(t.Context(), exampleSource); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("source mint accepted wrong internal token: %v", err)
 	}
 	wrongToken := h.client(t, Credentials{Prefix: testPrefix, Token: staticToken("another-pods-token")})
 	if _, err := wrongToken.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
