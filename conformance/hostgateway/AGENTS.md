@@ -46,7 +46,7 @@ The script fails, rather than passes, when:
   `go.mod` passed with `-modfile`. The host checkout must be at the recorded
   ref and is checked to be unmodified before and after. Nothing of the host is
   copied here.
-- The file binds to four unexported host names, listed at its top. A host
+- The file binds to five unexported host names, listed at its top. A host
   rename breaks the compile — red, never a silent pass. The fix for that
   coupling is an exported harness in the host, not a copy here.
 - Only accounts' three `Mint*` RPCs are faked, on a real gRPC listener, as the
@@ -76,6 +76,21 @@ duplicate, non-Bearer or empty bearer refused before accounts; the 64 KiB
 token bound; and the three gateway answers the fake copies (D1, D3, D4 in
 `moduleauthority/host_fake_test.go`).
 
+A work-context mint's `FailedPrecondition` maps to HTTP 412 (nothing to mint
+against, installation pending among them), which the SDK reads as
+`ErrNoHostStateToMintFor`. This differs from the source mint's 412
+(`ErrDelegationMissing`).
+
+Since host `af5cef9a` (module-saas-starter#1120, in v0.0.103) the three mints
+are served on the gateway's workload endpoint alone and answer 404 on the
+public one, so the harness serves the gateway through the host's own
+`workloadListener`, as a native run's workload server does. A cell wraps that
+listener in a waypoint-authenticated presenter check the SDK never sees, and
+which is not under test here. The same commit dropped the internal token from
+the work-context mint — that endpoint is its perimeter — and relays accounts'
+`Unauthenticated` there as 401 (`ErrInvalidCredentials`), as it already did
+`PermissionDenied`. The two operation mints still hold the internal token.
+
 ## When it goes red
 
 First ask which kind of red it is. Two kinds look alike after a `SOURCE.txt`
@@ -84,7 +99,7 @@ move and need opposite fixes.
 - **The test file does not compile** (`[setup failed]` / `build failed`,
   pointing into `zz_saas_sdk_go_conformance_test.go`). The host changed what
   the file is bound to:
-  - one of the four unexported names;
+  - one of the five unexported names;
   - `newGatewayHarness`'s results;
   - an `accountsv1` request or response field the fake accounts reads or
     answers with.

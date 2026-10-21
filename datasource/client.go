@@ -9,6 +9,7 @@ import (
 
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
+	"github.com/codefly-dev/saas-sdk-go/internal/connectresponse"
 )
 
 var ErrInvalidBoundary = errors.New("datasource: exactly one collection label or boundary node ID is required")
@@ -31,7 +32,7 @@ type Client struct {
 // connect.WithGRPC()) are forwarded to the underlying client.
 func New(gw Gateway, opts ...connect.ClientOption) *Client {
 	return &Client{
-		inner: accountsv1connect.NewDatasourceServiceClient(connectResponseClient{client: gw.HTTPClient()}, gw.BaseURL(), opts...),
+		inner: accountsv1connect.NewDatasourceServiceClient(connectresponse.Client{HTTP: gw.HTTPClient()}, gw.BaseURL(), opts...),
 	}
 }
 

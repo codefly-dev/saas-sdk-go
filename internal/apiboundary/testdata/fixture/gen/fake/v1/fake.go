@@ -39,3 +39,16 @@ type TransitiveThing struct {
 	Inner *TransitiveInner
 }
 type TransitiveInner struct{ Note string }
+
+// OneofThing has a oneof field, generated as an unexported interface that only
+// its exported wrappers implement.
+type OneofThing struct {
+	Choice isOneofThing_Choice
+}
+type isOneofThing_Choice interface{ isOneofThing_Choice() }
+type OneofThing_Left struct{ Left string }
+type OneofThing_Right struct{ Right *OneofRightInner }
+type OneofRightInner struct{ Note string }
+
+func (*OneofThing_Left) isOneofThing_Choice()  {}
+func (*OneofThing_Right) isOneofThing_Choice() {}

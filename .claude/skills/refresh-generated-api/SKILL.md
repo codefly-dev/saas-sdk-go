@@ -71,7 +71,7 @@ re-exports in that package's `types.go`, and generated enums need their
 constants too. `internal/apiboundary` decides this, not judgement:
 
 ```bash
-go test ./internal/apiboundary/ -v
+go test -count=1 ./internal/apiboundary/ -v
 ```
 
 Use the `api-boundary-triage` skill for a failing run — in particular for which

@@ -18,6 +18,11 @@ package main
 // unexported names of the host package, and to nothing else of it:
 //
 //   - newGatewayHarness (gateway_test.go): the host's own gateway under test;
+//   - workloadListener (workload_listener.go): the mark the gateway's workload
+//     endpoint puts on every request it serves, the only endpoint the three
+//     mints are served on (module-saas-starter#1120). The harness serves the
+//     gateway through it as a native run's workload server does; a cell's
+//     waypoint-authenticated wrapper around it is not under test here;
 //   - (*Gateway).authz, (*ExtAuthz).backendConn: where the harness's accounts
 //     connection is set, as the host's own tests set it;
 //   - (*ExtAuthz).internalToken: the perimeter credential the harness chose;
@@ -129,17 +134,11 @@ func sdkSealed(name string) string {
 	}
 	ctx := context.Background()
 	_, key := sdkcorework.FixtureKeyPair()
-	seals := sdkcorework.FixtureSeals()
-	digest, incarnation, err := seals.ApprovedBuild(ctx, sdkcorework.FixturePrincipal)
-	if err != nil {
-		panic(err)
-	}
 	authority := &sdkcorework.Authority{
 		Issuer: sdkcorework.FixtureIssuer, KeyID: sdkcorework.FixtureKeyID, Key: key,
-		Revisions: sdkcorework.FixtureRevisions(), Seals: seals,
+		Revisions: sdkcorework.FixtureRevisions(), Seals: sdkcorework.FixtureSeals(),
 	}
 	token, _, err := authority.Start(ctx, sdkcorework.StartInput{
-		Execution:          sdkcorework.Execution{ImageDigest: digest, BuildIncarnation: incarnation},
 		TenantID:           sdkcorework.FixtureTenant,
 		OwnerPrincipalID:   sdkcorework.FixturePrincipal,
 		OwnerPrincipalKind: "service",
@@ -271,11 +270,12 @@ func newRealGateway(t *testing.T) *realGateway {
 	gw.authz.backendConn = conn
 
 	g := &realGateway{internalToken: gw.authz.internalToken, accounts: accounts}
+	workload := workloadListener(gw)
 	g.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.edge = append(g.edge, edgeRequest{path: r.URL.Path, header: r.Header.Clone()})
 		g.mu.Unlock()
-		gw.ServeHTTP(w, r)
+		workload.ServeHTTP(w, r)
 	}))
 	t.Cleanup(g.server.Close)
 	if g.internalToken == "" {
@@ -548,7 +548,9 @@ func TestSDKConformanceRefusals(t *testing.T) {
 		{"work unproven or wrong organization", mintWork, refusal(codes.PermissionDenied, ""), 401, moduleauthority.ErrInvalidCredentials},
 		{"work execution unestablished", mintWork, refusal(codes.Unavailable, ""), 503, moduleauthority.ErrExecutionUnestablished},
 		{"work invalid request", mintWork, refusal(codes.InvalidArgument, ""), 400, nil},
-		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 502, nil},
+		// Host af5cef9a (module-saas-starter#1120, #1118): a refused token is
+		// a 401 on the work-context exchange, as PermissionDenied is.
+		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
 		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 412, moduleauthority.ErrNoHostStateToMintFor},
 
 		{"operation unproven", mintOperation, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
@@ -599,7 +601,12 @@ func TestSDKConformanceWrongInternalToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, method := range []string{mintWork, mintOperation, mintSource} {
+	// The operation and source mints still hold the internal token. Host
+	// af5cef9a (module-saas-starter#1120) serves the three mints on the
+	// workload endpoint alone and dropped the token from the work-context
+	// mint: that endpoint is its perimeter, and the projected token its one
+	// credential.
+	for _, method := range []string{mintOperation, mintSource} {
 		var be *moduleauthority.BrokerError
 		if err := mint(t.Context(), client, method); !errors.Is(err, moduleauthority.ErrInvalidCredentials) || !errors.As(err, &be) || be.StatusCode != 401 {
 			t.Fatalf("%s: %v, want ErrInvalidCredentials with HTTP 401", method, err)
@@ -607,6 +614,9 @@ func TestSDKConformanceWrongInternalToken(t *testing.T) {
 	}
 	if calls := g.accounts.snapshot(); len(calls) != 0 {
 		t.Fatalf("accounts was called %d time(s) behind a wrong internal token", len(calls))
+	}
+	if err := mint(t.Context(), client, mintWork); err != nil {
+		t.Fatalf("%s behind a wrong internal token: %v, want it minted on the projected token alone", mintWork, err)
 	}
 }
 

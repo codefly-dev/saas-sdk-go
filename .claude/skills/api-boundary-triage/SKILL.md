@@ -14,8 +14,12 @@ contract moves, so it cannot be.
 Run it alone while working:
 
 ```bash
-go test ./internal/apiboundary/ -v
+go test -count=1 ./internal/apiboundary/ -v
 ```
+
+`-count=1` is not optional while you edit a facade. The gate loads the module
+through `go list`, whose reads Go's test cache does not track, so a cached run
+reports the tree as it was before your change.
 
 Two tests. `TestPublicAPINamesEveryTypeItExposes` runs the rule over this
 module. `TestGateCatchesKnownBypasses` runs it over `testdata/fixture`, a
@@ -36,6 +40,10 @@ puts the type in front of a consumer.
   type alias carries the type and *not* the package-level constants declared
   with it, so a consumer can hold the value and cannot write the comparison.
   Fix: re-export the constants too.
+- **a path ending `oneof <Wrapper>`** — a oneof field's type is an unexported
+  interface nothing can alias; the gate walks the exported wrappers that
+  implement it instead, because those are what a consumer writes
+  (`&accounts.AddSourceRequest_Api{...}`). Fix: alias the wrapper.
 - **`no public packages discovered`** — not a boundary violation. The loader
   found nothing, which means the module failed to load. Fix the build first.
 - **a `load <pkg>` error** — same: the gate refuses to report a vacuous pass.

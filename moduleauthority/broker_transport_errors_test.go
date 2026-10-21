@@ -36,6 +36,10 @@ func TestBrokerTransportFailuresExcludeCauses(t *testing.T) {
 		{"wrapped timeout", fmt.Errorf("%s: %w", leak, &net.DNSError{Name: leak, Err: leak, IsTimeout: true}), BrokerTransportTimeout},
 		{"joined timeout", errors.Join(&net.DNSError{Name: leak}, &net.DNSError{Name: leak, IsTimeout: true}), BrokerTransportTimeout},
 		{"connection refused", &net.OpError{Op: leak, Net: leak, Err: &os.SyscallError{Syscall: leak, Err: syscall.ECONNREFUSED}}, BrokerTransportConnectionRefused},
+		{"connection reset", &net.OpError{Op: leak, Net: leak, Err: &os.SyscallError{Syscall: leak, Err: syscall.ECONNRESET}}, BrokerTransportConnectionReset},
+		{"wrapped reset", fmt.Errorf("%s: %w", leak, syscall.ECONNRESET), BrokerTransportConnectionReset},
+		{"joined reset", errors.Join(errors.New(leak), syscall.ECONNRESET), BrokerTransportConnectionReset},
+		{"reset and deadline", errors.Join(syscall.ECONNRESET, context.DeadlineExceeded), BrokerTransportTimeout},
 		{"TLS verification", &tls.CertificateVerificationError{Err: errors.New(leak)}, BrokerTransportTLS},
 		{"TLS record", tls.RecordHeaderError{Msg: leak}, BrokerTransportTLS},
 		{"TLS alert", fmt.Errorf("%s: %w", leak, tls.AlertError(42)), BrokerTransportTLS},
@@ -45,7 +49,7 @@ func TestBrokerTransportFailuresExcludeCauses(t *testing.T) {
 		{"x509 roots", x509.SystemRootsError{Err: errors.New(leak)}, BrokerTransportTLS},
 		{"canceled", fmt.Errorf("%s: %w", leak, context.Canceled), BrokerTransportOther},
 		{"parser", errors.New("malformed MIME header: " + leak), BrokerTransportOther},
-		{"text is not a category", errors.New("TLS timeout connection refused: " + leak), BrokerTransportOther},
+		{"text is not a category", errors.New("TLS timeout connection refused reset: " + leak), BrokerTransportOther},
 	} {
 		for _, mint := range brokerMints(t) {
 			for _, phase := range []string{"transport", "read"} {
@@ -96,6 +100,7 @@ func TestBrokerTransportClassificationNeverFormatsCause(t *testing.T) {
 		{brokerUnprintableError{context.DeadlineExceeded}, BrokerTransportTimeout},
 		{brokerUnprintableTimeout{}, BrokerTransportTimeout},
 		{brokerUnprintableError{syscall.ECONNREFUSED}, BrokerTransportConnectionRefused},
+		{brokerUnprintableError{syscall.ECONNRESET}, BrokerTransportConnectionReset},
 		{brokerUnprintableError{tls.RecordHeaderError{}}, BrokerTransportTLS},
 		{brokerUnprintableError{errors.New("timeout TLS connection refused")}, BrokerTransportOther},
 	} {
@@ -114,6 +119,7 @@ func assertBrokerTransportError(t *testing.T, err error, category BrokerTranspor
 		BrokerTransportTimeout:           "module broker: transport or response read timed out",
 		BrokerTransportConnectionRefused: "module broker: connection refused",
 		BrokerTransportTLS:               "module broker: TLS failure",
+		BrokerTransportConnectionReset:   "module broker: connection reset",
 	}[category]
 	if te.Error() != want || fmt.Sprintf("%+v", te) != want {
 		t.Error("transport diagnostic is not the fixed category message")
@@ -122,7 +128,7 @@ func assertBrokerTransportError(t *testing.T, err error, category BrokerTranspor
 	assertNoBrokerCause(t, te)
 	var be *BrokerError
 	var netErr net.Error
-	if errors.As(err, &be) || errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.As(err, &be) || errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.ECONNRESET) {
 		t.Error("transport failure exposes a status or an underlying cause")
 	}
 }
@@ -205,7 +211,7 @@ func TestBrokerCallersCanDecideRetries(t *testing.T) {
 			return be.Classification == BrokerErrorNotEstablished || be.StatusCode == 502
 		}
 		var te *BrokerTransportError
-		return errors.As(err, &te) && (te.Category == BrokerTransportTimeout || te.Category == BrokerTransportConnectionRefused)
+		return errors.As(err, &te) && (te.Category == BrokerTransportTimeout || te.Category == BrokerTransportConnectionRefused || te.Category == BrokerTransportConnectionReset)
 	}
 	for _, mint := range brokerMints(t) {
 		for _, status := range []int{401, 403, 503, 502, 400, 412} {
@@ -222,6 +228,7 @@ func TestBrokerCallersCanDecideRetries(t *testing.T) {
 		}{
 			{context.DeadlineExceeded, true},
 			{syscall.ECONNREFUSED, true},
+			{syscall.ECONNRESET, true},
 			{tls.RecordHeaderError{}, false},
 			{errors.New("unknown parser failure"), false},
 			{context.Canceled, false},

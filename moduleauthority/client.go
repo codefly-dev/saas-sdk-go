@@ -92,8 +92,9 @@ type Gateway interface {
 // talks to. Every field is resolved by the consumer from its Codefly
 // composition; nothing has a default.
 type Seams struct {
-	// Gateway is the host auth-gateway's REST endpoint, where the module
-	// broker mints Work Contexts. Required.
+	// Gateway is the host auth-gateway's workload endpoint, where the module
+	// broker mints Work Contexts; its public endpoint answers 404 to a mint.
+	// Required.
 	Gateway Gateway
 	// Authority is accounts' `authority` gRPC endpoint, which serves the
 	// exchanges and every other Work-Context-authenticated call. A module that
@@ -290,8 +291,9 @@ type ExchangeRequest struct {
 	DelegationID string
 }
 
-// Client keeps only the module's short-lived Work Context in memory. Parent
-// and exchanged capabilities are request-local and are never cached.
+// Client caches the module's short-lived Work Context for ModuleWorkContext
+// and authority calls. Explicit Mint calls, parents and exchanged capabilities
+// are request-local and are never cached.
 type Client struct {
 	broker      broker
 	authority   authorityEndpoint
@@ -439,27 +441,48 @@ func (c *Client) moduleWorkContextLocked(ctx context.Context) (string, error) {
 	if c.module != "" && c.now().Add(c.refreshSkew).Before(c.expiresAt) {
 		return c.module, nil
 	}
-	projected, err := c.credentials.projectedToken()
+	issued, err := c.MintModuleWorkContext(ctx)
 	if err != nil {
 		return "", err
+	}
+	c.module = issued.Token
+	c.expiresAt = issued.ExpiresAt
+	return issued.Token, nil
+}
+
+// ModuleContext is an opaque module Work Context and the expiry reported by
+// the broker. ExpiresAt is not derived from decoded claims or a verification
+// of the token's authority.
+type ModuleContext struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+// MintModuleWorkContext mints once through the gateway broker, using this
+// client's Credentials.OrganizationID and the current projected token. It
+// neither reads nor updates the ModuleWorkContext cache and does not coalesce
+// calls or retry. Consumers that own expiry and refresh use this method;
+// callers that want the client's shared cache use ModuleWorkContext.
+func (c *Client) MintModuleWorkContext(ctx context.Context) (ModuleContext, error) {
+	projected, err := c.credentials.projectedToken()
+	if err != nil {
+		return ModuleContext{}, err
 	}
 	var issued workContextResponse
 	if err := c.broker.post(ctx, workContextPath, projected, workContextRequest{
 		Prefix:         c.credentials.Prefix,
 		OrganizationID: c.credentials.OrganizationID,
 	}, &issued); err != nil {
-		return "", fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
+		return ModuleContext{}, fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
 	}
 	expiresAt, err := parseExpiry(issued.ExpiresAt, c.now())
 	if err != nil {
-		return "", err
+		return ModuleContext{}, err
 	}
 	if !sealed(issued.Token) {
-		return "", fmt.Errorf("%w: malformed token", ErrInvalidCapability)
+		return ModuleContext{}, fmt.Errorf("%w: malformed token", ErrInvalidCapability)
 	}
-	c.module = issued.Token
-	c.expiresAt = expiresAt
-	return issued.Token, nil
+	return ModuleContext{Token: issued.Token, ExpiresAt: expiresAt}, nil
 }
 
 // forgetModuleWorkContext drops the cached module capability if it is still

@@ -41,6 +41,12 @@ func TestGateCatchesKnownBypasses(t *testing.T) {
 			kindMissingConst + " fakev1.EnumState",
 			kindMissingConst + " fakev1.EnumState",
 		},
+		// A oneof's unexported interface is not itself a finding; an
+		// unaliased wrapper is, and so is what that wrapper exposes.
+		"oneof": {
+			kindUnexported + " fakev1.OneofRightInner",
+			kindUnexported + " fakev1.OneofThing_Right",
+		},
 		// Control: fully re-exported, nothing to report.
 		"clean": nil,
 		// C5: "/gen/" in a *dependency's* path is not this module's stub tree.
