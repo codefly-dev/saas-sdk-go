@@ -92,8 +92,9 @@ type Gateway interface {
 // talks to. Every field is resolved by the consumer from its Codefly
 // composition; nothing has a default.
 type Seams struct {
-	// Gateway is the host auth-gateway's REST endpoint, where the module
-	// broker mints Work Contexts. Required.
+	// Gateway is the host auth-gateway's workload endpoint, where the module
+	// broker mints Work Contexts; its public endpoint answers 404 to a mint.
+	// Required.
 	Gateway Gateway
 	// Authority is accounts' `authority` gRPC endpoint, which serves the
 	// exchanges and every other Work-Context-authenticated call. A module that

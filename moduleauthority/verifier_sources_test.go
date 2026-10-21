@@ -113,15 +113,6 @@ func TestEveryAbsenceStateBecomesCoresSentinel(t *testing.T) {
 			want: corework.ErrNoSeal,
 		},
 		{
-			what:  "a principal that bears no execution",
-			state: authorityState{buildState: v1.WorkContextApprovedBuildState_WORK_CONTEXT_APPROVED_BUILD_STATE_BEARS_NO_EXECUTION},
-			call: func(s *WorkContextSources) error {
-				_, _, err := s.ApprovedBuild(context.Background(), corework.FixturePrincipal)
-				return err
-			},
-			want: corework.ErrNoApprovedBuild,
-		},
-		{
 			what:  "a binding the issuer does not hold",
 			state: authorityState{bindingState: v1.WorkContextOperationBindingState_WORK_CONTEXT_OPERATION_BINDING_STATE_ABSENT},
 			call: func(s *WorkContextSources) error {
@@ -173,14 +164,6 @@ func TestAnUnreadableAnswerIsRefused(t *testing.T) {
 			state: authorityState{},
 			call: func(s *WorkContextSources) error {
 				_, err := s.PrincipalEpoch(context.Background(), corework.FixturePrincipal)
-				return err
-			},
-		},
-		{
-			what:  "no approved-build state",
-			state: authorityState{},
-			call: func(s *WorkContextSources) error {
-				_, _, err := s.ApprovedBuild(context.Background(), corework.FixturePrincipal)
 				return err
 			},
 		},

@@ -149,7 +149,7 @@ func TestTheBrokerRefusesAWrongPerimeterCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := client.MintModuleOperationContext(t.Context(), "model"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("wrong internal token: %v", err)
 	}
 	wrongToken := h.client(t, Credentials{Prefix: testPrefix, Token: staticToken("another-pods-token")})
