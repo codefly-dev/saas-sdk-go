@@ -68,13 +68,21 @@ The script fails, rather than passes, when:
 
 ## What it holds
 
-The three mints accepted, and exactly `prefix`, `service_account_token`,
+The three mints on the production workload listener, public-socket refusal,
+work minting under its projected token and the retained operation/source
+perimeter checks, and exactly `prefix`, `service_account_token`,
 `organization_id`, `binding` and `source_id` reaching accounts; each accounts
 refusal → gateway status → SDK sentinel; a pre-cutover token relayed and
 refused as `ErrInvalidCapability`; the legacy header, a missing,
 duplicate, non-Bearer or empty bearer refused before accounts; the 64 KiB
 token bound; and the three gateway answers the fake copies (D1, D3, D4 in
 `moduleauthority/host_fake_test.go`).
+
+At host v0.0.97 (`640ee503617a0130abdba79d8eeb11dc4d8be723`), a work-context
+mint's `FailedPrecondition` maps to HTTP 412 (installation pending), preserved
+as `BrokerError` without a delegation sentinel. This differs from the source
+mint's 412 (`ErrDelegationMissing`). The host's `gateway_modules.go` and
+`TestGateway_ModuleWorkContext_RelaysAccountsOutcome` define that mapping.
 
 ## When it goes red
 

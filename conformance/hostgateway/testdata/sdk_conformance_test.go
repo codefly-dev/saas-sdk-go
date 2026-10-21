@@ -7,7 +7,7 @@ package main
 // module/services/auth-gateway/code at the ref SOURCE.txt records) with
 // `go test -overlay`, so the host checkout stays byte-for-byte unmodified, and
 // drives the SDK's real moduleauthority client against the host's real
-// Gateway.ServeHTTP over httptest.
+// workload listener and Gateway.ServeHTTP over httptest.
 //
 // Only accounts is faked, on a real gRPC listener and exactly the way the
 // host's own gateway tests fake it (gateway_modules_test.go,
@@ -18,6 +18,7 @@ package main
 // unexported names of the host package, and to nothing else of it:
 //
 //   - newGatewayHarness (gateway_test.go): the host's own gateway under test;
+//   - workloadListener: the production listener classification for broker calls;
 //   - (*Gateway).authz, (*ExtAuthz).backendConn: where the harness's accounts
 //     connection is set, as the host's own tests set it;
 //   - (*ExtAuthz).internalToken: the perimeter credential the harness chose;
@@ -130,16 +131,11 @@ func sdkSealed(name string) string {
 	ctx := context.Background()
 	_, key := sdkcorework.FixtureKeyPair()
 	seals := sdkcorework.FixtureSeals()
-	digest, incarnation, err := seals.ApprovedBuild(ctx, sdkcorework.FixturePrincipal)
-	if err != nil {
-		panic(err)
-	}
 	authority := &sdkcorework.Authority{
 		Issuer: sdkcorework.FixtureIssuer, KeyID: sdkcorework.FixtureKeyID, Key: key,
 		Revisions: sdkcorework.FixtureRevisions(), Seals: seals,
 	}
 	token, _, err := authority.Start(ctx, sdkcorework.StartInput{
-		Execution:          sdkcorework.Execution{ImageDigest: digest, BuildIncarnation: incarnation},
 		TenantID:           sdkcorework.FixtureTenant,
 		OwnerPrincipalID:   sdkcorework.FixturePrincipal,
 		OwnerPrincipalKind: "service",
@@ -182,6 +178,7 @@ type edgeRequest struct {
 // the edge and what it forwarded to accounts.
 type realGateway struct {
 	server        *httptest.Server
+	public        *httptest.Server
 	internalToken string
 	accounts      *fakeAccounts
 
@@ -271,13 +268,15 @@ func newRealGateway(t *testing.T) *realGateway {
 	gw.authz.backendConn = conn
 
 	g := &realGateway{internalToken: gw.authz.internalToken, accounts: accounts}
-	g.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	g.server = httptest.NewServer(workloadListener(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.edge = append(g.edge, edgeRequest{path: r.URL.Path, header: r.Header.Clone()})
 		g.mu.Unlock()
 		gw.ServeHTTP(w, r)
-	}))
+	})))
 	t.Cleanup(g.server.Close)
+	g.public = httptest.NewServer(gw)
+	t.Cleanup(g.public.Close)
 	if g.internalToken == "" {
 		t.Fatal("the host harness configured no internal token")
 	}
@@ -548,7 +547,7 @@ func TestSDKConformanceRefusals(t *testing.T) {
 		{"work unproven or wrong organization", mintWork, refusal(codes.PermissionDenied, ""), 401, moduleauthority.ErrInvalidCredentials},
 		{"work execution unestablished", mintWork, refusal(codes.Unavailable, ""), 503, moduleauthority.ErrExecutionUnestablished},
 		{"work invalid request", mintWork, refusal(codes.InvalidArgument, ""), 400, nil},
-		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 502, nil},
+		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
 		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 412, moduleauthority.ErrNoHostStateToMintFor},
 
 		{"operation unproven", mintOperation, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
@@ -588,8 +587,9 @@ func TestSDKConformanceRefusals(t *testing.T) {
 	}
 }
 
-// A wrong perimeter credential is refused by the gateway itself, before
-// accounts, and the SDK reports it as invalid credentials.
+// The work mint is protected by the workload listener and projected token.
+// Its legacy internal header grants nothing; operation/source mints still
+// require their internal perimeter credential. Public broker requests refuse.
 func TestSDKConformanceWrongInternalToken(t *testing.T) {
 	g := newRealGateway(t)
 	client, err := moduleauthority.New(
@@ -599,15 +599,34 @@ func TestSDKConformanceWrongInternalToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, method := range []string{mintWork, mintOperation, mintSource} {
+	// A public socket cannot become a workload socket by copying headers.
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, g.public.URL+"/modules/_work-context", strings.NewReader(`{"prefix":"example"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer projected-1")
+	request.Header.Set("X-Codefly-Internal-Token", g.internalToken)
+	response, err := g.public.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 404 || len(g.accounts.snapshot()) != 0 {
+		t.Fatal("public broker reached accounts")
+	}
+	if err := mint(t.Context(), client, mintWork); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{mintOperation, mintSource} {
 		var be *moduleauthority.BrokerError
 		if err := mint(t.Context(), client, method); !errors.Is(err, moduleauthority.ErrInvalidCredentials) || !errors.As(err, &be) || be.StatusCode != 401 {
-			t.Fatalf("%s: %v, want ErrInvalidCredentials with HTTP 401", method, err)
+			t.Fatalf("%s: %v, want ErrInvalidCredentials with HTTP401", method, err)
 		}
 	}
-	if calls := g.accounts.snapshot(); len(calls) != 0 {
-		t.Fatalf("accounts was called %d time(s) behind a wrong internal token", len(calls))
+	if calls := g.accounts.snapshot(); len(calls) != 1 || calls[0].method != mintWork {
+		t.Fatal("operation/source mint passed bad perimeter", calls)
 	}
+
 }
 
 func post(t *testing.T, g *realGateway, path, body string, headers func(http.Header)) int {

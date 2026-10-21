@@ -19,8 +19,8 @@ import (
 // full strength. The checks a trust root alone answers — encoding, signature,
 // issuer, audience, window, shape — are a forwarding hop's; the rest is the
 // ISSUER'S live state: the installation a capability is sealed to and its
-// revision, the epoch of every principal in its chain, the build the exercising
-// principal runs, the operation binding it exercises, and the authorization
+// revision, the epoch of every principal in its chain,
+// the operation binding it exercises, and the authorization
 // revision. A module that stops at the hop's checks accepts a capability whose
 // installation was revoked or whose principal's epoch has moved, for as long as
 // that capability lives.
@@ -327,41 +327,6 @@ func (s *WorkContextSources) PrincipalEpoch(ctx context.Context, principalID str
 		return 0, corework.ErrNoSeal
 	default:
 		return 0, fmt.Errorf("%w: principal state", ErrUnreadableAuthorityAnswer)
-	}
-}
-
-// ApprovedBuild answers what execution the issuer APPROVES for one principal —
-// never what a workload presents, which is the caller's attestation and the
-// other half of the comparison.
-func (s *WorkContextSources) ApprovedBuild(
-	ctx context.Context, principalID string,
-) (string, uint64, error) {
-	if principalID == "" {
-		return "", 0, fmt.Errorf("%w: approved build", ErrInvalidAuthorityQuestion)
-	}
-	answer, err := s.ask(ctx, "build\x00"+principalID,
-		func(request *v1.ModuleResolveWorkContextAuthorityRequest) {
-			request.Question = &v1.ModuleResolveWorkContextAuthorityRequest_ApprovedBuild{
-				ApprovedBuild: &v1.WorkContextApprovedBuildQuestion{PrincipalId: principalID},
-			}
-		})
-	if err != nil {
-		return "", 0, err
-	}
-	build := answer.GetApprovedBuild()
-	if build == nil || build.GetPrincipalId() != principalID {
-		return "", 0, fmt.Errorf("%w: approved build", ErrUnreadableAuthorityAnswer)
-	}
-	switch build.GetState() {
-	case v1.WorkContextApprovedBuildState_WORK_CONTEXT_APPROVED_BUILD_STATE_APPROVED:
-		return build.GetImageDigest(), build.GetBuildIncarnation(), nil
-	case v1.WorkContextApprovedBuildState_WORK_CONTEXT_APPROVED_BUILD_STATE_BEARS_NO_EXECUTION:
-		// A person's session runs no approved build. This is the answer, not a
-		// failure — and it is NOT what an unknown principal gets, which the host
-		// refuses outright.
-		return "", 0, corework.ErrNoApprovedBuild
-	default:
-		return "", 0, fmt.Errorf("%w: approved-build state", ErrUnreadableAuthorityAnswer)
 	}
 }
 

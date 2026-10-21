@@ -64,6 +64,7 @@ const (
 	BrokerTransportTimeout                                          // Deadline exceeded or a net.Error reporting Timeout.
 	BrokerTransportConnectionRefused                                // errors.Is(err, syscall.ECONNREFUSED).
 	BrokerTransportTLS                                              // A recognized crypto/tls or crypto/x509 error type.
+	BrokerTransportConnectionReset                                  // errors.Is(err, syscall.ECONNRESET).
 )
 
 // BrokerTransportError reports a failure to obtain or read a broker response.
@@ -85,6 +86,8 @@ func (e *BrokerTransportError) Error() string {
 		return "module broker: connection refused"
 	case BrokerTransportTLS:
 		return "module broker: TLS failure"
+	case BrokerTransportConnectionReset:
+		return "module broker: connection reset"
 	default:
 		return "module broker: transport or response read failed"
 	}
@@ -108,6 +111,8 @@ func brokerTransportError(err error) *BrokerTransportError {
 		errors.As(err, &unknownAuthority), errors.As(err, &hostname),
 		errors.As(err, &invalidCertificate), errors.As(err, &roots):
 		category = BrokerTransportTLS
+	case errors.Is(err, syscall.ECONNRESET):
+		category = BrokerTransportConnectionReset
 	}
 	return &BrokerTransportError{Category: category}
 }

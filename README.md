@@ -219,7 +219,7 @@ The SDK surfaces are:
 
   This call surface uses the four host RPCs from
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
-  `SOURCE.txt` records the released host tag `v0.0.94` used to regenerate
+  `SOURCE.txt` records the exact development host revision used to regenerate
   the bindings. This regeneration does not publish an SDK release.
   The host's runtime-scheduled `PruneSourceOperationReceipts` and
   `LookupPruneSourceOperationReceipts` are included in the generated bindings
@@ -242,8 +242,35 @@ The SDK surfaces are:
   `ErrInvalidCapability`; a `Parent` core does not decode is refused as invalid
   input (`ErrInvalidExchange`, `ErrInvalidArtifact`, `ErrInvalidInstallation`)
   before anything is sent. **This needs a host whose accounts mints core-format
-  Work Contexts** (module-saas-starter#1093); the v0.0.94 host recorded in
-  `SOURCE.txt` mints the pre-cutover format, and this client refuses it.
+  Work Contexts** (module-saas-starter#1093); the former v0.0.94 source mints
+  the pre-cutover format, which this client refuses. `SOURCE.txt` records
+  the exact selected development host revision.
+
+  The broker gateway is the host's resolved **workload** endpoint; its public
+  REST endpoint refuses these paths. The projected workload token proves the
+  caller. Operation/source exchanges also require their perimeter credential.
+
+  `Client.ModuleWorkContext(ctx)` returns a cached token, sharing refreshes
+  between concurrent callers. Consumers that already own their expiry and
+  refresh controller use `Client.MintModuleWorkContext(ctx)` instead:
+
+  ```go
+  issued, err := authority.MintModuleWorkContext(ctx)
+  if err != nil {
+      return err
+  }
+  // issued.Token is opaque; issued.ExpiresAt is the broker's reported expiry.
+  ```
+
+  This returns `ModuleContext{Token string, ExpiresAt time.Time}` and mints
+  once per call. It neither reads nor updates the cached token, coalesces
+  concurrent calls, nor retries failures. Both methods use the same broker
+  request, bounded response reader, expiry parser and refusal mapping. The
+  projected credential is reread for each mint; the organization remains the
+  client's `Credentials.OrganizationID`, so keep a client per organization.
+  The returned expiry comes from the broker, never from decoded token claims.
+  It does not prove authority or override a verifier's lifetime limit; Core
+  owns authority validation, and consumers own their refresh/deadline policy.
 
   It talks to the two seams the host serves a composed module, and takes both
   explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
@@ -312,7 +339,7 @@ The SDK surfaces are:
   sends exactly one `Authorization: Bearer <token>` header alongside the
   internal perimeter token; the removed module-secret credential has no fallback.
 
-  The REST bodies match [the v0.0.94 gateway](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.94/module/services/auth-gateway/code/gateway_modules.go):
+  The REST bodies match [the v0.0.97 gateway](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.97/module/services/auth-gateway/code/gateway_modules.go):
 
   | Mint path | JSON fields sent |
   | --- | --- |
@@ -449,8 +476,8 @@ The proto source of truth is `module-saas-starter/module/services/accounts/proto
 To refresh from a released tag (in a checkout of that repo):
 
 ```bash
-git fetch origin tag v0.0.94
-git checkout --detach v0.0.94
+git fetch origin tag v0.0.97
+git checkout --detach v0.0.97
 cd module/services/accounts/proto
 buf generate --template <this-repo>/buf.gen.yaml -o <this-repo>
 ```
@@ -465,9 +492,12 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. Core v0.19.1 supplies the required Runnable package;
-the SDK need not adopt the host's entire dependency generation. Verify the
-compatible dependency floor with SDK and consumer builds when refreshing it.
+protobuf initialization. The SDK selects the exact current-host Core candidate recorded in `go.mod`,
+which supplies the
+required Runnable package and keeps the Kubernetes dependency graph compatible
+with stable client-go's structured-merge-diff/v6. The SDK need not adopt the
+host's entire dependency generation. Verify the compatible dependency floor
+with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through
 `refs/tags/` and verifies that regeneration leaves no diff. Before a host
@@ -590,7 +620,7 @@ same capability keeps one.
 
 What the answers mean:
 
-- `corework.ErrNoSeal`, `ErrNoApprovedBuild` and `ErrNoBinding` are core's own
+- `corework.ErrNoSeal` and `ErrNoBinding` are core's own
   sentinels, which its verifier turns into a refusal of the capability.
 - `ErrUnreadableAuthorityAnswer` is a host answer this client will not read — a
   state it does not understand, another arm, or an answer about another
@@ -605,10 +635,11 @@ What the answers mean:
 Positive answers are cached for at most `AuthorityCacheBound` (2 seconds), which
 is a **ceiling**: a cached answer delays a revocation by exactly its bound, so a
 larger one is refused rather than clamped, and `CacheEntries: -1` turns caching
-off. Refusals are never cached. One verification costs five or more round trips
-(the revision, the seal, an epoch and a build for the owner and for each actor
-hop, a binding), so decide the cadence for a stream deliberately rather than
-discovering it from a latency graph.
+off. Refusals are never cached. Verification reads the revision, installation
+seal, principal epochs and any operation binding or approval grants it names.
+Core no longer asks callees to resolve an approved build per principal: the
+host checks attested workload builds at mint and revokes changed authority
+through principal epochs and installation revisions.
 
 This module verifies nothing: it holds no key, reads no signature and decides
 nothing about a capability. The decision is core's, through
@@ -676,15 +707,19 @@ reconnect it — minting again will not help. The gateway answers 412 there only
 for a missing delegation, so the status alone decides it. Body-based delegation
 distinctions are gone: source 403s all return `ErrDelegationInvalid`, whether
 the delegation was revoked or is otherwise unusable.
+At host v0.0.97, a module work-context mint can also answer 412 when the
+workload is admitted but installed nowhere. That remains a `BrokerError`
+with `StatusCode == 412` and `BrokerErrorOther`, without a delegation sentinel;
+the module can serve its install endpoint while waiting for installation.
 `BrokerError.Path` and `BrokerError.Reason` have been removed.
 
 Transport and response read failures return `*moduleauthority.BrokerTransportError`
 with a fixed message and a `Category`: `BrokerTransportTimeout`,
-`BrokerTransportConnectionRefused`, `BrokerTransportTLS`, or
-`BrokerTransportOther`. It retains no underlying error and has no `Unwrap`
-method. Callers use `errors.As` and the category for retry decisions, and check
+`BrokerTransportConnectionRefused`, `BrokerTransportConnectionReset`,
+`BrokerTransportTLS`, or `BrokerTransportOther`. It retains no underlying
+error and has no `Unwrap` method. Callers use `errors.As` and the category for retry decisions, and check
 their context's `Err()` for cancellation. For example, a caller may retry a 502,
-503, timeout or refused connection, while surfacing a 401/403 denial. The SDK
-does not automatically retry broker failures. Malformed initial HTTP headers
-provide no usable status and produce a transport error; malformed bodies cannot
+503, timeout, refused connection or connection reset, while surfacing a 401/403
+denial. The SDK does not automatically retry broker failures. Malformed initial
+HTTP headers provide no usable status and produce a transport error; malformed bodies cannot
 change a successfully parsed non-200 status into a transport failure.

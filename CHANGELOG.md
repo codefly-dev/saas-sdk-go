@@ -43,6 +43,18 @@
   `CodeFailedPrecondition` ("the issuer decided; mint again") from
   `CodeUnavailable` ("the lookup failed; retry").
 
+- `moduleauthority.Client.MintModuleWorkContext(ctx)` returns
+  `ModuleContext{Token, ExpiresAt}` without caching, coalescing or retrying.
+  `ExpiresAt` is the broker's reported expiry, not a decoded token claim.
+  Existing `ModuleWorkContext(ctx) (string, error)` retains its cache and
+  shared refresh through the same mint implementation; organization binding,
+  bounded reads, Core-backed sealed-shape checking and safe refusals are shared.
+- `BrokerTransportConnectionReset` classifies wrapped `syscall.ECONNRESET`
+  through error identity with a fixed diagnostic, retaining no underlying
+  cause. It is appended so existing transport category values remain stable;
+  callers can choose to retry without accessing sensitive transport errors.
+
+
 - **`moduleauthority.WorkloadTokenFile()`**, the one answer to "where is this
   module's projected token": the file `CODEFLY__WORKLOAD_TOKEN_FILE` names
   when it is set to a non-blank value, and the pod mount
@@ -60,6 +72,8 @@
   `ProjectedTokenFile(path)` itself.
 
 ### Changed
+
+- Reconcile the existing Core/uncached-mint owner work with the selected host: Core `v0.19.6-0.20261018171306-0a8d16c5e32d` and gRPC v1.84.0. This is an exact development dependency, not a release-qualified floor. Core owns workload-build checks at mint and revocation through epochs/revisions; this SDK no longer asks for a per-principal build.
 
 - **`gen/` moves from module-saas-starter v0.0.94 through `9ab36e7e` to
   `f9321b94`**, the exact development head of #1195. It carries every accounts
@@ -80,6 +94,8 @@
   (`ErrDelegationMissing`).
 
 ### Removed (breaking)
+
+- **`WorkContextSources.ApprovedBuild`** is removed with Core's corresponding `SealSource` requirement and `ErrNoApprovedBuild`. Consumers must use the current Core verifier interfaces; no replacement local verifier or absence sentinel is introduced.
 
 - **`SessionId` is gone from three Work Context mint requests**, with their
   `GetSessionId()` accessors: `StartTaskWorkContextRequest`,

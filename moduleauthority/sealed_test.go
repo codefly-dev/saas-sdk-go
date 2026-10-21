@@ -25,16 +25,11 @@ func sealedToken(name string) string {
 	ctx := context.Background()
 	_, key := corework.FixtureKeyPair()
 	seals := corework.FixtureSeals()
-	digest, incarnation, err := seals.ApprovedBuild(ctx, corework.FixturePrincipal)
-	if err != nil {
-		panic(err)
-	}
 	authority := &corework.Authority{
 		Issuer: corework.FixtureIssuer, KeyID: corework.FixtureKeyID, Key: key,
 		Revisions: corework.FixtureRevisions(), Seals: seals,
 	}
 	token, _, err := authority.Start(ctx, corework.StartInput{
-		Execution:          corework.Execution{ImageDigest: digest, BuildIncarnation: incarnation},
 		TenantID:           corework.FixtureTenant,
 		OwnerPrincipalID:   corework.FixturePrincipal,
 		OwnerPrincipalKind: "service",

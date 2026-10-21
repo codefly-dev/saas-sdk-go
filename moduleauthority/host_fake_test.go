@@ -54,11 +54,11 @@ import (
 //     an extra or misnamed field is visible to an exact-body assertion; the
 //     real gateway decodes into a struct and drops unknown keys silently.
 //   - D5: a test may inject any refusal on any path. The real gateway never
-//     answers 403 (or 412) on /modules/_work-context — accounts'
+//     answers 403 on the SDK's /modules/_work-context path — accounts'
 //     PermissionDenied is a 401 there — so no test here injects one.
 //   - D6: accounts' Unauthenticated and FailedPrecondition on the work-context
-//     mint (a 502 from the real gateway) are not modelled; only injected
-//     statuses are.
+//     mint (502 and 412 respectively from the real gateway) are not modelled;
+//     only injected statuses are. Conformance holds both mappings at SOURCE.txt.
 //   - D7: it accepts one internal token; the real gateway also accepts the
 //     previous one during rotation.
 //   - D8: refusal bodies are whatever a test injects; the real gateway sends
@@ -199,7 +199,7 @@ func (g *fakeGateway) serve(w http.ResponseWriter, r *http.Request) {
 		plainError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if r.Header.Get("X-Codefly-Internal-Token") != testInternalToken {
+	if r.URL.Path != hostWorkContextPath && r.Header.Get("X-Codefly-Internal-Token") != testInternalToken {
 		plainError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -637,9 +637,6 @@ type authorityState struct {
 	principalState v1.WorkContextPrincipalState
 	epoch          uint64
 	principalID    string
-	buildState     v1.WorkContextApprovedBuildState
-	imageDigest    string
-	incarnation    uint64
 	bindingState   v1.WorkContextOperationBindingState
 	binding        *v1.WorkContextOperationBindingAnswer
 	revision       uint64
@@ -692,19 +689,6 @@ func (a *fakeAuthority) answerAuthority(
 			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_PrincipalEpoch{
 				PrincipalEpoch: &v1.WorkContextPrincipalEpochAnswer{
 					State: state.principalState, PrincipalId: principal, Epoch: state.epoch,
-				},
-			},
-		}, nil
-	case *v1.ModuleResolveWorkContextAuthorityRequest_ApprovedBuild:
-		principal := asked.ApprovedBuild.GetPrincipalId()
-		if state.principalID != "" {
-			principal = state.principalID
-		}
-		return &v1.ModuleResolveWorkContextAuthorityResponse{
-			Answer: &v1.ModuleResolveWorkContextAuthorityResponse_ApprovedBuild{
-				ApprovedBuild: &v1.WorkContextApprovedBuildAnswer{
-					State: state.buildState, PrincipalId: principal,
-					ImageDigest: state.imageDigest, BuildIncarnation: state.incarnation,
 				},
 			},
 		}, nil
