@@ -191,6 +191,13 @@ shipped.
 
 ### Removed (breaking)
 
+- **`WorkContextSources.ApprovedBuild` is removed.** The host's Core contract
+  no longer includes approved builds in `SealSource` or execution fields in
+  capability minting. The SDK now requires the host's exact Core
+  `v0.19.6-0.20261018051341-b81d92e6feda` dependency, reuses Core's sealed token
+  fixtures without legacy execution claims, and keeps workload identity checks
+  in the host. There is no replacement SDK verifier or compatibility parser.
+
 - **`SessionId` is gone from three Work Context mint requests**, with their
   `GetSessionId()` accessors: `StartTaskWorkContextRequest`,
   `StartChildSessionWorkContextRequest` and `StartInstallationTaskRequest`. The
@@ -222,11 +229,17 @@ shipped.
 
 ### Generated contract
 
+- The same host snapshot adds source reconfiguration (`UpdateSource` and
+  `SourceFetchScope`), installation readiness conditions and module authority
+  requests, grant lineage, and the explicit `SealsNoBinding` revision assertion.
+  These additive generated contracts require no new facade or verifier.
+
 - Regenerated the complete host-owned schema from
-  `module-saas-starter@b640a5fc51ab1f4fc83d144bbf1eeddd7637c0dc` (PR #1106, module package
+  `module-saas-starter@d5ea5dc75790dfeb55a5492eaa7c7b759df7a84d` (PR #1106, module package
   0.1.1) with the pinned buf 1.73.0 and plugins. `SOURCE.txt` records that
-  exact development source; the generated tree no longer mixes a release
-  snapshot with an unrecorded contract. This also carries the host's current
+  exact development source, including the current delivered module authority
+  registry and workload gateway contract. The generated tree comes from that
+  single committed snapshot. This also carries the host's current
   delivery/recovery, installation and datasource contracts. The SDK release
   remains ordered after the host release.
 
