@@ -640,6 +640,11 @@ seal, principal epochs and any operation binding or approval grants it names.
 Core no longer asks callees to resolve an approved build per principal: the
 host checks attested workload builds at mint and revokes changed authority
 through principal epochs and installation revisions.
+Consumers composing this Core candidate must also select a compatible callee
+verifier: the selected host uses `sdk-go/workcontext`
+`v0.1.1-0.20261018052022-70dc7a546458` (and root `sdk-go`
+`v0.4.1-0.20261018052022-70dc7a546458`). Released Work Context v0.1.0
+references removed Core seal fields and does not compile with this selection.
 
 This module verifies nothing: it holds no key, reads no signature and decides
 nothing about a capability. The decision is core's, through

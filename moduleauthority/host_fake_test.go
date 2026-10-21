@@ -27,7 +27,7 @@ import (
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
-// This file fakes the two host seams as module-saas-starter v0.0.94 serves
+// This file fakes the two host seams selected by SOURCE.txt and serves
 // them, so the client is tested against the host's contract rather than
 // against itself:
 //
@@ -57,7 +57,7 @@ import (
 //     answers 403 on the SDK's /modules/_work-context path — accounts'
 //     PermissionDenied is a 401 there — so no test here injects one.
 //   - D6: accounts' Unauthenticated and FailedPrecondition on the work-context
-//     mint (502 and 412 respectively from the real gateway) are not modelled;
+//     mint (401 and 412 respectively from the real gateway) are not modelled;
 //     only injected statuses are. Conformance holds both mappings at SOURCE.txt.
 //   - D7: it accepts one internal token; the real gateway also accepts the
 //     previous one during rotation.
