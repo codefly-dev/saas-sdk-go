@@ -28,7 +28,7 @@ import (
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
 
-// This file fakes the two host seams as module-saas-starter v0.0.94 serves
+// This file fakes the two host seams as the module-saas-starter source in SOURCE.txt serves
 // them, so the client is tested against the host's contract rather than
 // against itself:
 //

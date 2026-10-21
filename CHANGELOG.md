@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-Core main and module-saas-starter v0.0.103. No Core tag carries the Core this
-needs, so the floor is a pseudo-version; it moves to the first tag that does.
+The journal contract uses the exact module-saas-starter development source in
+`SOURCE.txt`. The Core floor remains the current host's immutable pseudo-version;
+the floor moves to the first Core tag that carries the required API.
 
 ### Changed
 
@@ -14,11 +15,12 @@ needs, so the floor is a pseudo-version; it moves to the first tag that does.
   for any consumer that requires that Core. It is also the Core the v0.0.103
   gateway requires. Core v0.19.5 still requires `SealSource.ApprovedBuild` and
   cannot build this release; MVS never selects it beside this floor.
-- **`gen/` moves from `9ab36e7e` to released module-saas-starter v0.0.103**
-  (`2cb00737`), with the existing plugin pins and buf v1.73.0. The tree
-  reproduces byte-for-byte from that tag, and `SOURCE.txt` records it for both
-  `gen-drift` and `conformance/hostgateway`. The module package version stays
-  0.1.0; regeneration cuts no SDK release.
+- **`gen/` adds the journal and delivery contract to the current host schema.**
+  The complete host-owned `saas/` tree is generated from the exact development
+  source recorded in `SOURCE.txt`, with buf 1.73.0 and the existing plugin pins.
+  The generated tree retains current main's solution registry and datasource
+  contracts. Regeneration cuts no SDK release; publishing follows the host
+  release and replacement of the development source with its release tag.
 - **The module broker is the gateway's workload endpoint.** Host `af5cef9a`
   (module-saas-starter#1120) serves the three mints there alone — the public
   endpoint answers 404 — and `Seams.Gateway`'s documentation now says so. The
@@ -33,6 +35,12 @@ needs, so the floor is a pseudo-version; it moves to the first tag that does.
 
 ### Removed (breaking)
 
+- The journal generation adds methods to generated interfaces:
+  `AuditServiceClient`/`Handler.DeliverAuditEvents` and
+  `.LookupDeliverAuditEvents`, and `ModuleCapabilitiesServiceClient`/`Handler.ReadJournal`.
+  Implementers must provide the methods or embed the generated
+  `Unimplemented…Handler`. No existing generated symbol is removed relative
+  to current main.
 - **`(*moduleauthority.WorkContextSources).ApprovedBuild`**. Core's verifier
   no longer asks an issuer for an approved build — a change of approved builds
   revokes through the principal's epoch and the installation's revision — and
@@ -55,6 +63,32 @@ needs, so the floor is a pseudo-version; it moves to the first tag that does.
   Embedding the generated `Unimplemented…Handler` absorbs the handler half.
 
 ### Added
+
+- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
+  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
+  module, through the same credentials and refresh-once rule as every authority
+  call. The host serves it only to a cross-tenant module principal; any other
+  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
+  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
+  `JournalPage.NextAfter` is the resume point the host guarantees misses no
+  committed entry and never passes an unfinished transaction, so a reader
+  resumes from it rather than from the last `Position` it saw, and only stores
+  and compares positions for equality.
+- `JournalStart` (`"start"`) is the position that means "before the oldest
+  retained entry": the host accepts it as `after`, and as the `from` of its
+  delivery operation, and never returns it as an entry's position. A reader with
+  no position of its own starts from it.
+- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
+  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
+  entries that record one of them, or the caller's own module work-context mint,
+  so a reader that delivers journal entries can tell a page of its own delivery
+  from a page of real activity. A limit outside 0..500 (0 is the host's default of
+  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
+  any call.
+- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
+  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
+  `ModuleReadJournalResponse`; `DeliverAuditEventsResponse.From` and `To`
+  carry the exact committed receipt interval for retention coverage checks.
 
 - **`accounts.Client.Datasources()`**, the `DatasourceService` facade beside
   `Audit()`: `ListSources`, `GetSource`, `AddSource`, `ListSourceOperations`,
@@ -144,39 +178,13 @@ shipped.
   `TOKEN_FILE` in its `workload-identity` configuration and passes
   `ProjectedTokenFile(path)` itself.
 
-- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
-  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
-  module, through the same credentials and refresh-once rule as every authority
-  call. The host serves it only to a cross-tenant module principal; any other
-  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
-  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
-  `JournalPage.NextAfter` is the resume point the host guarantees misses no
-  committed entry and never passes an unfinished transaction, so a reader
-  resumes from it rather than from the last `Position` it saw, and only stores
-  and compares positions for equality.
-- `JournalStart` (`"start"`) is the position that means "before the oldest
-  retained entry": the host accepts it as `after`, and as the `from` of its
-  delivery operation, and never returns it as an entry's position. A reader with
-  no position of its own starts from it.
-- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
-  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
-  entries that record one of them, or the caller's own module work-context mint,
-  so a reader that delivers journal entries can tell a page of its own delivery
-  from a page of real activity. A limit outside 0..500 (0 is the host's default of
-  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
-  any call.
-- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
-  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
-  `ModuleReadJournalResponse`; `DeliverAuditEventsResponse.From` and `To`
-  carry the exact committed receipt interval for retention coverage checks.
-
 ### Changed
 
-- **`gen/` extends the module-saas-starter `9ab36e7e` snapshot in SDK v0.1.3**
-  with the complete host-owned journal and delivery contract. The generated
-  schema carries `ResolveWorkContextAuthority` alongside `ReadJournal`;
-  `SOURCE.txt` identifies the exact development source and the registry
-  removals are listed below.
+- **`gen/` moves from module-saas-starter v0.0.94 to `9ab36e7e`** (the merge
+  commit of #1119 on `main`), which is where `ResolveWorkContextAuthority`
+  first exists. It carries every accounts contract change made since v0.0.94 —
+  `datasource`, `installations`, `api_keys`, `module_registration` and
+  `work_contexts` all move — and those changes are the host's, not this SDK's.
 
 - **`moduleauthority.ErrNoHostStateToMintFor`**, for HTTP **412** on the module
   Work Context and operation-context mints. The gateway at this ref relays
@@ -191,13 +199,6 @@ shipped.
 
 ### Removed (breaking)
 
-- **`WorkContextSources.ApprovedBuild` is removed.** The host's Core contract
-  no longer includes approved builds in `SealSource` or execution fields in
-  capability minting. The SDK now requires the host's exact Core
-  `v0.19.6-0.20261018051341-b81d92e6feda` dependency, reuses Core's sealed token
-  fixtures without legacy execution claims, and keeps workload identity checks
-  in the host. There is no replacement SDK verifier or compatibility parser.
-
 - **`SessionId` is gone from three Work Context mint requests**, with their
   `GetSessionId()` accessors: `StartTaskWorkContextRequest`,
   `StartChildSessionWorkContextRequest` and `StartInstallationTaskRequest`. The
@@ -205,43 +206,8 @@ shipped.
   carries is now the one its caller authenticated with, or a fresh one the
   issuer assigns and returns — so there is no replacement field and nothing to
   set. A consumer that set one was naming a session it did not own; it drops the
-  assignment.
-
-- The current host-owned schema also removes
-  `ModuleMintWorkContextRequest.Upstream` and `Manifest` (and their getters),
-  `SolutionFrontendBinding.ContractVersion` (and `GetContractVersion`),
-  `SolutionRegistration.Backend` (and `GetBackend`), the entire
-  `SolutionBackendBinding` message, and
-  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_INCOMPATIBLE`.
-  [Host main #1120](https://github.com/codefly-dev/module-saas-starter/pull/1120)
-  resolves addresses and frontend metadata from applied presence instead of
-  accepting process-reported backend/frontend halves.
-  The SDK's hand-written facades consume none of these removed symbols.
-
-### Conformance
-
-- Follow [host #1120](https://github.com/codefly-dev/module-saas-starter/pull/1120)
-  by exercising module mints on the workload listener. The work mint uses the
-  projected credential; operation/source mints retain their internal-token
-  checks. Conformance also checks the protected presenter assertion, rejection
-  of missing/forged assertions, and refusal on the public listener. Consumers
-  must resolve the workload endpoint as the `Gateway` seam.
-
-### Generated contract
-
-- The same host snapshot adds source reconfiguration (`UpdateSource` and
-  `SourceFetchScope`), installation readiness conditions and module authority
-  requests, grant lineage, and the explicit `SealsNoBinding` revision assertion.
-  These additive generated contracts require no new facade or verifier.
-
-- Regenerated the complete host-owned schema from
-  `module-saas-starter@d5ea5dc75790dfeb55a5492eaa7c7b759df7a84d` (PR #1106, module package
-  0.1.1) with the pinned buf 1.73.0 and plugins. `SOURCE.txt` records that
-  exact development source, including the current delivered module authority
-  registry and workload gateway contract. The generated tree comes from that
-  single committed snapshot. This also carries the host's current
-  delivery/recovery, installation and datasource contracts. The SDK release
-  remains ordered after the host release.
+  assignment. These are the only exported symbols the regeneration removed:
+  nothing else in `gen/` lost a type, a field or an RPC.
 
 ## v0.1.2 — core v0.19.1; Work Contexts are core's, carried opaque
 
