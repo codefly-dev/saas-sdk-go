@@ -102,9 +102,18 @@ jobs:
         uses: ./sdk/.github/actions/host-source
         with:
           gateway: "true"
+      # The build is the host's gateway module with this SDK required into it,
+      # so it needs the newer of the two modules' `go` directives; setup-go
+      # pins GOTOOLCHAIN=local, so neither is fetched on demand.
+      - id: go
+        run: |
+          set -euo pipefail
+          sdk=$(awk '$1 == "go" { print $2; exit }' sdk/go.mod)
+          host=$(awk '$1 == "go" { print $2; exit }' "source/${{ steps.source.outputs.gateway }}/go.mod")
+          echo "version=$(printf '%s\n%s\n' "$sdk" "$host" | sort -V | tail -n1)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: sdk/go.mod
+          go-version: ${{ steps.go.outputs.version }}
           cache-dependency-path: |
             sdk/go.sum
             source/${{ steps.source.outputs.gateway }}/go.sum
