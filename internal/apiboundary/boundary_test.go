@@ -20,7 +20,8 @@
 // question the invariant is actually about. It loads every public package with
 // full type information and walks the transitive surface a consumer can reach —
 // exported funcs, vars, consts, struct fields, interface and named-type
-// methods. A generated type anywhere in that surface must be re-exported by an
+// methods, and the exported wrappers behind a oneof field's unexported
+// interface. A generated type anywhere in that surface must be re-exported by an
 // alias in a public package, and a generated enum's constants must be
 // re-exported too: a type alias carries the type but *not* the package-level
 // constants declared with it, so aliasing `DatasourceStatus` alone still leaves
@@ -201,6 +202,13 @@ func (w *walker) walk(t types.Type, path string) {
 			return
 		}
 		if isUnder(obj, w.generatedPrefix) {
+			// A oneof field's type is an unexported interface that nothing can
+			// alias; what a consumer must name is each exported wrapper that
+			// implements it (`&accounts.AddSourceRequest_Api{...}`).
+			if iface, ok := t.Underlying().(*types.Interface); ok && !obj.Exported() && iface.NumMethods() > 0 {
+				w.walkImplementers(obj.Pkg(), iface, path)
+				return
+			}
 			if _, ok := w.reached[obj]; !ok {
 				w.reached[obj] = path
 			}
@@ -247,6 +255,21 @@ func (w *walker) walk(t types.Type, path string) {
 	case *types.Map:
 		w.walk(t.Key(), path+" key")
 		w.walk(t.Elem(), path+" value")
+	}
+}
+
+// walkImplementers walks every exported type in pkg that implements iface,
+// directly or through its pointer.
+func (w *walker) walkImplementers(pkg *types.Package, iface *types.Interface, path string) {
+	scope := pkg.Scope()
+	for _, name := range scope.Names() {
+		obj, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok || !obj.Exported() || obj.IsAlias() {
+			continue
+		}
+		if types.Implements(obj.Type(), iface) || types.Implements(types.NewPointer(obj.Type()), iface) {
+			w.walk(obj.Type(), path+" oneof "+name)
+		}
 	}
 }
 

@@ -113,14 +113,15 @@ mints through the host's *real* gateway handlers at that same ref
 
 | Path | Owns |
 | --- | --- |
-| `accounts/` | gateway-bound facade over the accounts services; `types.go` holds its alias re-exports |
-| `datasource/` | the same facade over `DatasourceService` |
+| `accounts/` | gateway-bound facade over the accounts services (`Audit()`, `Datasources()`: the raw contract); `types.go` holds its alias re-exports |
+| `datasource/` | the ergonomic, effect-safe facade over `DatasourceService` |
 | `settings/` | presence-aware `Field[M, T]` runtime; `JSONCodec` is the only typed↔ProtoJSON boundary |
 | `settings/catalog/` | Go / TypeScript / proto catalog renderers that `module-compose` calls |
 | `moduleauthority/` | a module's own authority: gateway broker mints; direct Accounts authority or explicitly selected gateway authority transport. Work Contexts are opaque `string`s, shape-checked only by `core/workcontext.Decode`. `verifier_sources.go` serves core's three live-authority sources to a callee's verifier without verifying anything itself |
 | `gen/` | generated output. Regenerated, never edited |
 | `conformance/hostgateway/` | `moduleauthority` minting through the host's real gateway at the `SOURCE.txt` ref |
 | `internal/apiboundary` | the public-API boundary gate, with fixtures that prove it still looks |
+| `internal/connectresponse` | the one HTTP client both `DatasourceService` facades read responses through |
 | `internal/agentcontext` | the budget and frontmatter contract for this file and the skills |
 
 `README.md` covers what each surface does for a *consumer*, with worked

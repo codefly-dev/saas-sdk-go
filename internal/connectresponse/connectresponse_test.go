@@ -1,4 +1,4 @@
-package datasource
+package connectresponse
 
 import (
 	"errors"
@@ -35,9 +35,9 @@ func TestUnsupportedEncodingClosesResponseWithoutReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/proto")
-	response, err := (connectResponseClient{client: httpClient}).Do(req)
-	var unsupported *unsupportedResponseEncoding
-	if response != nil || !errors.As(err, &unsupported) || unsupported.encoding != "br" ||
+	response, err := (Client{HTTP: httpClient}).Do(req)
+	var unsupported *UnsupportedEncoding
+	if response != nil || !errors.As(err, &unsupported) || unsupported.Encoding != "br" ||
 		connect.CodeOf(err) != connect.CodeInternal || body.reads != 0 || body.closes != 1 {
 		t.Fatalf("unsupported response = %v, %v, reads=%d closes=%d", response, err, body.reads, body.closes)
 	}

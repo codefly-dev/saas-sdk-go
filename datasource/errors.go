@@ -7,6 +7,8 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
+
+	"github.com/codefly-dev/saas-sdk-go/internal/connectresponse"
 )
 
 var (
@@ -170,7 +172,7 @@ func mapHostError(err error, effectOutcome bool, now time.Time) error {
 	if effectOutcome && !connect.IsWireError(err) {
 		return &OutcomeUnknown{cause: err}
 	}
-	var encodingError *unsupportedResponseEncoding
+	var encodingError *connectresponse.UnsupportedEncoding
 	if errors.As(err, &encodingError) {
 		return &DatasourceError{cause: err}
 	}

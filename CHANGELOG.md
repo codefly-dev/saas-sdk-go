@@ -2,28 +2,97 @@
 
 ## Unreleased
 
+Core main and module-saas-starter v0.0.103. No Core tag carries the Core this
+needs, so the floor is a pseudo-version; it moves to the first tag that does.
+
 ### Changed
 
-- Raise the Core dependency floor from v0.19.1 to v0.19.4, consuming Core's
-  Kubernetes dependency compatibility fix for stable client-go consumers.
-  Existing hand-written facade methods retain their signatures.
-- Regenerate from released module-saas-starter v0.0.97 with the existing plugin
-  pins. `SOURCE.txt` now holds both generated bindings and gateway conformance
-  to that release: its gateway pins gRPC v1.84.0, matching Core v0.19.4's floor.
-  The upstream module package version remains 0.1.0; no SDK release is cut by
-  regeneration.
-- Align conformance with host v0.0.97's work-context mint: Accounts'
-  `FailedPrecondition` now returns HTTP 412 (installation pending), previously
-  502. The SDK preserves it as `BrokerError` without a delegation sentinel.
-  The source mint's 412 still maps to `ErrDelegationMissing`.
+- **Core floor: `v0.19.6-0.20261018051341-b81d92e6feda`** (Core main,
+  2026-10-18), from v0.19.4 on this branch and v0.19.1 in v0.1.3. Core
+  `22ddde98` removed the approved build from a Work Context: `SealSource` lost
+  `ApprovedBuild` and `ErrNoApprovedBuild` is gone, so v0.1.3 does not compile
+  for any consumer that requires that Core. It is also the Core the v0.0.103
+  gateway requires. Core v0.19.5 still requires `SealSource.ApprovedBuild` and
+  cannot build this release; MVS never selects it beside this floor.
+- **`gen/` moves from `9ab36e7e` to released module-saas-starter v0.0.103**
+  (`2cb00737`), with the existing plugin pins and buf v1.73.0. The tree
+  reproduces byte-for-byte from that tag, and `SOURCE.txt` records it for both
+  `gen-drift` and `conformance/hostgateway`. The module package version stays
+  0.1.0; regeneration cuts no SDK release.
+- **The module broker is the gateway's workload endpoint.** Host `af5cef9a`
+  (module-saas-starter#1120) serves the three mints there alone — the public
+  endpoint answers 404 — and `Seams.Gateway`'s documentation now says so. The
+  same commit dropped the internal token from the work-context mint and relays
+  accounts' `Unauthenticated` there as 401 (`ErrInvalidCredentials`) instead of
+  502. The client is unchanged: it still sends the internal token on every
+  mint, which the two operation mints still require. `conformance/hostgateway`
+  serves the real gateway through the host's own `workloadListener`, and
+  `moduleauthority`'s fake gateway follows the new perimeter.
+- `datasource`'s response-encoding client moves to `internal/connectresponse`
+  unchanged, so `accounts.Datasources()` reads responses through it too.
 
 ### Removed (breaking)
 
-- Generated `StartTaskWorkContextRequest`, `StartInstallationTaskRequest`, and
-  `StartChildSessionWorkContextRequest` lose `SessionId` and `GetSessionId`.
-  Accounts assigns the session and returns it in `IssuedWorkContext.SessionId`;
-  callers must not choose one. The deleted proto names and field numbers are
-  reserved upstream. No hand-written facade exposes these request types.
+- **`(*moduleauthority.WorkContextSources).ApprovedBuild`**. Core's verifier
+  no longer asks an issuer for an approved build — a change of approved builds
+  revokes through the principal's epoch and the installation's revision — and
+  its only correct "bears no execution" answer was the sentinel Core deleted.
+  There is no replacement; a consumer calling it directly drops the call.
+  `WorkContextSources` still implements Core's `SealSource`, `RevisionSource`
+  and `GrantSource`.
+- Generated, by the v0.0.103 regeneration, against v0.1.3:
+  `ModuleMintWorkContextRequest.Upstream` and `.Manifest` (with their getters;
+  the host stopped accepting a reported upstream and manifest), and
+  `SolutionBackendBinding`, `SolutionRegistration.Backend`,
+  `SolutionFrontendBinding.ContractVersion` and
+  `SolutionRegistrationStatus_SOLUTION_REGISTRATION_STATUS_INCOMPATIBLE`, all
+  in host `af5cef9a` (module-saas-starter#1120). No
+  hand-written facade exposed any of them, and `moduleauthority` never sent
+  `Upstream` or `Manifest`.
+- Generated interfaces gain methods, which breaks a consumer that implements
+  them: `DatasourceServiceClient`/`Handler.UpdateSource` and
+  `SolutionRegistryServiceClient`/`Handler.GetRetainedSolutionFrontend`.
+  Embedding the generated `Unimplemented…Handler` absorbs the handler half.
+
+### Added
+
+- **`accounts.Client.Datasources()`**, the `DatasourceService` facade beside
+  `Audit()`: `ListSources`, `GetSource`, `AddSource`, `ListSourceOperations`,
+  `DeclareSourceOperations`, `InvokeSourceOperation`,
+  `LookupInvokeSourceOperation`, `BeginDatasourceAccountLink`,
+  `CompleteDatasourceAccountLink` and `ListMyDatasourceAccountLinks`, bare
+  messages in and out, the host's Connect error returned intact. Every message,
+  enum, enum value and oneof wrapper they reach is re-exported from `accounts`
+  under its generated name (`AddSourceRequest_Api`,
+  `ApiOAuth2Config_GRANT_AUTHORIZATION_CODE`, …), so connecting and calling a
+  host-owned API source no longer needs `gen/`. It is the raw contract;
+  `datasource`'s `Invoke`/`Lookup` remain the effect-safe way to call an
+  operation.
+- `moduleauthority.Client.MintModuleWorkContext(ctx)` returns
+  `ModuleContext{Token, ExpiresAt}` without caching, coalescing or retrying.
+  `ExpiresAt` is the broker's reported expiry, not a decoded token claim.
+  Existing `ModuleWorkContext(ctx) (string, error)` retains its cache and
+  shared refresh through the same mint implementation; organization binding,
+  bounded reads, Core-backed sealed-shape checking and safe refusals are shared.
+- `BrokerTransportConnectionReset` classifies wrapped `syscall.ECONNRESET`
+  through error identity with a fixed diagnostic, retaining no underlying
+  cause. It is appended so existing transport category values remain stable;
+  callers can choose to retry without accessing sensitive transport errors.
+- Generated, by the v0.0.103 regeneration: `UpdateSource` (a connected source
+  edited in place), `GetRetainedSolutionFrontend`, installation readiness
+  (`InstallationReadiness`, `ReadinessCondition` and their enums), carried
+  module access on team grants, `SolutionGroup`, `SourceFetchScope` and
+  `CheckAuthorizationRevisionRequest.SealsNoBinding`. These add no
+  hand-written facades.
+- `internal/apiboundary` walks a oneof field's exported wrappers. The field's
+  type is an unexported interface nothing can alias; the gate used to report
+  that interface and stop, and now requires each wrapper a consumer writes to
+  be re-exported (fixture `oneof`).
+
+## v0.1.3 — served verifier sources
+
+Tagged at `14fe024` (#44) without a heading here; these are the entries it
+shipped.
 
 ### Added
 
@@ -58,22 +127,6 @@
   A host refusal arrives with its connect code, which is how a caller tells
   `CodeFailedPrecondition` ("the issuer decided; mint again") from
   `CodeUnavailable` ("the lookup failed; retry").
-
-- `moduleauthority.Client.MintModuleWorkContext(ctx)` returns
-  `ModuleContext{Token, ExpiresAt}` without caching, coalescing or retrying.
-  `ExpiresAt` is the broker's reported expiry, not a decoded token claim.
-  Existing `ModuleWorkContext(ctx) (string, error)` retains its cache and
-  shared refresh through the same mint implementation; organization binding,
-  bounded reads, Core-backed sealed-shape checking and safe refusals are shared.
-- `BrokerTransportConnectionReset` classifies wrapped `syscall.ECONNRESET`
-  through error identity with a fixed diagnostic, retaining no underlying
-  cause. It is appended so existing transport category values remain stable;
-  callers can choose to retry without accessing sensitive transport errors.
-
-- Generated source-trigger declaration, delegation, reconciliation and lookup
-  messages and RPCs; installation retry and pending/failed status values;
-  solution workload mint `Upstream` and `Manifest` fields; and authorization
-  revision `OperationBindingId`. These bindings add no hand-written facades.
 
 - **`moduleauthority.WorkloadTokenFile()`**, the one answer to "where is this
   module's projected token": the file `CODEFLY__WORKLOAD_TOKEN_FILE` names

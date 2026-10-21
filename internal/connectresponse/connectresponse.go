@@ -1,4 +1,7 @@
-package datasource
+// Package connectresponse is the HTTP client every DatasourceService facade in
+// this module binds its generated Connect client to, so the datasource and
+// accounts facades read one response the same way.
+package connectresponse
 
 import (
 	"bufio"
@@ -14,19 +17,21 @@ import (
 	"connectrpc.com/connect"
 )
 
-type unsupportedResponseEncoding struct{ encoding string }
+// UnsupportedEncoding is the cause of the CodeInternal error Do returns for a
+// response whose Content-Encoding it does not read.
+type UnsupportedEncoding struct{ Encoding string }
 
-func (e *unsupportedResponseEncoding) Error() string {
-	return fmt.Sprintf("datasource: unsupported response encoding %q", e.encoding)
+func (e *UnsupportedEncoding) Error() string {
+	return fmt.Sprintf("datasource: unsupported response encoding %q", e.Encoding)
 }
 
-// connectResponseClient normalizes the shared SDK's accepted HTTP encodings
-// before Connect decodes an error. It delegates the original request unchanged
-// to the gateway client; Connect still owns envelope, detail and status decoding.
-type connectResponseClient struct{ client *http.Client }
+// Client normalizes the shared SDK's accepted HTTP encodings before Connect
+// decodes an error. It delegates the original request unchanged to the gateway
+// client; Connect still owns envelope, detail and status decoding.
+type Client struct{ HTTP *http.Client }
 
-func (c connectResponseClient) Do(request *http.Request) (*http.Response, error) {
-	response, err := c.client.Do(request)
+func (c Client) Do(request *http.Request) (*http.Response, error) {
+	response, err := c.HTTP.Do(request)
 	if err != nil ||
 		strings.HasPrefix(request.Header.Get("Content-Type"), "application/grpc") {
 		return response, err
@@ -36,7 +41,7 @@ func (c connectResponseClient) Do(request *http.Request) (*http.Response, error)
 		// No body or HTTP status can establish an RPC outcome when its encoding
 		// is unsupported. Close here because Connect receives an error, not a body.
 		_ = response.Body.Close()
-		return nil, connect.NewError(connect.CodeInternal, &unsupportedResponseEncoding{encoding: response.Header.Get("Content-Encoding")})
+		return nil, connect.NewError(connect.CodeInternal, &UnsupportedEncoding{Encoding: response.Header.Get("Content-Encoding")})
 	}
 	if response.StatusCode == http.StatusOK {
 		return response, nil
