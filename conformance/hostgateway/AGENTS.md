@@ -85,9 +85,11 @@ Since host `af5cef9a` (module-saas-starter#1120, in v0.0.103) the three mints
 are served on the gateway's workload endpoint alone and answer 404 on the
 public one, so the harness serves the gateway through the host's own
 `workloadListener`, as a native run's workload server does. A cell wraps that
-listener in a waypoint-authenticated presenter check the SDK never sees, and
-which is not under test here. The same commit dropped the internal token from
-the work-context mint — that endpoint is its perimeter — and relays accounts'
+listener in a waypoint-authenticated presenter check. The conformance suite
+uses the host's own authenticated listener and presenter fixtures to check
+missing, forged and duplicate assertions, forwarding of the trusted presenter,
+and refusal on the public listener. The same commit dropped the internal token
+from the work-context mint — that endpoint is its perimeter — and relays accounts'
 `Unauthenticated` there as 401 (`ErrInvalidCredentials`), as it already did
 `PermissionDenied`. The two operation mints still hold the internal token.
 

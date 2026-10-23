@@ -305,8 +305,8 @@ The SDK surfaces are:
   It talks to the two seams the host serves a composed module, and takes both
   explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
 
-  - the **gateway's module broker** (REST on the auth-gateway's `rest`
-    endpoint): `POST /modules/_work-context`, `/modules/_operation-context`
+  - the **gateway's module broker** (HTTP on the auth-gateway's `workload`
+    endpoint, API `http`): `POST /modules/_work-context`, `/modules/_operation-context`
     and `/modules/_source-operation-context`, where the module presents its
     pod's projected ServiceAccount token (audience `accounts`) as the bearer;
     the host reviews it and mints only for the principal's declared workload
@@ -318,7 +318,7 @@ The SDK surfaces are:
 
   ```go
   authority, err := moduleauthority.New(moduleauthority.Seams{
-      Gateway:       gw,                                   // BaseURL() + HTTPClient()
+      Gateway:       workloadGateway,                      // resolved workload endpoint + HTTPClient()
       Authority:     moduleauthority.Authority{Address: authorityHostPort}, // TLS: nil = h2c
       InternalToken: internalToken,
       // Only from the consumer's own configured assertion that every
@@ -526,13 +526,11 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. The SDK requires Core at `b81d92e6feda`
-(`v0.19.6-0.20261018051341-b81d92e6feda`), the Core the v0.0.103 gateway
-requires: it supplies the Runnable package, and its `SealSource` has no
-approved build. No tagged Core carries that yet; v0.19.5 still requires
-`SealSource.ApprovedBuild`, so it cannot build this SDK, and the floor moves to
-the first Core tag that contains `b81d92e6feda`. The SDK need not adopt the
-host's entire dependency generation. Verify the compatible dependency floor
+protobuf initialization. The SDK requires published Core `v0.19.6`, which contains
+`b81d92e6feda`: it supplies the Runnable package, and its `SealSource` has no
+approved build. The dependency requires Go 1.27.3. Core v0.19.5 still requires
+`SealSource.ApprovedBuild`, so it cannot build this SDK. The SDK need not adopt
+the host's entire dependency generation. Verify the compatible dependency floor
 with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through

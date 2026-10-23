@@ -1,11 +1,9 @@
-gen/ generated from codefly-dev/module-saas-starter@v0.0.103
+gen/ generated from codefly-dev/module-saas-starter@757fa74d5cdf181234500a1788f2a42a67e8a601
 (accounts public proto: module/services/accounts/proto)
 (auth gateway: module/services/auth-gateway/code)
 
-module version: 0.1.0 (module/module.package.codefly.yaml)
-This SDK's release is matched to the saas-starter module version above.
-
-Released upstream tag: v0.0.103 (2cb00737ed56c79c823bc82f4055681a51919e7c).
-Its auth gateway requires codefly-dev/core at b81d92e6feda, the floor this
-SDK's go.mod records.
+module version: 0.2.0 (module/module.package.codefly.yaml)
+Development source: exact PR-head commit of module-saas-starter#1106.
+The entire host-owned saas/ tree is generated with this repository's buf.gen.yaml.
+Replace this development ref with the host release tag before publishing the SDK.
 Regeneration does not publish an SDK release.

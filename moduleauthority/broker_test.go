@@ -149,8 +149,14 @@ func TestTheBrokerRefusesAWrongPerimeterCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.MintModuleOperationContext(t.Context(), "model"); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("wrong internal token: %v", err)
+	if _, err := client.ModuleWorkContext(t.Context()); err != nil {
+		t.Fatalf("workload work mint with valid projected credential: %v", err)
+	}
+	if _, err := client.MintModuleOperationContext(t.Context(), testBindingID); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong internal token on operation mint: %v", err)
+	}
+	if _, err := client.MintSourceOperationContext(t.Context(), exampleSource); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong internal token on source mint: %v", err)
 	}
 	wrongToken := h.client(t, Credentials{Prefix: testPrefix, Token: staticToken("another-pods-token")})
 	if _, err := wrongToken.ModuleWorkContext(t.Context()); !errors.Is(err, ErrInvalidCredentials) {
