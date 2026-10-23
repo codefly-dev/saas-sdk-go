@@ -3,17 +3,21 @@
 ## Unreleased
 
 The journal contract uses the exact module-saas-starter development source in
-`SOURCE.txt`. The Core floor remains the current host's immutable pseudo-version;
-the floor moves to the first Core tag that carries the required API.
+`SOURCE.txt`. The Core floor is the compatible published v0.19.6 release.
 
 ### Changed
 
-- **Core floor: `v0.19.6-0.20261018051341-b81d92e6feda`** (Core main,
-  2026-10-18), from v0.19.4 on this branch and v0.19.1 in v0.1.3. Core
+- Refresh development provenance to the rebased module-saas-starter journal
+  source recorded in `SOURCE.txt`, with module package version 0.2.0. The full
+  generated API is byte-identical; no SDK release is published.
+
+- **Core floor: `v0.19.6`**, replacing the development pseudo-version
+  `v0.19.6-0.20261018051341-b81d92e6feda`. The dependency requires Go 1.27.3,
+  which is now this SDK's minimum too. Core
   `22ddde98` removed the approved build from a Work Context: `SealSource` lost
   `ApprovedBuild` and `ErrNoApprovedBuild` is gone, so v0.1.3 does not compile
-  for any consumer that requires that Core. It is also the Core the v0.0.103
-  gateway requires. Core v0.19.5 still requires `SealSource.ApprovedBuild` and
+  for any consumer that requires that Core. Core v0.19.6 contains the required
+  APIs. Core v0.19.5 still requires `SealSource.ApprovedBuild` and
   cannot build this release; MVS never selects it beside this floor.
 - **`gen/` adds the journal and delivery contract to the current host schema.**
   The complete host-owned `saas/` tree is generated from the exact development

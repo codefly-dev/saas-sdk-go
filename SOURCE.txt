@@ -1,8 +1,8 @@
-gen/ generated from codefly-dev/module-saas-starter@f025ffe2c050739becb3d43feedf699c4913e77d
+gen/ generated from codefly-dev/module-saas-starter@757fa74d5cdf181234500a1788f2a42a67e8a601
 (accounts public proto: module/services/accounts/proto)
 (auth gateway: module/services/auth-gateway/code)
 
-module version: 0.1.1 (module/module.package.codefly.yaml)
+module version: 0.2.0 (module/module.package.codefly.yaml)
 Development source: exact PR-head commit of module-saas-starter#1106.
 The entire host-owned saas/ tree is generated with this repository's buf.gen.yaml.
 Replace this development ref with the host release tag before publishing the SDK.

@@ -526,13 +526,11 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. The SDK requires Core at `b81d92e6feda`
-(`v0.19.6-0.20261018051341-b81d92e6feda`), the Core the v0.0.103 gateway
-requires: it supplies the Runnable package, and its `SealSource` has no
-approved build. No tagged Core carries that yet; v0.19.5 still requires
-`SealSource.ApprovedBuild`, so it cannot build this SDK, and the floor moves to
-the first Core tag that contains `b81d92e6feda`. The SDK need not adopt the
-host's entire dependency generation. Verify the compatible dependency floor
+protobuf initialization. The SDK requires published Core `v0.19.6`, which contains
+`b81d92e6feda`: it supplies the Runnable package, and its `SealSource` has no
+approved build. The dependency requires Go 1.27.3. Core v0.19.5 still requires
+`SealSource.ApprovedBuild`, so it cannot build this SDK. The SDK need not adopt
+the host's entire dependency generation. Verify the compatible dependency floor
 with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through
