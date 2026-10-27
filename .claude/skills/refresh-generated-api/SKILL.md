@@ -52,7 +52,8 @@ Three properties of that template matter:
   version that provides those packages; validate the dependency floor against
   SDK and consumer builds instead of copying the host's dependency generation.
   Generating another copy of Core's descriptors here creates duplicate protobuf
-  registrations at initialization.
+  registrations at initialization. Shared `host/` installation imports likewise
+  resolve to the canonical Authority client rather than another descriptor copy.
 
 - **`clean: true` wipes `gen/` first.** So a proto deleted upstream disappears
   here rather than lingering — which is how `AuditExportService` left in 0.1.0.

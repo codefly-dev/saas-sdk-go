@@ -7,7 +7,7 @@ package main
 // module/services/auth-gateway/code at the ref SOURCE.txt records) with
 // `go test -overlay`, so the host checkout stays byte-for-byte unmodified, and
 // drives the SDK's real moduleauthority client against the host's real
-// Gateway.ServeHTTP over httptest.
+// workloadListener(Gateway) over httptest, as the native host does.
 //
 // Only accounts is faked, on a real gRPC listener and exactly the way the
 // host's own gateway tests fake it (gateway_modules_test.go,
@@ -18,14 +18,12 @@ package main
 // unexported names of the host package, and to nothing else of it:
 //
 //   - newGatewayHarness (gateway_test.go): the host's own gateway under test;
-//   - workloadListener (workload_listener.go): the mark the gateway's workload
-//     endpoint puts on every request it serves, the only endpoint the three
-//     mints are served on (module-saas-starter#1120). The harness serves the
-//     gateway through it as a native run's workload server does; a cell's
-//     waypoint-authenticated wrapper around it is not under test here;
 //   - (*Gateway).authz, (*ExtAuthz).backendConn: where the harness's accounts
 //     connection is set, as the host's own tests set it;
 //   - (*ExtAuthz).internalToken: the perimeter credential the harness chose;
+//   - workloadListener, authenticatedWorkloadListener and the host
+//     testWaypoint/testPresenter fixtures (workload_listener.go and
+//     workload_presenter_test.go);
 //   - the accounts types in auth-gateway/pkg/gen/saas/accounts/v1.
 //
 // The faked accounts answers Work Contexts in core's encoding
@@ -134,9 +132,10 @@ func sdkSealed(name string) string {
 	}
 	ctx := context.Background()
 	_, key := sdkcorework.FixtureKeyPair()
+	seals := sdkcorework.FixtureSeals()
 	authority := &sdkcorework.Authority{
 		Issuer: sdkcorework.FixtureIssuer, KeyID: sdkcorework.FixtureKeyID, Key: key,
-		Revisions: sdkcorework.FixtureRevisions(), Seals: sdkcorework.FixtureSeals(),
+		Revisions: sdkcorework.FixtureRevisions(), Seals: seals,
 	}
 	token, _, err := authority.Start(ctx, sdkcorework.StartInput{
 		TenantID:           sdkcorework.FixtureTenant,
@@ -181,6 +180,7 @@ type edgeRequest struct {
 // the edge and what it forwarded to accounts.
 type realGateway struct {
 	server        *httptest.Server
+	gateway       *Gateway
 	internalToken string
 	accounts      *fakeAccounts
 
@@ -269,13 +269,13 @@ func newRealGateway(t *testing.T) *realGateway {
 	t.Cleanup(func() { _ = conn.Close() })
 	gw.authz.backendConn = conn
 
-	g := &realGateway{internalToken: gw.authz.internalToken, accounts: accounts}
-	workload := workloadListener(gw)
+	g := &realGateway{gateway: gw, internalToken: gw.authz.internalToken, accounts: accounts}
+	handler := workloadListener(gw)
 	g.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.edge = append(g.edge, edgeRequest{path: r.URL.Path, header: r.Header.Clone()})
 		g.mu.Unlock()
-		workload.ServeHTTP(w, r)
+		handler.ServeHTTP(w, r)
 	}))
 	t.Cleanup(g.server.Close)
 	if g.internalToken == "" {
@@ -548,8 +548,6 @@ func TestSDKConformanceRefusals(t *testing.T) {
 		{"work unproven or wrong organization", mintWork, refusal(codes.PermissionDenied, ""), 401, moduleauthority.ErrInvalidCredentials},
 		{"work execution unestablished", mintWork, refusal(codes.Unavailable, ""), 503, moduleauthority.ErrExecutionUnestablished},
 		{"work invalid request", mintWork, refusal(codes.InvalidArgument, ""), 400, nil},
-		// Host af5cef9a (module-saas-starter#1120, #1118): a refused token is
-		// a 401 on the work-context exchange, as PermissionDenied is.
 		{"work unauthenticated", mintWork, refusal(codes.Unauthenticated, ""), 401, moduleauthority.ErrInvalidCredentials},
 		{"work failed precondition", mintWork, refusal(codes.FailedPrecondition, ""), 412, moduleauthority.ErrNoHostStateToMintFor},
 
@@ -590,8 +588,8 @@ func TestSDKConformanceRefusals(t *testing.T) {
 	}
 }
 
-// A wrong perimeter credential is refused by the gateway itself, before
-// accounts, and the SDK reports it as invalid credentials.
+// Operation/source mints retain the perimeter gate. The work mint on the
+// workload listener authenticates the projected credential instead (#1120).
 func TestSDKConformanceWrongInternalToken(t *testing.T) {
 	g := newRealGateway(t)
 	client, err := moduleauthority.New(
@@ -601,22 +599,88 @@ func TestSDKConformanceWrongInternalToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The operation and source mints still hold the internal token. Host
-	// af5cef9a (module-saas-starter#1120) serves the three mints on the
-	// workload endpoint alone and dropped the token from the work-context
-	// mint: that endpoint is its perimeter, and the projected token its one
-	// credential.
+	if err := mint(t.Context(), client, mintWork); err != nil {
+		t.Fatalf("workload work mint with a valid projected credential: %v", err)
+	}
 	for _, method := range []string{mintOperation, mintSource} {
 		var be *moduleauthority.BrokerError
 		if err := mint(t.Context(), client, method); !errors.Is(err, moduleauthority.ErrInvalidCredentials) || !errors.As(err, &be) || be.StatusCode != 401 {
 			t.Fatalf("%s: %v, want ErrInvalidCredentials with HTTP 401", method, err)
 		}
 	}
-	if calls := g.accounts.snapshot(); len(calls) != 0 {
-		t.Fatalf("accounts was called %d time(s) behind a wrong internal token", len(calls))
+	calls := g.accounts.snapshot()
+	if len(calls) != 1 || calls[0].method != mintWork {
+		t.Fatalf("accounts calls = %v, want only the workload work mint", calls)
 	}
-	if err := mint(t.Context(), client, mintWork); err != nil {
-		t.Fatalf("%s behind a wrong internal token: %v, want it minted on the projected token alone", mintWork, err)
+	assertForwarded(t, g, calls[0], mintWork)
+}
+
+// The protected workload listener authenticates the waypoint's assertion,
+// strips caller-supplied presenter headers and forwards its own gateway proof.
+// These identities are the host's public test fixtures, never production values.
+func TestSDKConformanceWorkloadPresenter(t *testing.T) {
+	g := newRealGateway(t)
+	handler, err := authenticatedWorkloadListener(g.gateway, testWaypoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected := httptest.NewServer(handler)
+	t.Cleanup(protected.Close)
+	for name, values := range map[string][]string{
+		"missing":   nil,
+		"forged":    {"By=" + testPresenter + ";URI=" + testPresenter},
+		"duplicate": {"By=" + testWaypoint + ";URI=" + testPresenter, "By=" + testWaypoint + ";URI=" + testPresenter},
+		"valid":     {"By=" + testWaypoint + ";URI=" + testPresenter},
+	} {
+		t.Run(name, func(t *testing.T) {
+			before := len(g.accounts.snapshot())
+			r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, protected.URL+mintPaths[mintWork], strings.NewReader(mintBodies[mintWork]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Header.Set("Authorization", "Bearer projected-1")
+			r.Header["X-Forwarded-Client-Cert"] = values
+			r.Header.Set(workloadPresenterHeader, "forged")
+			r.Header.Set("X-Codefly-Gateway-Token", "forged")
+			response, err := protected.Client().Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = response.Body.Close()
+			calls := g.accounts.snapshot()
+			if name != "valid" {
+				if response.StatusCode != http.StatusUnauthorized || len(calls) != before {
+					t.Fatalf("invalid presenter: status=%d accounts=%d", response.StatusCode, len(calls)-before)
+				}
+				return
+			}
+			if response.StatusCode != http.StatusOK || len(calls) != before+1 {
+				t.Fatalf("valid presenter: status=%d accounts=%d", response.StatusCode, len(calls)-before)
+			}
+			call := calls[len(calls)-1]
+			assertForwarded(t, g, call, mintWork)
+			if !slices.Equal(call.md.Get(workloadPresenterHeader), []string{testPresenter}) || !slices.Equal(call.md.Get("x-codefly-gateway-token"), []string{g.gateway.authz.gatewayToken}) {
+				t.Fatal("gateway did not forward its authenticated presenter and proof")
+			}
+		})
+	}
+	public := httptest.NewServer(g.gateway)
+	t.Cleanup(public.Close)
+	before := len(g.accounts.snapshot())
+	r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, public.URL+mintPaths[mintWork], strings.NewReader(mintBodies[mintWork]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Header.Set("Authorization", "Bearer projected-1")
+	r.Header.Set("X-Codefly-Internal-Token", g.internalToken)
+	r.Header.Set("X-Forwarded-Client-Cert", "By="+testWaypoint+";URI="+testPresenter)
+	response, err := public.Client().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNotFound || len(g.accounts.snapshot()) != before {
+		t.Fatalf("public listener served a workload mint: status=%d", response.StatusCode)
 	}
 }
 

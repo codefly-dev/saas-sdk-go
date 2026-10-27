@@ -305,8 +305,8 @@ The SDK surfaces are:
   It talks to the two seams the host serves a composed module, and takes both
   explicitly — the consumer passes what Codefly resolved, nothing is defaulted:
 
-  - the **gateway's module broker** (REST on the auth-gateway's `rest`
-    endpoint): `POST /modules/_work-context`, `/modules/_operation-context`
+  - the **gateway's module broker** (HTTP on the auth-gateway's `workload`
+    endpoint, API `http`): `POST /modules/_work-context`, `/modules/_operation-context`
     and `/modules/_source-operation-context`, where the module presents its
     pod's projected ServiceAccount token (audience `accounts`) as the bearer;
     the host reviews it and mints only for the principal's declared workload
@@ -318,7 +318,7 @@ The SDK surfaces are:
 
   ```go
   authority, err := moduleauthority.New(moduleauthority.Seams{
-      Gateway:       gw,                                   // BaseURL() + HTTPClient()
+      Gateway:       workloadGateway,                      // resolved workload endpoint + HTTPClient()
       Authority:     moduleauthority.Authority{Address: authorityHostPort}, // TLS: nil = h2c
       InternalToken: internalToken,
       // Only from the consumer's own configured assertion that every
@@ -526,14 +526,15 @@ The template generates the complete host-owned `saas/` schema tree. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. The SDK requires Core at `b81d92e6feda`
-(`v0.19.6-0.20261018051341-b81d92e6feda`), the Core the v0.0.103 gateway
-requires: it supplies the Runnable package, and its `SealSource` has no
-approved build. No tagged Core carries that yet; v0.19.5 still requires
-`SealSource.ApprovedBuild`, so it cannot build this SDK, and the floor moves to
-the first Core tag that contains `b81d92e6feda`. The SDK need not adopt the
-host's entire dependency generation. Verify the compatible dependency floor
-with SDK and consumer builds when refreshing it.
+protobuf initialization. The `host/` installation import similarly resolves to
+`github.com/codefly-dev/authority/libraries/authority-client/go/gen`, the
+existing owner of shared `ConsentApproval` bindings. The canonical Authority
+client at `v0.0.0-20261026143932-67b85b14a942` requires Core
+`v0.19.7-0.20261026092055-b23dc13543b2`; these development source pins are not
+published release tags. Publishing the SDK requires compatible owner releases.
+The dependency requires Go 1.27.3. Core v0.19.5 still requires
+`SealSource.ApprovedBuild`, so it cannot build this SDK. Verify the compatible
+dependency floor with SDK and consumer builds when refreshing it.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through
 `refs/tags/` and verifies that regeneration leaves no diff. Before a host
@@ -743,3 +744,19 @@ their context's `Err()` for cancellation. For example, a caller may retry a 502,
 denial. The SDK does not automatically retry broker failures. Malformed initial
 HTTP headers provide no usable status and produce a transport error; malformed bodies cannot
 change a successfully parsed non-200 status into a transport failure.
+
+### Journal client reuse
+
+`moduleauthority.Client.ReadJournal` reuses this client's broker, module-credential
+cache and refresh-once behavior, existing Accounts HTTP/2 transport, and journal
+projection. The host protobuf constraints validate requests before credentials
+are obtained. Invalid nonempty timestamps are refused before a page is returned.
+No additional reader factory or credential-producer API is added.
+
+Generic shared Authority `Issue` requires an operation binding and cannot mint
+an unbound `module-capabilities` identity. A consumer must qualify its credential
+route; transport tests alone do not establish producer compatibility.
+
+| Build or reuse | Searched and verified | Result |
+| --- | --- | --- |
+| Journal client | Existing Client module credentials, cache, callAsModule transport, protobuf request constraints and journal tests | Extend Client.ReadJournal. Remove the unqualified second reader factory; reuse the existing broker, cache and decoder instead of adding a credential API. |

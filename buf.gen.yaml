@@ -19,6 +19,11 @@ managed:
     - file_option: go_package_prefix
       path: codefly
       value: github.com/codefly-dev/core/generated/go
+    # Shared installation approvals belong to the canonical Authority schema.
+    # Import those bindings rather than registering another host.* descriptor.
+    - file_option: go_package_prefix
+      path: host
+      value: github.com/codefly-dev/authority/libraries/authority-client/go/gen
 plugins:
   - local: [go, run, google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11]
     out: gen

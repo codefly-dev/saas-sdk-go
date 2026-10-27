@@ -2,23 +2,38 @@
 
 ## Unreleased
 
-Core main and module-saas-starter v0.0.103. No Core tag carries the Core this
-needs, so the floor is a pseudo-version; it moves to the first tag that does.
+The journal contract uses the exact module-saas-starter development source in
+`SOURCE.txt`. Shared installation approval types come from the canonical
+Authority client; its declared Core dependency sets the development floor.
 
 ### Changed
 
-- **Core floor: `v0.19.6-0.20261018051341-b81d92e6feda`** (Core main,
-  2026-10-18), from v0.19.4 on this branch and v0.19.1 in v0.1.3. Core
-  `22ddde98` removed the approved build from a Work Context: `SealSource` lost
-  `ApprovedBuild` and `ErrNoApprovedBuild` is gone, so v0.1.3 does not compile
-  for any consumer that requires that Core. It is also the Core the v0.0.103
-  gateway requires. Core v0.19.5 still requires `SealSource.ApprovedBuild` and
-  cannot build this release; MVS never selects it beside this floor.
-- **`gen/` moves from `9ab36e7e` to released module-saas-starter v0.0.103**
-  (`2cb00737`), with the existing plugin pins and buf v1.73.0. The tree
-  reproduces byte-for-byte from that tag, and `SOURCE.txt` records it for both
-  `gen-drift` and `conformance/hostgateway`. The module package version stays
-  0.1.0; regeneration cuts no SDK release.
+- Reuse the host protobuf request constraints in `Client.ReadJournal` before
+  obtaining credentials; reject invalid supplied timestamps. Keep the existing
+  broker, module-credential cache, refresh-once behavior and Accounts transport.
+  No second reader factory or credential-producer API is added. Generic shared
+  Authority Issue does not mint the required unbound module identity; consuming
+  modules must qualify their producer route separately.
+
+- Refresh development provenance to the rebased module-saas-starter journal
+  source recorded in `SOURCE.txt`, with module package version 0.2.0. The full
+  generated API carries the latest host fields, including installation approval
+  and workload operation admission. No SDK release is published.
+
+- **Shared installation approval bindings** resolve to the existing Authority
+  client at `v0.0.0-20261026143932-67b85b14a942`, rather than generating a second
+  `host.*` descriptor tree. That client requires Core
+  `v0.19.7-0.20261026092055-b23dc13543b2`, the SDK's development floor. Core
+  `v0.19.6` supplies the earlier Work Context APIs but does not satisfy the
+  canonical client's declared floor. These are development source pins;
+  publication remains gated on actual compatible owner releases. Go 1.27.3
+  remains the minimum toolchain.
+- **`gen/` adds the journal and delivery contract to the current host schema.**
+  The complete host-owned `saas/` tree is generated from the exact development
+  source recorded in `SOURCE.txt`, with buf 1.73.0 and the existing plugin pins.
+  The generated tree retains current main's solution registry and datasource
+  contracts. Regeneration cuts no SDK release; publishing follows the host
+  release and replacement of the development source with its release tag.
 - **The module broker is the gateway's workload endpoint.** Host `af5cef9a`
   (module-saas-starter#1120) serves the three mints there alone — the public
   endpoint answers 404 — and `Seams.Gateway`'s documentation now says so. The
@@ -33,6 +48,13 @@ needs, so the floor is a pseudo-version; it moves to the first tag that does.
 
 ### Removed (breaking)
 
+- The journal generation adds methods to generated interfaces:
+  `AuditServiceClient`/`Handler.DeliverAuditEvents` and
+  `.LookupDeliverAuditEvents`, `ModuleCapabilitiesServiceClient`/`Handler.ReadJournal`,
+  and `WorkContextServiceClient`/`Handler.AdmitWorkloadOperation`.
+  Implementers must provide the methods or embed the generated
+  `Unimplemented…Handler`. No existing generated symbol is removed relative
+  to current main.
 - **`(*moduleauthority.WorkContextSources).ApprovedBuild`**. Core's verifier
   no longer asks an issuer for an approved build — a change of approved builds
   revokes through the principal's epoch and the installation's revision — and
@@ -55,6 +77,38 @@ needs, so the floor is a pseudo-version; it moves to the first tag that does.
   Embedding the generated `Unimplemented…Handler` absorbs the handler half.
 
 ### Added
+
+- The refreshed host schema includes installation revision and explicit
+  `InstallSolutionRequest.Approval` (`ConsentApproval` from Authority), workload
+  operation admission, task operation bindings, declaration-digest checks,
+  viewer Work Context fields and service interface-package inventory. These
+  are the host's contracts; the SDK adds no alternate admission or approval path.
+
+- `Client.ReadJournal(ctx, after, limit, types, deliveryBindings) (JournalPage, error)`
+  calls `ModuleCapabilitiesService.ReadJournal` on the authority endpoint as the
+  module, through the same credentials and refresh-once rule as every authority
+  call. The host serves it only to a cross-tenant module principal; any other
+  caller gets the host's `PermissionDenied`, preserved. Positions are opaque
+  strings: `after` is exclusive, `""` reads from the oldest retained entry, and
+  `JournalPage.NextAfter` is the resume point the host guarantees misses no
+  committed entry and never passes an unfinished transaction, so a reader
+  resumes from it rather than from the last `Position` it saw, and only stores
+  and compares positions for equality.
+- `JournalStart` (`"start"`) is the position that means "before the oldest
+  retained entry": the host accepts it as `after`, and as the `from` of its
+  delivery operation, and never returns it as an entry's position. A reader with
+  no position of its own starts from it.
+- `deliveryBindings` are the caller's binding ids whose mints and exchanges count
+  as delivery machinery; the host sets `JournalEntry.DeliveryMachinery` on the
+  entries that record one of them, or the caller's own module work-context mint,
+  so a reader that delivers journal entries can tell a page of its own delivery
+  from a page of real activity. A limit outside 0..500 (0 is the host's default of
+  100), no type, or an empty type or binding id is `ErrInvalidJournalRead` before
+  any call.
+- Generated: `ReadJournal` on `ModuleCapabilitiesService`, with
+  `ModuleReadJournalRequest`, `ModuleJournalEntry` and
+  `ModuleReadJournalResponse`; `DeliverAuditEventsResponse.From` and `To`
+  carry the exact committed receipt interval for retention coverage checks.
 
 - **`accounts.Client.Datasources()`**, the `DatasourceService` facade beside
   `Audit()`: `ListSources`, `GetSource`, `AddSource`, `ListSourceOperations`,

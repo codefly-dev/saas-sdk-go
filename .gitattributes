@@ -1,0 +1,2 @@
+# Host-owned protocol bindings are generated. Keep facades and locks visible.
+gen/** linguist-generated=true
