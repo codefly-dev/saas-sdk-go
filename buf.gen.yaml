@@ -2,10 +2,11 @@ version: v2
 clean: true
 inputs:
   - directory: .
-    # Core's vendored import closure is compiled, but its Go bindings belong
-    # to the Core dependency. Generate every host-owned public schema.
+    # Core's vendored import closure stays with Core. Accounts now references
+    # host installation messages, so include that referenced schema too.
     paths:
       - saas
+      - host/installation/v1/installation.proto
 managed:
   enabled: true
   disable:

@@ -253,7 +253,7 @@ The SDK surfaces are:
 
   This call surface uses the four host RPCs from
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
-  `SOURCE.txt` records the released host tag `v0.0.103` used to regenerate
+  `SOURCE.txt` records the exact host commit `37b6003d` used to regenerate
   the bindings. This regeneration does not publish an SDK release.
   The host's runtime-scheduled `PruneSourceOperationReceipts` and
   `LookupPruneSourceOperationReceipts` are included in the generated bindings
@@ -507,11 +507,11 @@ proto ref `gen/` was generated from.
 ## Regenerating `gen/`
 
 The proto source of truth is `module-saas-starter/module/services/accounts/proto`.
-To refresh from a released tag (in a checkout of that repo):
+To reproduce the current development contract (in a checkout of that repo):
 
 ```bash
-git fetch origin tag v0.0.103
-git checkout --detach v0.0.103
+git fetch origin 37b6003d4b21046916d53f8e94677a4b57beb2e3
+git checkout --detach 37b6003d4b21046916d53f8e94677a4b57beb2e3
 cd module/services/accounts/proto
 buf generate --template <this-repo>/buf.gen.yaml -o <this-repo>
 ```
@@ -522,13 +522,13 @@ the correct module path. **Never hand-edit `gen/` or sed the module path** — t
 protobuf file descriptors embed length-prefixed package strings and a text
 rewrite corrupts them (panics at `init()`). Always regenerate.
 
-The template generates the complete host-owned `saas/` schema tree. Its
+The template generates the complete host-owned `saas/` schema tree and the
+referenced host installation schema. Its
 vendored `codefly/` import closure is compiled for Runnable annotations, with
 imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
 those Go descriptors. Emitting a second copy in this SDK would conflict at
 protobuf initialization. The SDK requires Core at `b81d92e6feda`
-(`v0.19.6-0.20261018051341-b81d92e6feda`), the Core the v0.0.103 gateway
-requires: it supplies the Runnable package, and its `SealSource` has no
+(`v0.19.6-0.20261018051341-b81d92e6feda`): it supplies the Runnable package, and its `SealSource` has no
 approved build. No tagged Core carries that yet; v0.19.5 still requires
 `SealSource.ApprovedBuild`, so it cannot build this SDK, and the floor moves to
 the first Core tag that contains `b81d92e6feda`. The SDK need not adopt the

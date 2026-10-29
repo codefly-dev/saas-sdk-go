@@ -353,6 +353,28 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// ForOrganization selects the organization of a work item without sharing a
+// cached capability with another organization. The child shares this client's
+// transports; Close on either releases idle connections, not active calls.
+// Selection grants no authority: the host still proves the workload and its
+// installation. A client already bound to an organization cannot switch it.
+func (c *Client) ForOrganization(organization string) (*Client, error) {
+	if c == nil {
+		return nil, ErrInvalidCredentials
+	}
+	id, err := uuid.Parse(organization)
+	if err != nil || id.String() != organization || (c.credentials.OrganizationID != "" && c.credentials.OrganizationID != organization) {
+		return nil, ErrInvalidCredentials
+	}
+	if c.credentials.OrganizationID == organization {
+		return c, nil
+	}
+	credentials := c.credentials
+	credentials.OrganizationID = organization
+	return &Client{broker: c.broker, authority: c.authority, credentials: credentials,
+		now: c.now, refreshSkew: c.refreshSkew}, nil
+}
+
 // ModuleWorkContext returns a current module capability, refreshing it before
 // expiry. Concurrent callers share one refresh.
 func (c *Client) ModuleWorkContext(ctx context.Context) (string, error) {

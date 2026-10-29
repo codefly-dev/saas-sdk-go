@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Regenerate the host contract at `37b6003d`: source collection and placed-record
+  reads carry the viewer capability separately from the calling module proof.
+  Existing modules can use the authenticated module endpoint without presenting
+  a viewer as a module principal. Generation uses the existing pinned plugins.
+
 Core main and module-saas-starter v0.0.103. No Core tag carries the Core this
 needs, so the floor is a pseudo-version; it moves to the first tag that does.
 
