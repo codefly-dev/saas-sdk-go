@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 )
 
 func TestNotifyOrgAdminsCallsTheAuthorityEndpointAsTheModule(t *testing.T) {
@@ -176,8 +177,8 @@ func TestNotifyUserSurfacesTheHostsRefusal(t *testing.T) {
 	_, err = client.NotifyUser(t.Context(), UserNotice{
 		Tenant: "11111111-1111-1111-1111-111111111111", UserID: nonMember, Title: "t", Category: "product",
 	})
-	if connect.CodeOf(err) != connect.CodePermissionDenied {
-		t.Fatalf("err = %v, want PermissionDenied for a recipient outside the tenant", err)
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !errors.Is(err, ErrTenantMembershipMissing) {
+		t.Fatalf("err = %v, want membership refusal with its wire code", err)
 	}
 }
 
@@ -194,5 +195,30 @@ func TestNotifyUserNeedsTheAuthoritySeam(t *testing.T) {
 		Tenant: "11111111-1111-1111-1111-111111111111", UserID: "22222222-2222-2222-2222-222222222222", Title: "t", Category: "product",
 	}); !errors.Is(err, ErrNoAuthority) {
 		t.Fatalf("err = %v, want ErrNoAuthority", err)
+	}
+}
+
+func TestNoticeRefusalMatchesOnlyAccountsCodeAndReason(t *testing.T) {
+	for _, tc := range []struct {
+		code           connect.Code
+		domain, reason string
+		want           error
+	}{
+		{connect.CodeFailedPrecondition, "saas.accounts.v1", "NOTIFICATION_IDEMPOTENCY_CONFLICT", ErrNotificationIdempotencyConflict},
+		{connect.CodeUnavailable, "saas.accounts.v1", "LIVE_AUTHORITY_UNAVAILABLE", ErrLiveAuthorityUnavailable},
+		{connect.CodeFailedPrecondition, "other", "TENANT_MEMBERSHIP_MISSING", nil},
+		{connect.CodePermissionDenied, "saas.accounts.v1", "TENANT_MEMBERSHIP_MISSING", nil},
+		{connect.CodeFailedPrecondition, "saas.accounts.v1", "FUTURE_REASON", nil},
+	} {
+		refusal := connect.NewError(tc.code, errors.New("TENANT_MEMBERSHIP_MISSING"))
+		detail, err := connect.NewErrorDetail(&errdetails.ErrorInfo{Domain: tc.domain, Reason: tc.reason})
+		if err != nil {
+			t.Fatal(err)
+		}
+		refusal.AddDetail(detail)
+		got := NotificationError(refusal)
+		if !errors.Is(got, refusal) || (tc.want == nil && got != refusal) || (tc.want != nil && !errors.Is(got, tc.want)) {
+			t.Errorf("%v: unexpected verdict %v", tc, got)
+		}
 	}
 }
