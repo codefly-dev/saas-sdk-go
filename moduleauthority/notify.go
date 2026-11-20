@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"connectrpc.com/connect"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+
 	v1 "github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1"
 	"github.com/codefly-dev/saas-sdk-go/gen/saas/accounts/v1/accountsv1connect"
 )
@@ -12,6 +15,41 @@ import (
 // ErrInvalidNotice is returned before any call for a notice without a tenant,
 // title or category, or a UserNotice without a recipient.
 var ErrInvalidNotice = errors.New("module authority: invalid notice")
+
+// ErrTenantMembershipMissing identifies a definitive refusal for this recipient.
+var ErrTenantMembershipMissing = errors.New("recipient is not a tenant member")
+
+// ErrNotificationIdempotencyConflict identifies a reused key with different content.
+var ErrNotificationIdempotencyConflict = errors.New("notification idempotency conflict")
+
+// ErrLiveAuthorityUnavailable identifies a host unable to check current authority.
+var ErrLiveAuthorityUnavailable = errors.New("live authority unavailable")
+
+// NotificationError classifies Accounts notification refusals from a raw generated
+// client. The facade applies it automatically. Unknown failures pass through,
+// and every classified error still unwraps to the original transport error.
+func NotificationError(err error) error {
+	var rpc *connect.Error
+	if !errors.As(err, &rpc) {
+		return err
+	}
+	for _, detail := range rpc.Details() {
+		value, decodeErr := detail.Value()
+		info, ok := value.(*errdetails.ErrorInfo)
+		if decodeErr != nil || !ok || info.Domain != "saas.accounts.v1" {
+			continue
+		}
+		switch {
+		case rpc.Code() == connect.CodeFailedPrecondition && info.Reason == "TENANT_MEMBERSHIP_MISSING":
+			return fmt.Errorf("%w: %w", ErrTenantMembershipMissing, err)
+		case rpc.Code() == connect.CodeFailedPrecondition && info.Reason == "NOTIFICATION_IDEMPOTENCY_CONFLICT":
+			return fmt.Errorf("%w: %w", ErrNotificationIdempotencyConflict, err)
+		case rpc.Code() == connect.CodeUnavailable && info.Reason == "LIVE_AUTHORITY_UNAVAILABLE":
+			return fmt.Errorf("%w: %w", ErrLiveAuthorityUnavailable, err)
+		}
+	}
+	return err
+}
 
 // OrgAdminsNotice is a notification for the administrators of one tenant. There
 // is deliberately no recipient: the host resolves the tenant's admin and owner
@@ -55,7 +93,7 @@ func (c *Client) NotifyOrgAdmins(ctx context.Context, notice OrgAdminsNotice) (b
 		IdempotencyKey: notice.IdempotencyKey,
 	})
 	if err != nil {
-		return false, fmt.Errorf("module authority: notify org admins: %w", err)
+		return false, fmt.Errorf("module authority: notify org admins: %w", NotificationError(err))
 	}
 	return res.GetDelivered(), nil
 }
@@ -67,12 +105,8 @@ type UserNotice struct {
 	// Tenant is the organization the notice belongs to; it must be the tenant
 	// this module is bound to (or the module must be cross-tenant).
 	Tenant string
-	// UserID is the recipient, a member of Tenant. The host refuses a
-	// non-member as PermissionDenied, but PermissionDenied also means a
-	// misconfigured credential or principal — a wrong internal token, a
-	// procedure the endpoint does not serve, a tenant the module is not bound
-	// to — so it does not identify a non-member
-	// (codefly-dev/module-saas-starter#1011 asks for a code of its own).
+	// UserID is the recipient. A definitive host refusal for a departed member
+	// matches ErrTenantMembershipMissing through errors.Is.
 	UserID string
 	Title  string
 	Body   string
@@ -112,7 +146,7 @@ func (c *Client) NotifyUser(ctx context.Context, notice UserNotice) (bool, error
 		IdempotencyKey: notice.IdempotencyKey,
 	})
 	if err != nil {
-		return false, fmt.Errorf("module authority: notify user: %w", err)
+		return false, fmt.Errorf("module authority: notify user: %w", NotificationError(err))
 	}
 	return res.GetDelivered(), nil
 }

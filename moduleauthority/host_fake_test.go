@@ -16,6 +16,7 @@ import (
 
 	"github.com/codefly-dev/core/wool"
 	corework "github.com/codefly-dev/core/workcontext"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -526,7 +527,11 @@ func (a *fakeAuthority) handle(_ any, stream grpc.ServerStream) error {
 			return status.Error(codes.InvalidArgument, "invalid notification type")
 		}
 		if n.GetUserId() == nonMember {
-			return status.Error(codes.PermissionDenied, "user is not a member of tenant")
+			refusal, err := status.New(codes.FailedPrecondition, "recipient refused").WithDetails(&errdetails.ErrorInfo{Domain: "saas.accounts.v1", Reason: "TENANT_MEMBERSHIP_MISSING"})
+			if err != nil {
+				return err
+			}
+			return refusal.Err()
 		}
 		return stream.SendMsg(&v1.ModuleNotifyUserResponse{NotificationId: "n-1", Delivered: n.GetCategory() != "marketing"})
 	}

@@ -743,3 +743,14 @@ their context's `Err()` for cancellation. For example, a caller may retry a 502,
 denial. The SDK does not automatically retry broker failures. Malformed initial
 HTTP headers provide no usable status and produce a transport error; malformed bodies cannot
 change a successfully parsed non-200 status into a transport failure.
+
+### Notification refusals
+
+A journal consumer calling `moduleauthority.Client.NotifyUser` can use
+`errors.Is(err, moduleauthority.ErrTenantMembershipMissing)` to finish a notice
+for a departed recipient. A caller using the generated Accounts client directly
+can apply `moduleauthority.NotificationError(err)` first. A key reused with
+different content matches `ErrNotificationIdempotencyConflict` and needs sender
+attention. A failed live authority check matches `ErrLiveAuthorityUnavailable`.
+Keep pending work on authority, configuration and unknown failures. The original
+Connect error and its details remain available through the error chain.
