@@ -118,3 +118,9 @@ move and need opposite fixes.
 
 A compile error that renames an accounts *request* field is both: re-bind the
 accessor, then let the assertions say whether the SDK-facing wire changed.
+
+The v0.0.103 gateway pins a frontendpayload commit that is no longer fetchable.
+For that pin, the harness rebuilds the module archive from the release's Git
+objects, including the root license. Go checks the module and its go.mod against
+the gateway's committed go.sum. The host-source sparse checkout retains those
+objects. Other dependency versions use normal Go resolution.
