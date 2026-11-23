@@ -90,6 +90,19 @@ export GOLANG_PROTOBUF_REGISTRATION_CONFLICT=ignore
 
 cd "$pkg"
 modfile=(-modfile="$work/go.mod")
+# The v0.0.103 gateway pins a now-unreachable frontendpayload commit. Its
+# release tree contains the exact published module. Let Go authenticate both
+# artifacts against the gateway's original go.sum before using its cache.
+payload=github.com/codefly-dev/module-saas-starter/module/frontendpayload
+version=v0.0.0-20261018173826-0d423cb8bd17
+if awk -v m="$payload" -v v="$version" '$1 == m && $2 == v {found=1} END {exit !found}' "$pkg/go.mod"; then
+	for suffix in "" /go.mod; do
+		grep -Fq "$payload $version$suffix h1:" "$pkg/go.sum"
+	done
+	python3 "$here/release-proxy.py" "$host" "$work/proxy"
+	GOPROXY="file://$work/proxy" go mod download "${modfile[@]}" "$payload@$version"
+fi
+
 # Add exactly one dependency, the SDK's moduleauthority, with the requirements
 # its own go.mod declares. `go get` would look up at @latest any import of
 # moduleauthority that go.mod does not declare, so first require that there is
