@@ -1,4 +1,4 @@
-gen/ generated from codefly-dev/module-saas-starter@74474344c3c9dcee4044d5d958a17c043e64ce36
+gen/ generated from codefly-dev/module-saas-starter@3e69b75fc8098406625105d8f1628a0976b9243e
 (accounts public proto: module/services/accounts/proto)
 (auth gateway: module/services/auth-gateway/code)
 
