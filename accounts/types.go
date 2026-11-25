@@ -79,6 +79,10 @@ type (
 	ApiCredentialKind      = v1.ApiCredentialKind
 	ApiOAuth2Config_Grant  = v1.ApiOAuth2Config_Grant
 	DatasourceLiveDelivery = v1.DatasourceLiveDelivery
+	// DatasourceCredentialMode identifies which credentials the source uses.
+	DatasourceCredentialMode = v1.DatasourceCredentialMode
+	// SourceGovernance identifies the installation and scope governing the source.
+	SourceGovernance       = v1.SourceGovernance
 	DatasourceProvider     = v1.DatasourceProvider
 	DatasourceStatus       = v1.DatasourceStatus
 	SourceOperation_Effect = v1.SourceOperation_Effect
@@ -126,4 +130,12 @@ const (
 	SourceOperation_EFFECT_MUTATION    = v1.SourceOperation_EFFECT_MUTATION
 	SourceOperation_EFFECT_READ_ONLY   = v1.SourceOperation_EFFECT_READ_ONLY
 	SourceOperation_EFFECT_UNSPECIFIED = v1.SourceOperation_EFFECT_UNSPECIFIED
+)
+
+const (
+	DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_UNSPECIFIED   = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_UNSPECIFIED
+	DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_NONE          = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_NONE
+	DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_ORG_APP       = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_ORG_APP
+	DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_USER_OAUTH    = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_USER_OAUTH
+	DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_STATIC_SECRET = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_STATIC_SECRET
 )

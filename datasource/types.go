@@ -73,6 +73,10 @@ type Result struct {
 type (
 	// DatasourceLiveDelivery describes the configured live-delivery path.
 	DatasourceLiveDelivery = v1.DatasourceLiveDelivery
+	// DatasourceCredentialMode identifies which credentials the source uses.
+	DatasourceCredentialMode = v1.DatasourceCredentialMode
+	// SourceGovernance identifies the installation and scope governing the source.
+	SourceGovernance = v1.SourceGovernance
 	// Datasource is the non-secret projection of a connected source.
 	Datasource = v1.Datasource
 	// DatasourceStatus is the ingestion status carried by a Datasource.
@@ -140,4 +144,12 @@ const (
 	ApiCredentialKindHeader      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_HEADER
 	ApiCredentialKindQuery       = v1.ApiCredentialKind_API_CREDENTIAL_KIND_QUERY
 	ApiCredentialKindOAuth2      = v1.ApiCredentialKind_API_CREDENTIAL_KIND_OAUTH2
+)
+
+const (
+	DatasourceCredentialModeUnspecified  = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_UNSPECIFIED
+	DatasourceCredentialModeNone         = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_NONE
+	DatasourceCredentialModeOrgApp       = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_ORG_APP
+	DatasourceCredentialModeUserOAuth    = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_USER_OAUTH
+	DatasourceCredentialModeStaticSecret = v1.DatasourceCredentialMode_DATASOURCE_CREDENTIAL_MODE_STATIC_SECRET
 )

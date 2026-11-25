@@ -2,12 +2,15 @@
 
 ## Unreleased
 
-Core main and module-saas-starter v0.0.103. No Core tag carries the Core this
-needs, so the floor is a pseudo-version; it moves to the first tag that does.
-
 ### Changed
 
-- **Core floor: `v0.19.6-0.20261018051341-b81d92e6feda`** (Core main,
+- Regenerated the Accounts bindings from the source in `SOURCE.txt`. Data source
+  operations use Core's runnable v1 annotations. Installation messages use the
+  Authority client's canonical host bindings.
+- Both data source facades expose credential modes and source governance.
+  Consumers can name those types directly when building requests and reading
+  a source's configuration.
+- **Earlier Core floor: `v0.19.6-0.20261018051341-b81d92e6feda`** (Core main,
   2026-10-18), from v0.19.4 on this branch and v0.19.1 in v0.1.3. Core
   `22ddde98` removed the approved build from a Work Context: `SealSource` lost
   `ApprovedBuild` and `ErrNoApprovedBuild` is gone, so v0.1.3 does not compile

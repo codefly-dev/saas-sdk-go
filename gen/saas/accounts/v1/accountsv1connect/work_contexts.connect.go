@@ -43,6 +43,12 @@ const (
 	// WorkContextServiceConsumeSingleUseProcedure is the fully-qualified name of the
 	// WorkContextService's ConsumeSingleUse RPC.
 	WorkContextServiceConsumeSingleUseProcedure = "/saas.accounts.v1.WorkContextService/ConsumeSingleUse"
+	// WorkContextServiceAdmitWorkloadOperationProcedure is the fully-qualified name of the
+	// WorkContextService's AdmitWorkloadOperation RPC.
+	WorkContextServiceAdmitWorkloadOperationProcedure = "/saas.accounts.v1.WorkContextService/AdmitWorkloadOperation"
+	// WorkContextServiceRecordHopRefusalProcedure is the fully-qualified name of the
+	// WorkContextService's RecordHopRefusal RPC.
+	WorkContextServiceRecordHopRefusalProcedure = "/saas.accounts.v1.WorkContextService/RecordHopRefusal"
 	// WorkContextServiceStartTaskProcedure is the fully-qualified name of the WorkContextService's
 	// StartTask RPC.
 	WorkContextServiceStartTaskProcedure = "/saas.accounts.v1.WorkContextService/StartTask"
@@ -82,6 +88,28 @@ type WorkContextServiceClient interface {
 	// a replay and returns ALREADY_EXISTS. A caller must treat that as the
 	// capability being spent and fail the operation closed, not retry it.
 	ConsumeSingleUse(context.Context, *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error)
+	// AdmitWorkloadOperation answers whether a capability presented with no
+	// bearer at the declared module route /v1/<alias>/* is a module operation
+	// context (StartModuleOperationTask) for that alias, and admits nothing else;
+	// and whether the route's target is installed in the capability's tenant.
+	// The auth-gateway's bearer-less arm is its caller. Unlike the revision
+	// checks above, the signed capability itself crosses this boundary: the
+	// answer depends on its owner, owner kind and chain, which only the issuer
+	// reads. It reads the capability back (core's Authority.ReadBack: signature
+	// under this issuer, window, audience, revision, seal, epochs) and never
+	// verifies it as presented, so nothing is consumed and the callee still
+	// verifies at full strength. Internal-tier: the tenant it answers about is
+	// the one the capability names.
+	AdmitWorkloadOperation(context.Context, *connect.Request[v1.AdmitWorkloadOperationRequest]) (*connect.Response[v1.AdmitWorkloadOperationResponse], error)
+	// RecordHopRefusal records one call the hop's front door refused itself in
+	// the audit journal (saas.authority.decision_refused, decision "hop"). The
+	// auth-gateway, which is the hop in a cell and keeps no journal, is its
+	// caller: the hop's own refusals reach the authority from nobody else. A
+	// refusal whose identity the authority checked is filed in its
+	// organization; one read from an unverified Work Context, or naming none,
+	// is filed under no organization. Internal-tier: the caller is trusted to
+	// say what it refused, and nothing is decided or returned.
+	RecordHopRefusal(context.Context, *connect.Request[v1.RecordHopRefusalRequest]) (*connect.Response[v1.RecordHopRefusalResponse], error)
 	StartTask(context.Context, *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	// StartInstallationTask is the headless mint. Unlike StartTask it opens with a
 	// service credential rather than a bearer: it resolves the installation's owner
@@ -135,6 +163,18 @@ func NewWorkContextServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(workContextServiceMethods.ByName("ConsumeSingleUse")),
 			connect.WithClientOptions(opts...),
 		),
+		admitWorkloadOperation: connect.NewClient[v1.AdmitWorkloadOperationRequest, v1.AdmitWorkloadOperationResponse](
+			httpClient,
+			baseURL+WorkContextServiceAdmitWorkloadOperationProcedure,
+			connect.WithSchema(workContextServiceMethods.ByName("AdmitWorkloadOperation")),
+			connect.WithClientOptions(opts...),
+		),
+		recordHopRefusal: connect.NewClient[v1.RecordHopRefusalRequest, v1.RecordHopRefusalResponse](
+			httpClient,
+			baseURL+WorkContextServiceRecordHopRefusalProcedure,
+			connect.WithSchema(workContextServiceMethods.ByName("RecordHopRefusal")),
+			connect.WithClientOptions(opts...),
+		),
 		startTask: connect.NewClient[v1.StartTaskWorkContextRequest, v1.IssuedWorkContext](
 			httpClient,
 			baseURL+WorkContextServiceStartTaskProcedure,
@@ -179,6 +219,8 @@ type workContextServiceClient struct {
 	checkAuthorizationRevision *connect.Client[v1.CheckAuthorizationRevisionRequest, emptypb.Empty]
 	authorizeEvidenceRead      *connect.Client[v1.AuthorizeEvidenceReadRequest, emptypb.Empty]
 	consumeSingleUse           *connect.Client[v1.ConsumeSingleUseWorkContextRequest, emptypb.Empty]
+	admitWorkloadOperation     *connect.Client[v1.AdmitWorkloadOperationRequest, v1.AdmitWorkloadOperationResponse]
+	recordHopRefusal           *connect.Client[v1.RecordHopRefusalRequest, v1.RecordHopRefusalResponse]
 	startTask                  *connect.Client[v1.StartTaskWorkContextRequest, v1.IssuedWorkContext]
 	startInstallationTask      *connect.Client[v1.StartInstallationTaskRequest, v1.IssuedWorkContext]
 	startRootSession           *connect.Client[v1.StartRootSessionWorkContextRequest, v1.IssuedWorkContext]
@@ -200,6 +242,16 @@ func (c *workContextServiceClient) AuthorizeEvidenceRead(ctx context.Context, re
 // ConsumeSingleUse calls saas.accounts.v1.WorkContextService.ConsumeSingleUse.
 func (c *workContextServiceClient) ConsumeSingleUse(ctx context.Context, req *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.consumeSingleUse.CallUnary(ctx, req)
+}
+
+// AdmitWorkloadOperation calls saas.accounts.v1.WorkContextService.AdmitWorkloadOperation.
+func (c *workContextServiceClient) AdmitWorkloadOperation(ctx context.Context, req *connect.Request[v1.AdmitWorkloadOperationRequest]) (*connect.Response[v1.AdmitWorkloadOperationResponse], error) {
+	return c.admitWorkloadOperation.CallUnary(ctx, req)
+}
+
+// RecordHopRefusal calls saas.accounts.v1.WorkContextService.RecordHopRefusal.
+func (c *workContextServiceClient) RecordHopRefusal(ctx context.Context, req *connect.Request[v1.RecordHopRefusalRequest]) (*connect.Response[v1.RecordHopRefusalResponse], error) {
+	return c.recordHopRefusal.CallUnary(ctx, req)
 }
 
 // StartTask calls saas.accounts.v1.WorkContextService.StartTask.
@@ -252,6 +304,28 @@ type WorkContextServiceHandler interface {
 	// a replay and returns ALREADY_EXISTS. A caller must treat that as the
 	// capability being spent and fail the operation closed, not retry it.
 	ConsumeSingleUse(context.Context, *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error)
+	// AdmitWorkloadOperation answers whether a capability presented with no
+	// bearer at the declared module route /v1/<alias>/* is a module operation
+	// context (StartModuleOperationTask) for that alias, and admits nothing else;
+	// and whether the route's target is installed in the capability's tenant.
+	// The auth-gateway's bearer-less arm is its caller. Unlike the revision
+	// checks above, the signed capability itself crosses this boundary: the
+	// answer depends on its owner, owner kind and chain, which only the issuer
+	// reads. It reads the capability back (core's Authority.ReadBack: signature
+	// under this issuer, window, audience, revision, seal, epochs) and never
+	// verifies it as presented, so nothing is consumed and the callee still
+	// verifies at full strength. Internal-tier: the tenant it answers about is
+	// the one the capability names.
+	AdmitWorkloadOperation(context.Context, *connect.Request[v1.AdmitWorkloadOperationRequest]) (*connect.Response[v1.AdmitWorkloadOperationResponse], error)
+	// RecordHopRefusal records one call the hop's front door refused itself in
+	// the audit journal (saas.authority.decision_refused, decision "hop"). The
+	// auth-gateway, which is the hop in a cell and keeps no journal, is its
+	// caller: the hop's own refusals reach the authority from nobody else. A
+	// refusal whose identity the authority checked is filed in its
+	// organization; one read from an unverified Work Context, or naming none,
+	// is filed under no organization. Internal-tier: the caller is trusted to
+	// say what it refused, and nothing is decided or returned.
+	RecordHopRefusal(context.Context, *connect.Request[v1.RecordHopRefusalRequest]) (*connect.Response[v1.RecordHopRefusalResponse], error)
 	StartTask(context.Context, *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error)
 	// StartInstallationTask is the headless mint. Unlike StartTask it opens with a
 	// service credential rather than a bearer: it resolves the installation's owner
@@ -301,6 +375,18 @@ func NewWorkContextServiceHandler(svc WorkContextServiceHandler, opts ...connect
 		connect.WithSchema(workContextServiceMethods.ByName("ConsumeSingleUse")),
 		connect.WithHandlerOptions(opts...),
 	)
+	workContextServiceAdmitWorkloadOperationHandler := connect.NewUnaryHandler(
+		WorkContextServiceAdmitWorkloadOperationProcedure,
+		svc.AdmitWorkloadOperation,
+		connect.WithSchema(workContextServiceMethods.ByName("AdmitWorkloadOperation")),
+		connect.WithHandlerOptions(opts...),
+	)
+	workContextServiceRecordHopRefusalHandler := connect.NewUnaryHandler(
+		WorkContextServiceRecordHopRefusalProcedure,
+		svc.RecordHopRefusal,
+		connect.WithSchema(workContextServiceMethods.ByName("RecordHopRefusal")),
+		connect.WithHandlerOptions(opts...),
+	)
 	workContextServiceStartTaskHandler := connect.NewUnaryHandler(
 		WorkContextServiceStartTaskProcedure,
 		svc.StartTask,
@@ -345,6 +431,10 @@ func NewWorkContextServiceHandler(svc WorkContextServiceHandler, opts ...connect
 			workContextServiceAuthorizeEvidenceReadHandler.ServeHTTP(w, r)
 		case WorkContextServiceConsumeSingleUseProcedure:
 			workContextServiceConsumeSingleUseHandler.ServeHTTP(w, r)
+		case WorkContextServiceAdmitWorkloadOperationProcedure:
+			workContextServiceAdmitWorkloadOperationHandler.ServeHTTP(w, r)
+		case WorkContextServiceRecordHopRefusalProcedure:
+			workContextServiceRecordHopRefusalHandler.ServeHTTP(w, r)
 		case WorkContextServiceStartTaskProcedure:
 			workContextServiceStartTaskHandler.ServeHTTP(w, r)
 		case WorkContextServiceStartInstallationTaskProcedure:
@@ -376,6 +466,14 @@ func (UnimplementedWorkContextServiceHandler) AuthorizeEvidenceRead(context.Cont
 
 func (UnimplementedWorkContextServiceHandler) ConsumeSingleUse(context.Context, *connect.Request[v1.ConsumeSingleUseWorkContextRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.ConsumeSingleUse is not implemented"))
+}
+
+func (UnimplementedWorkContextServiceHandler) AdmitWorkloadOperation(context.Context, *connect.Request[v1.AdmitWorkloadOperationRequest]) (*connect.Response[v1.AdmitWorkloadOperationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.AdmitWorkloadOperation is not implemented"))
+}
+
+func (UnimplementedWorkContextServiceHandler) RecordHopRefusal(context.Context, *connect.Request[v1.RecordHopRefusalRequest]) (*connect.Response[v1.RecordHopRefusalResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.WorkContextService.RecordHopRefusal is not implemented"))
 }
 
 func (UnimplementedWorkContextServiceHandler) StartTask(context.Context, *connect.Request[v1.StartTaskWorkContextRequest]) (*connect.Response[v1.IssuedWorkContext], error) {

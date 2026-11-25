@@ -34,6 +34,15 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// InstallationServiceReviewSolutionInstallProcedure is the fully-qualified name of the
+	// InstallationService's ReviewSolutionInstall RPC.
+	InstallationServiceReviewSolutionInstallProcedure = "/saas.accounts.v1.InstallationService/ReviewSolutionInstall"
+	// InstallationServiceInstallReviewedSolutionProcedure is the fully-qualified name of the
+	// InstallationService's InstallReviewedSolution RPC.
+	InstallationServiceInstallReviewedSolutionProcedure = "/saas.accounts.v1.InstallationService/InstallReviewedSolution"
+	// InstallationServiceSetUpModulePageProcedure is the fully-qualified name of the
+	// InstallationService's SetUpModulePage RPC.
+	InstallationServiceSetUpModulePageProcedure = "/saas.accounts.v1.InstallationService/SetUpModulePage"
 	// InstallationServiceInstallSolutionProcedure is the fully-qualified name of the
 	// InstallationService's InstallSolution RPC.
 	InstallationServiceInstallSolutionProcedure = "/saas.accounts.v1.InstallationService/InstallSolution"
@@ -71,6 +80,20 @@ const (
 
 // InstallationServiceClient is a client for the saas.accounts.v1.InstallationService service.
 type InstallationServiceClient interface {
+	// Review one solution release and its supporting module access before consent.
+	// A member's to ask: the authority core answers it to an organization
+	// administrator, and a module page's update to the holder of the page's
+	// admin role too (its approver), and refuses anyone else.
+	ReviewSolutionInstall(context.Context, *connect.Request[v1.ReviewSolutionInstallRequest]) (*connect.Response[v1.ReviewedSolutionInstall], error)
+	// Consent to the exact review; retries retain its original per-owner receipts.
+	// A member's to ask: the authority core admits an organization
+	// administrator, and the holder of a module page's admin role to
+	// approve the page's update (its approver), and refuses anyone else.
+	InstallReviewedSolution(context.Context, *connect.Request[v1.InstallReviewedSolutionRequest]) (*connect.Response[v1.Installation], error)
+	// Set up who may use a module page: its roles to teams on its composition
+	// installation, in one act; the answer is that installation, with what
+	// could not be applied in access_problems.
+	SetUpModulePage(context.Context, *connect.Request[v1.SetUpModulePageRequest]) (*connect.Response[v1.Installation], error)
 	// InstallSolution composes an installation in one transaction: an idempotent
 	// agent Principal with its ceiling, a solution scope node, the agent's standing
 	// least-privilege grant at that node, and the installation row with its owner of
@@ -81,8 +104,8 @@ type InstallationServiceClient interface {
 	// is left in place (inert without a grant or a live agent) so a reinstall reuses
 	// it. Idempotent on an already-revoked installation.
 	UninstallSolution(context.Context, *connect.Request[v1.UninstallSolutionRequest]) (*connect.Response[emptypb.Empty], error)
-	// Narrowing is witnessed in the policy log before commit, then atomically
-	// bumps the installation revision, cancels its org's work and records audit.
+	// A narrowing applies directly: it atomically bumps the installation
+	// revision, cancels its org's work and records audit.
 	NarrowInstallation(context.Context, *connect.Request[v1.NarrowInstallationRequest]) (*connect.Response[emptypb.Empty], error)
 	// RetryInstallation runs a failed installation's install step again, at the
 	// same revision. The installation is pending until the solution acknowledges.
@@ -149,9 +172,8 @@ type InstallationServiceClient interface {
 	// ListOrganizationInstallations describes.
 	GrantInstallationToTeam(context.Context, *connect.Request[v1.GrantInstallationToTeamRequest]) (*connect.Response[v1.GrantInstallationToTeamResponse], error)
 	// RevokeInstallationFromTeam removes one team grant at an installation's
-	// authority-root node. It is a narrowing, so it runs under the policy log
-	// exactly as RevokeScope does: a host that cannot witness the narrowing refuses
-	// it, and says so, rather than revoking unwitnessed. It removes the one grant
+	// authority-root node. It is a narrowing, so it applies directly, with its
+	// audit record in one transaction, exactly as RevokeScope does. It removes the one grant
 	// at the authority root that granted_teams reports; a team that also reaches
 	// the installation from a grant above keeps that reach. Organisation-admin,
 	// with the same platform super administrator exception.
@@ -169,6 +191,24 @@ func NewInstallationServiceClient(httpClient connect.HTTPClient, baseURL string,
 	baseURL = strings.TrimRight(baseURL, "/")
 	installationServiceMethods := v1.File_saas_accounts_v1_installations_proto.Services().ByName("InstallationService").Methods()
 	return &installationServiceClient{
+		reviewSolutionInstall: connect.NewClient[v1.ReviewSolutionInstallRequest, v1.ReviewedSolutionInstall](
+			httpClient,
+			baseURL+InstallationServiceReviewSolutionInstallProcedure,
+			connect.WithSchema(installationServiceMethods.ByName("ReviewSolutionInstall")),
+			connect.WithClientOptions(opts...),
+		),
+		installReviewedSolution: connect.NewClient[v1.InstallReviewedSolutionRequest, v1.Installation](
+			httpClient,
+			baseURL+InstallationServiceInstallReviewedSolutionProcedure,
+			connect.WithSchema(installationServiceMethods.ByName("InstallReviewedSolution")),
+			connect.WithClientOptions(opts...),
+		),
+		setUpModulePage: connect.NewClient[v1.SetUpModulePageRequest, v1.Installation](
+			httpClient,
+			baseURL+InstallationServiceSetUpModulePageProcedure,
+			connect.WithSchema(installationServiceMethods.ByName("SetUpModulePage")),
+			connect.WithClientOptions(opts...),
+		),
 		installSolution: connect.NewClient[v1.InstallSolutionRequest, v1.Installation](
 			httpClient,
 			baseURL+InstallationServiceInstallSolutionProcedure,
@@ -240,6 +280,9 @@ func NewInstallationServiceClient(httpClient connect.HTTPClient, baseURL string,
 
 // installationServiceClient implements InstallationServiceClient.
 type installationServiceClient struct {
+	reviewSolutionInstall         *connect.Client[v1.ReviewSolutionInstallRequest, v1.ReviewedSolutionInstall]
+	installReviewedSolution       *connect.Client[v1.InstallReviewedSolutionRequest, v1.Installation]
+	setUpModulePage               *connect.Client[v1.SetUpModulePageRequest, v1.Installation]
 	installSolution               *connect.Client[v1.InstallSolutionRequest, v1.Installation]
 	uninstallSolution             *connect.Client[v1.UninstallSolutionRequest, emptypb.Empty]
 	narrowInstallation            *connect.Client[v1.NarrowInstallationRequest, emptypb.Empty]
@@ -251,6 +294,21 @@ type installationServiceClient struct {
 	listOrganizationInstallations *connect.Client[v1.ListOrganizationInstallationsRequest, v1.ListOrganizationInstallationsResponse]
 	grantInstallationToTeam       *connect.Client[v1.GrantInstallationToTeamRequest, v1.GrantInstallationToTeamResponse]
 	revokeInstallationFromTeam    *connect.Client[v1.RevokeInstallationFromTeamRequest, emptypb.Empty]
+}
+
+// ReviewSolutionInstall calls saas.accounts.v1.InstallationService.ReviewSolutionInstall.
+func (c *installationServiceClient) ReviewSolutionInstall(ctx context.Context, req *connect.Request[v1.ReviewSolutionInstallRequest]) (*connect.Response[v1.ReviewedSolutionInstall], error) {
+	return c.reviewSolutionInstall.CallUnary(ctx, req)
+}
+
+// InstallReviewedSolution calls saas.accounts.v1.InstallationService.InstallReviewedSolution.
+func (c *installationServiceClient) InstallReviewedSolution(ctx context.Context, req *connect.Request[v1.InstallReviewedSolutionRequest]) (*connect.Response[v1.Installation], error) {
+	return c.installReviewedSolution.CallUnary(ctx, req)
+}
+
+// SetUpModulePage calls saas.accounts.v1.InstallationService.SetUpModulePage.
+func (c *installationServiceClient) SetUpModulePage(ctx context.Context, req *connect.Request[v1.SetUpModulePageRequest]) (*connect.Response[v1.Installation], error) {
+	return c.setUpModulePage.CallUnary(ctx, req)
 }
 
 // InstallSolution calls saas.accounts.v1.InstallationService.InstallSolution.
@@ -313,6 +371,20 @@ func (c *installationServiceClient) RevokeInstallationFromTeam(ctx context.Conte
 // InstallationServiceHandler is an implementation of the saas.accounts.v1.InstallationService
 // service.
 type InstallationServiceHandler interface {
+	// Review one solution release and its supporting module access before consent.
+	// A member's to ask: the authority core answers it to an organization
+	// administrator, and a module page's update to the holder of the page's
+	// admin role too (its approver), and refuses anyone else.
+	ReviewSolutionInstall(context.Context, *connect.Request[v1.ReviewSolutionInstallRequest]) (*connect.Response[v1.ReviewedSolutionInstall], error)
+	// Consent to the exact review; retries retain its original per-owner receipts.
+	// A member's to ask: the authority core admits an organization
+	// administrator, and the holder of a module page's admin role to
+	// approve the page's update (its approver), and refuses anyone else.
+	InstallReviewedSolution(context.Context, *connect.Request[v1.InstallReviewedSolutionRequest]) (*connect.Response[v1.Installation], error)
+	// Set up who may use a module page: its roles to teams on its composition
+	// installation, in one act; the answer is that installation, with what
+	// could not be applied in access_problems.
+	SetUpModulePage(context.Context, *connect.Request[v1.SetUpModulePageRequest]) (*connect.Response[v1.Installation], error)
 	// InstallSolution composes an installation in one transaction: an idempotent
 	// agent Principal with its ceiling, a solution scope node, the agent's standing
 	// least-privilege grant at that node, and the installation row with its owner of
@@ -323,8 +395,8 @@ type InstallationServiceHandler interface {
 	// is left in place (inert without a grant or a live agent) so a reinstall reuses
 	// it. Idempotent on an already-revoked installation.
 	UninstallSolution(context.Context, *connect.Request[v1.UninstallSolutionRequest]) (*connect.Response[emptypb.Empty], error)
-	// Narrowing is witnessed in the policy log before commit, then atomically
-	// bumps the installation revision, cancels its org's work and records audit.
+	// A narrowing applies directly: it atomically bumps the installation
+	// revision, cancels its org's work and records audit.
 	NarrowInstallation(context.Context, *connect.Request[v1.NarrowInstallationRequest]) (*connect.Response[emptypb.Empty], error)
 	// RetryInstallation runs a failed installation's install step again, at the
 	// same revision. The installation is pending until the solution acknowledges.
@@ -391,9 +463,8 @@ type InstallationServiceHandler interface {
 	// ListOrganizationInstallations describes.
 	GrantInstallationToTeam(context.Context, *connect.Request[v1.GrantInstallationToTeamRequest]) (*connect.Response[v1.GrantInstallationToTeamResponse], error)
 	// RevokeInstallationFromTeam removes one team grant at an installation's
-	// authority-root node. It is a narrowing, so it runs under the policy log
-	// exactly as RevokeScope does: a host that cannot witness the narrowing refuses
-	// it, and says so, rather than revoking unwitnessed. It removes the one grant
+	// authority-root node. It is a narrowing, so it applies directly, with its
+	// audit record in one transaction, exactly as RevokeScope does. It removes the one grant
 	// at the authority root that granted_teams reports; a team that also reaches
 	// the installation from a grant above keeps that reach. Organisation-admin,
 	// with the same platform super administrator exception.
@@ -407,6 +478,24 @@ type InstallationServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewInstallationServiceHandler(svc InstallationServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	installationServiceMethods := v1.File_saas_accounts_v1_installations_proto.Services().ByName("InstallationService").Methods()
+	installationServiceReviewSolutionInstallHandler := connect.NewUnaryHandler(
+		InstallationServiceReviewSolutionInstallProcedure,
+		svc.ReviewSolutionInstall,
+		connect.WithSchema(installationServiceMethods.ByName("ReviewSolutionInstall")),
+		connect.WithHandlerOptions(opts...),
+	)
+	installationServiceInstallReviewedSolutionHandler := connect.NewUnaryHandler(
+		InstallationServiceInstallReviewedSolutionProcedure,
+		svc.InstallReviewedSolution,
+		connect.WithSchema(installationServiceMethods.ByName("InstallReviewedSolution")),
+		connect.WithHandlerOptions(opts...),
+	)
+	installationServiceSetUpModulePageHandler := connect.NewUnaryHandler(
+		InstallationServiceSetUpModulePageProcedure,
+		svc.SetUpModulePage,
+		connect.WithSchema(installationServiceMethods.ByName("SetUpModulePage")),
+		connect.WithHandlerOptions(opts...),
+	)
 	installationServiceInstallSolutionHandler := connect.NewUnaryHandler(
 		InstallationServiceInstallSolutionProcedure,
 		svc.InstallSolution,
@@ -475,6 +564,12 @@ func NewInstallationServiceHandler(svc InstallationServiceHandler, opts ...conne
 	)
 	return "/saas.accounts.v1.InstallationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case InstallationServiceReviewSolutionInstallProcedure:
+			installationServiceReviewSolutionInstallHandler.ServeHTTP(w, r)
+		case InstallationServiceInstallReviewedSolutionProcedure:
+			installationServiceInstallReviewedSolutionHandler.ServeHTTP(w, r)
+		case InstallationServiceSetUpModulePageProcedure:
+			installationServiceSetUpModulePageHandler.ServeHTTP(w, r)
 		case InstallationServiceInstallSolutionProcedure:
 			installationServiceInstallSolutionHandler.ServeHTTP(w, r)
 		case InstallationServiceUninstallSolutionProcedure:
@@ -505,6 +600,18 @@ func NewInstallationServiceHandler(svc InstallationServiceHandler, opts ...conne
 
 // UnimplementedInstallationServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedInstallationServiceHandler struct{}
+
+func (UnimplementedInstallationServiceHandler) ReviewSolutionInstall(context.Context, *connect.Request[v1.ReviewSolutionInstallRequest]) (*connect.Response[v1.ReviewedSolutionInstall], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.InstallationService.ReviewSolutionInstall is not implemented"))
+}
+
+func (UnimplementedInstallationServiceHandler) InstallReviewedSolution(context.Context, *connect.Request[v1.InstallReviewedSolutionRequest]) (*connect.Response[v1.Installation], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.InstallationService.InstallReviewedSolution is not implemented"))
+}
+
+func (UnimplementedInstallationServiceHandler) SetUpModulePage(context.Context, *connect.Request[v1.SetUpModulePageRequest]) (*connect.Response[v1.Installation], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.InstallationService.SetUpModulePage is not implemented"))
+}
 
 func (UnimplementedInstallationServiceHandler) InstallSolution(context.Context, *connect.Request[v1.InstallSolutionRequest]) (*connect.Response[v1.Installation], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("saas.accounts.v1.InstallationService.InstallSolution is not implemented"))

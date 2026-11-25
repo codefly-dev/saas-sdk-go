@@ -19,6 +19,10 @@ managed:
     - file_option: go_package_prefix
       path: codefly
       value: github.com/codefly-dev/core/generated/go
+    # Accounts references the authority-owned installation descriptor.
+    - file_option: go_package_prefix
+      path: host/installation
+      value: github.com/codefly-dev/authority/libraries/authority-client/go/gen
 plugins:
   - local: [go, run, google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11]
     out: gen

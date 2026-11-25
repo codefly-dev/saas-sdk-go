@@ -51,8 +51,10 @@ Three properties of that template matter:
   to `github.com/codefly-dev/core/generated/go`. Require a compatible Core
   version that provides those packages; validate the dependency floor against
   SDK and consumer builds instead of copying the host's dependency generation.
-  Generating another copy of Core's descriptors here creates duplicate protobuf
-  registrations at initialization.
+  The host installation import resolves to
+  `github.com/codefly-dev/authority/libraries/authority-client/go/gen`. Generating
+  another copy of either dependency's descriptors registers the same protobuf
+  file twice at initialization.
 
 - **`clean: true` wipes `gen/` first.** So a proto deleted upstream disappears
   here rather than lingering — which is how `AuditExportService` left in 0.1.0.

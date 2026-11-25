@@ -253,7 +253,7 @@ The SDK surfaces are:
 
   This call surface uses the four host RPCs from
   [module-saas-starter#1052](https://github.com/codefly-dev/module-saas-starter/pull/1052).
-  `SOURCE.txt` records the released host tag `v0.0.103` used to regenerate
+  `SOURCE.txt` records the exact host revision used to regenerate
   the bindings. This regeneration does not publish an SDK release.
   The host's runtime-scheduled `PruneSourceOperationReceipts` and
   `LookupPruneSourceOperationReceipts` are included in the generated bindings
@@ -277,8 +277,7 @@ The SDK surfaces are:
   input (`ErrInvalidExchange`, `ErrInvalidArtifact`, `ErrInvalidInstallation`)
   before anything is sent. **This needs a host whose accounts mints core-format
   Work Contexts** (module-saas-starter#1093); the former v0.0.94 source mints
-  the pre-cutover format, which this client refuses. `SOURCE.txt` now records
-  v0.0.103.
+  the pre-cutover format, which this client refuses. The current host revision is recorded in `SOURCE.txt`.
 
   `Client.ModuleWorkContext(ctx)` returns a cached token, sharing refreshes
   between concurrent callers. Consumers that already own their expiry and
@@ -507,11 +506,9 @@ proto ref `gen/` was generated from.
 ## Regenerating `gen/`
 
 The proto source of truth is `module-saas-starter/module/services/accounts/proto`.
-To refresh from a released tag (in a checkout of that repo):
+From a checkout at the revision recorded in `SOURCE.txt`, run:
 
 ```bash
-git fetch origin tag v0.0.103
-git checkout --detach v0.0.103
 cd module/services/accounts/proto
 buf generate --template <this-repo>/buf.gen.yaml -o <this-repo>
 ```
@@ -522,18 +519,11 @@ the correct module path. **Never hand-edit `gen/` or sed the module path** — t
 protobuf file descriptors embed length-prefixed package strings and a text
 rewrite corrupts them (panics at `init()`). Always regenerate.
 
-The template generates the complete host-owned `saas/` schema tree. Its
-vendored `codefly/` import closure is compiled for Runnable annotations, with
-imports resolved to `github.com/codefly-dev/core/generated/go`; Core owns
-those Go descriptors. Emitting a second copy in this SDK would conflict at
-protobuf initialization. The SDK requires Core at `b81d92e6feda`
-(`v0.19.6-0.20261018051341-b81d92e6feda`), the Core the v0.0.103 gateway
-requires: it supplies the Runnable package, and its `SealSource` has no
-approved build. No tagged Core carries that yet; v0.19.5 still requires
-`SealSource.ApprovedBuild`, so it cannot build this SDK, and the floor moves to
-the first Core tag that contains `b81d92e6feda`. The SDK need not adopt the
-host's entire dependency generation. Verify the compatible dependency floor
-with SDK and consumer builds when refreshing it.
+The template generates the complete host-owned `saas/` schema tree. The runnable v1
+annotations resolve to Core's generated Go package. The installation protocol
+resolves to the authority client's generated Go package. Each owner registers
+its own descriptors once, including in consumers that depend on both SDKs.
+The Go module pins the revisions used by the generated bindings.
 The generation plugin versions remain pinned.
 Record the release tag in `SOURCE.txt`; CI checks out that tag through
 `refs/tags/` and verifies that regeneration leaves no diff. Before a host
