@@ -5,8 +5,8 @@ go 1.27.4
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
 	connectrpc.com/connect v1.21.1
-	github.com/codefly-dev/authority/libraries/authority-client/go v0.2.1-0.20261125191925-75e89768397f
-	github.com/codefly-dev/core v0.19.38-0.20261125193904-fc59dbc3fd14
+	github.com/codefly-dev/authority/libraries/authority-client/go v0.2.1-0.20261126210708-4135e4254c09
+	github.com/codefly-dev/core v0.19.38-0.20261126202006-b858e99a7bad
 	github.com/google/uuid v1.6.0
 	golang.org/x/tools v0.52.1-0.20261106145633-d407941a339a
 	google.golang.org/genproto/googleapis/api v0.0.0-20261123191846-1e707ab9fbc2

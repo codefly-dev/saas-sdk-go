@@ -107,7 +107,7 @@ func callAsModule[Req, Res any](
 	}
 
 	c.mu.Lock()
-	c.forgetModuleWorkContext(module)
+	c.InvalidateModuleWorkContext(module)
 	module, err = c.moduleWorkContextLocked(ctx)
 	c.mu.Unlock()
 	if err != nil {

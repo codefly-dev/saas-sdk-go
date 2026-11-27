@@ -92,7 +92,9 @@ func (b broker) post(ctx context.Context, path, projectedToken string, body any,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set(internalTokenHeader, b.token)
+	if b.token != "" {
+		req.Header.Set(internalTokenHeader, b.token)
+	}
 	req.Header.Set("Authorization", bearerScheme+projectedToken)
 	resp, err := b.client.Do(req)
 	if err != nil {

@@ -150,3 +150,37 @@ func TestMintModuleWorkContextBoundsResponseRead(t *testing.T) {
 		t.Fatalf("oversized answer: err=%v, closed=%v, read=%d", err, body.closed, body.read)
 	}
 }
+
+func TestWorkloadBrokerMintsForItsOrganizationWithoutPerimeterCredential(t *testing.T) {
+	const org = "11111111-1111-4111-8111-111111111111"
+	other := "22222222-2222-4222-8222-222222222222"
+	for _, tenant := range []string{org, other, ""} {
+		gateway := brokerErrorGateway{client: &http.Client{Transport: brokerErrorTransport(func(r *http.Request) (*http.Response, error) {
+			var in workContextRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				t.Fatal(err)
+			}
+			if r.URL.Path != hostWorkContextPath || in.OrganizationID != org || in.Prefix != testPrefix ||
+				r.Header.Get("Authorization") != "Bearer "+testProjectedToken || r.Header.Values(internalTokenHeader) != nil {
+				t.Fatal("unexpected workload broker request")
+			}
+			raw, err := json.Marshal(workContextResponse{Token: sealedToken("journal"), Tenant: tenant, ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+		})}}
+		c, err := NewWorkloadBroker(gateway, Credentials{Prefix: testPrefix, Token: staticToken(testProjectedToken), OrganizationID: org}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := c.ModuleWorkContext(t.Context())
+		if tenant == org {
+			if err != nil || token != sealedToken("journal") {
+				t.Fatalf("expected selected tenant capability: %v", err)
+			}
+		} else if !errors.Is(err, ErrInvalidCapability) || token != "" {
+			t.Fatal("accepted capability for an unconfirmed tenant")
+		}
+	}
+}

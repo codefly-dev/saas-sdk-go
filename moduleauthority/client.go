@@ -314,6 +314,23 @@ type Client struct {
 // UUID. It opens no connection and reads no token: the token is read before
 // each mint.
 func New(seams Seams, credentials Credentials) (*Client, error) {
+	if seams.InternalToken == "" {
+		return nil, fmt.Errorf("%w: the internal token is required", ErrInvalidSeams)
+	}
+	return newClient(seams, credentials)
+}
+
+// NewWorkloadBroker binds a mint-only client to the auth-gateway workload
+// endpoint. This listener authenticates the projected workload credential.
+// Each client is bound to one organization and checks the tenant in the reply.
+func NewWorkloadBroker(gateway Gateway, credentials Credentials, allowInsecureHTTP bool) (*Client, error) {
+	if credentials.OrganizationID == "" {
+		return nil, fmt.Errorf("%w: an organization is required", ErrInvalidCredentials)
+	}
+	return newClient(Seams{Gateway: gateway, AllowInsecureHTTP: allowInsecureHTTP}, credentials)
+}
+
+func newClient(seams Seams, credentials Credentials) (*Client, error) {
 	if credentials.Prefix == "" || credentials.Token == nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -323,9 +340,6 @@ func New(seams Seams, credentials Credentials) (*Client, error) {
 		if id, err := uuid.Parse(org); err != nil || id.String() != org {
 			return nil, fmt.Errorf("%w: the organization ID must be a canonical UUID", ErrInvalidCredentials)
 		}
-	}
-	if seams.InternalToken == "" {
-		return nil, fmt.Errorf("%w: the internal token is required", ErrInvalidSeams)
 	}
 	gateway, err := newBroker(seams)
 	if err != nil {
@@ -475,6 +489,9 @@ func (c *Client) MintModuleWorkContext(ctx context.Context) (ModuleContext, erro
 	}, &issued); err != nil {
 		return ModuleContext{}, fmt.Errorf("module authority: mint module Work Context: %w", brokerRefusal(err))
 	}
+	if c.broker.token == "" && issued.Tenant != c.credentials.OrganizationID {
+		return ModuleContext{}, fmt.Errorf("%w: broker replied for a different organization", ErrInvalidCapability)
+	}
 	expiresAt, err := parseExpiry(issued.ExpiresAt, c.now())
 	if err != nil {
 		return ModuleContext{}, err
@@ -485,10 +502,10 @@ func (c *Client) MintModuleWorkContext(ctx context.Context) (ModuleContext, erro
 	return ModuleContext{Token: issued.Token, ExpiresAt: expiresAt}, nil
 }
 
-// forgetModuleWorkContext drops the cached module capability if it is still
+// InvalidateModuleWorkContext drops the cached module capability if it is still
 // the one a call was rejected with, so the next caller mints a fresh one. A
 // capability another caller already refreshed is kept.
-func (c *Client) forgetModuleWorkContext(rejected string) {
+func (c *Client) InvalidateModuleWorkContext(rejected string) {
 	if c.module == rejected {
 		c.module = ""
 		c.expiresAt = time.Time{}

@@ -372,6 +372,12 @@ The SDK surfaces are:
   the work-context mint's perimeter is that endpoint, and its credential the
   projected token. `Seams.Gateway` names that endpoint.
 
+For a workload-only gateway, `moduleauthority.NewWorkloadBroker` takes the resolved
+workload endpoint, the module's projected credential source and its organization.
+It presents the projected bearer on the mint request and checks that the broker
+replied for that organization. Reuse the client within that organization to share
+unexpired Work Contexts.
+
   The REST bodies match [the v0.0.103 gateway](https://github.com/codefly-dev/module-saas-starter/blob/v0.0.103/module/services/auth-gateway/code/gateway_modules.go):
 
   | Mint path | JSON fields sent |
