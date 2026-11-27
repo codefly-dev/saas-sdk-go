@@ -85,7 +85,7 @@ Fleet standard — [handbook#68](https://github.com/obin-ai/handbook/issues/68).
 ## Build and test
 
 `.github/workflows/ci.yml` runs this walk on every pull request and push to
-`main`, for every `go.mod` outside `testdata/`. Run it locally first:
+`main`, for every `go.mod` outside `testdata/`. For the full CI gate, use Buf 1.73.0 and run `scripts/verify all /path/to/host` with a clean host checkout at the revision in `SOURCE.txt`. The Go portion runs:
 
 ```bash
 go build ./...

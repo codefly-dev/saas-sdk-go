@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+sdk=$(cd "$(dirname "$0")/.." && pwd)
+cd "$sdk"
+export GOWORK=off
+
+check_modules() {
+  local manifest module formatted
+  while IFS= read -r -d '' manifest; do
+    module=$(dirname "$manifest")
+    (cd "$module" && go build ./... && go vet ./... && go test ./... && go test -race ./...)
+  done < <(find . -name go.mod -not -path '*/testdata/*' -not -path './.git/*' -print0)
+  formatted=$(gofmt -l .)
+  if [[ -n $(printf '%s\n' "$formatted" | sed '/^gen\//d') ]]; then
+    printf 'gofmt would rewrite:\n%s\n' "$formatted" >&2
+    return 1
+  fi
+}
+
+check_generated() (
+  local host=$1 ref proto out
+  ref=$(sed -n 's/.*module-saas-starter@\([^ ]*\)$/\1/p' SOURCE.txt)
+  proto=$(sed -n 's/^(accounts public proto: \(.*\))$/\1/p' SOURCE.txt)
+  [[ -n $proto && -n $ref ]]
+  [[ $(git -C "$host" rev-parse HEAD) == "$(git -C "$host" rev-parse "$ref^{commit}")" ]]
+  [[ -z $(git -C "$host" status --porcelain) ]]
+  out=$(mktemp -d)
+  trap 'rm -rf "$out"' EXIT
+  cd "$host/$proto"
+  buf generate --template "$sdk/buf.gen.yaml" -o "$out"
+  diff -qr "$sdk/gen" "$out/gen"
+)
+
+case ${1:-} in
+  modules) check_modules ;;
+  generated) check_generated "${2:?pass the host checkout at the SOURCE.txt revision}" ;;
+  all)
+    check_modules
+    check_generated "${2:?pass the host checkout at the SOURCE.txt revision}"
+    conformance/hostgateway/run.sh "$2" -race -v
+    ;;
+  *) echo "usage: $0 {modules|generated HOST|all HOST}" >&2; exit 2 ;;
+esac

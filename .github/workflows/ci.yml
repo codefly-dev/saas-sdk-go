@@ -20,24 +20,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: build, vet, test, race
-        run: |
-          set -euo pipefail
-          mods=$(find . -name go.mod -not -path '*/testdata/*' -not -path './.git/*' -exec dirname {} \; | sort)
-          for m in $mods; do
-            echo "::group::module $m"
-            (cd "$m" && go build ./... && go vet ./... && go test ./... && go test -race ./...)
-            echo "::endgroup::"
-          done
-      - name: gofmt (hand-written code)
-        run: |
-          set -euo pipefail
-          unformatted=$(gofmt -l . | grep -v '^gen/' || true)
-          if [ -n "$unformatted" ]; then
-            echo "::error::gofmt would rewrite these files:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - run: scripts/verify modules
 
   # gen/ must be exactly what buf.gen.yaml produces from the proto ref recorded
   # in SOURCE.txt. The recipe is the one in the refresh-generated-api skill:
@@ -65,26 +48,7 @@ jobs:
         with:
           version: ${{ env.BUF_VERSION }}
           setup_only: true
-      - name: regenerate gen/
-        run: |
-          set -euo pipefail
-          sdk="$GITHUB_WORKSPACE/sdk"
-          cd "source/${{ steps.source.outputs.proto }}"
-          buf generate --template "$sdk/buf.gen.yaml" -o "$sdk"
-      - name: require no drift
-        working-directory: sdk
-        run: |
-          set -euo pipefail
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "gen/ reproduces byte-for-byte from $(grep -m1 -oE 'module-saas-starter@(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$' SOURCE.txt)"
-            exit 0
-          fi
-          echo "::error::gen/ does not match a regeneration from the ref in SOURCE.txt. Never hand-edit gen/: regenerate it (refresh-generated-api skill), or correct SOURCE.txt if it records the wrong ref."
-          git status --short
-          git add -A -N
-          git --no-pager diff --stat
-          git --no-pager diff | head -n 400
-          exit 1
+      - run: sdk/scripts/verify generated "$GITHUB_WORKSPACE/source"
 
   # The module broker contract, held against the host's REAL auth-gateway
   # handlers at the ref SOURCE.txt records — not only against
